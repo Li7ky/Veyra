@@ -196,6 +196,8 @@ export default function App() {
   const [pfSeen, setPfSeen] = useState<Record<string, boolean>>({ sub: true });
   const [running, setRunning] = useState(false);
   const [coreVersion, setCoreVersion] = useState("");
+  // 首屏就绪：数据加载完成后才渲染主体，避免显示一堆"—"占位符让人困惑
+  const [bootReady, setBootReady] = useState(false);
   const [coreType, setCoreType] = useState("mihomo");
   const [coreStartTime, setCoreStartTime] = useState<number | null>(null);
   const appStartTime = useRef(Date.now());
@@ -328,11 +330,23 @@ export default function App() {
   groupsRef.current = groups;
   tabRef.current = tab;
 
-  const showToast = useCallback((msg: string, ms = 2400) => {
-    setToast(msg);
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(""), ms);
+  // 首屏就绪：核心数据到达后渲染主体；或兜底 1.6s 后也要显示主体，避免永远白屏
+  useEffect(() => {
+    if (groups.length > 0 || coreVersion || version !== "-") {
+      const t = window.setTimeout(() => setBootReady(true), 150);
+      return () => window.clearTimeout(t);
+    }
+  }, [groups.length, coreVersion, version]);
+  useEffect(() => {
+    const t = window.setTimeout(() => setBootReady(true), 1600);
+    return () => window.clearTimeout(t);
   }, []);
+
+  const showToast = useCallback((msg: string, ms = 2400) => {
+     setToast(msg);
+     if (toastTimer.current) window.clearTimeout(toastTimer.current);
+     toastTimer.current = window.setTimeout(() => setToast(""), ms);
+   }, []);
 
   const applyStatus = useCallback(
     (data: { running?: boolean; seq?: number; version?: { version?: string } }) => {
@@ -1150,6 +1164,24 @@ export default function App() {
       ["settings", NavSettingsIcon, t("nav.settings", "设置"), null],
     ] as const
   );
+
+  // Before anything renders — show splash while booting
+  if (!bootReady) {
+    return (
+      <div className="app boot-splash">
+        <div className="container">
+          <header className="header"><div className="logo">Veyra</div></header>
+          <div className="boot-skeleton">
+            <div className="sk sk-bar w30" /><div className="sk sk-bar w60" />
+            <div className="sk-grid">
+              <div className="sk sk-card" /><div className="sk sk-card" /><div className="sk sk-card" />
+              <div className="sk sk-card" /><div className="sk sk-card" /><div className="sk sk-card" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`app ${busy ? "busy" : ""} ${running ? "is-on" : ""} ${sysProxy ? "proxy-on" : ""}`}>

@@ -1861,3 +1861,28 @@ label.switch.compact input[type="checkbox"]:checked::after { transform: translat
   .s-field-block:last-child, .s-fields > label:last-child { grid-column: auto; }
   .unlock-grid.verge { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   Boot Skeleton — 首屏数据加载中展示，防止用户看到空占位符
+   ============================================================ */
+.boot-splash { display:flex; align-items:center; min-height:100vh; }
+.boot-skeleton { margin-top:40px; display:flex; flex-direction:column; gap:18px; max-width:900px; }
+.sk {
+  background: linear-gradient(90deg, var(--card-hover) 25%, color-mix(in srgb, var(--accent) 10%, transparent) 37%, var(--card-hover) 63%);
+  background-size: 400% 100%;
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+  border-radius: 8px;
+}
+@keyframes sk-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+.sk-bar { height:14px; border-radius:4px; }
+.sk-bar.w30 { width: 30%; }
+.sk-bar.w60 { width: 60%; }
+.sk-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+.sk-card { height:120px; border-radius:12px; }
+@media (max-width:760px) {
+  .sk-grid { grid-template-columns:repeat(2,1fr); }
+  .sk-card { height:90px; }
+}

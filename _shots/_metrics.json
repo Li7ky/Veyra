@@ -1,0 +1,106 @@
+[
+  {
+    "id": "home",
+    "label": "首页",
+    "file": "D:\\veyra-latest\\_shots\\1-home.png",
+    "info": {
+      "pane": "pane home",
+      "paneW": 736,
+      "paneH": 1559,
+      "stageW": 788,
+      "scrollH": 1615,
+      "clientH": 915
+    }
+  },
+  {
+    "id": "proxies",
+    "label": "代理",
+    "file": "D:\\veyra-latest\\_shots\\2-proxies.png",
+    "info": {
+      "pane": "pane px",
+      "paneW": 736,
+      "paneH": 1475,
+      "stageW": 788,
+      "scrollH": 1531,
+      "clientH": 915
+    }
+  },
+  {
+    "id": "profiles",
+    "label": "订阅",
+    "file": "D:\\veyra-latest\\_shots\\3-profiles.png",
+    "info": {
+      "pane": "pane pf",
+      "paneW": 736,
+      "paneH": 1083,
+      "stageW": 788,
+      "scrollH": 1139,
+      "clientH": 915
+    }
+  },
+  {
+    "id": "connections",
+    "label": "连接",
+    "file": "D:\\veyra-latest\\_shots\\4-connections.png",
+    "info": {
+      "pane": "pane",
+      "paneW": 736,
+      "paneH": 2238,
+      "stageW": 788,
+      "scrollH": 2294,
+      "clientH": 915
+    }
+  },
+  {
+    "id": "rules",
+    "label": "规则",
+    "file": "D:\\veyra-latest\\_shots\\5-rules.png",
+    "info": {
+      "pane": "pane",
+      "paneW": 736,
+      "paneH": 903,
+      "stageW": 788,
+      "scrollH": 959,
+      "clientH": 915
+    }
+  },
+  {
+    "id": "logs",
+    "label": "日志",
+    "file": "D:\\veyra-latest\\_shots\\6-logs.png",
+    "info": {
+      "pane": "pane term",
+      "paneW": 736,
+      "paneH": 859,
+      "stageW": 788,
+      "scrollH": 915,
+      "clientH": 915
+    }
+  },
+  {
+    "id": "tests",
+    "label": "测试",
+    "file": "D:\\veyra-latest\\_shots\\7-tests.png",
+    "info": {
+      "pane": "pane",
+      "paneW": 736,
+      "paneH": 576,
+      "stageW": 788,
+      "scrollH": 915,
+      "clientH": 915
+    }
+  },
+  {
+    "id": "settings",
+    "label": "设置",
+    "file": "D:\\veyra-latest\\_shots\\8-settings.png",
+    "info": {
+      "pane": "pane",
+      "paneW": 736,
+      "paneH": 476,
+      "stageW": 788,
+      "scrollH": 915,
+      "clientH": 915
+    }
+  }
+]

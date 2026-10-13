@@ -23,6 +23,8 @@ const zh: Dict = {
   "tab.connections.sub": "筛选、排序与单条断开",
   "tab.logs.title": "日志",
   "tab.logs.sub": "查看内核实时输出",
+  "tab.tests.title": "测试",
+  "tab.tests.sub": "延迟检测、出口 IP、流媒体解锁",
   "tab.settings.title": "设置",
   "tab.settings.sub": "网络 / TUN / DNS / 备份 / 热键",
   "sec.core": "内核",

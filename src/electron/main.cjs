@@ -824,10 +824,14 @@ async function startCore() {
     if (ver.status === 200) {
       setCoreOnline(true, { version: ver.data });
       await syncCoreModeFromApi();
+      // 收养路径：内核是外部进程，本进程不知道它是否开着系统代理。
+      // 主动读一次注册表同步 sysProxyOn 变量，否则 UI orb 变绿但托盘/开关状态飘移。
+      await syncSystemProxyState();
       if (!coreProc && mainWindow) {
+        const proxyHint = sysProxyOn ? "系统代理已生效" : "系统代理未生效（需手动开启）";
         mainWindow.webContents.send(
           "core:log",
-          `[veyra] controller ${CONTROLLER} 已有响应，收养为运行态（非本进程拉起，PID 未知）。如非 Veyra 内核请更换控制端口。\n`
+          `[veyra] controller ${CONTROLLER} 已有响应，收养为运行态（非本进程拉起，PID 未知，${proxyHint}）。如非 Veyra 内核请更换控制端口。\n`
         );
       }
       return { already: true, version: ver.data };
@@ -1018,7 +1022,9 @@ async function getSystemProxyStatus() {
 
 async function syncSystemProxyState() {
   const st = await getSystemProxyStatus();
-  sysProxyOn = !!st.ours;
+  // ours 只匹配当前 MIXED_PORT；收养路径下孤儿内核可能用历史/漂移端口跑，
+  // 额外用 isOurProxyServer 兜底（覆盖 DEFAULT_MIXED + 漂移 +10003 的情况）。
+  sysProxyOn = !!st.ours || (st.enabled && isOurProxyServer(st.server));
   updateTray();
   notifySysProxy();
   return st;

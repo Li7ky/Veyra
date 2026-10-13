@@ -305,6 +305,8 @@ export default function App() {
   const delaysRef = useRef(delays);
   const autoPickRef = useRef(autoPick);
   const groupsRef = useRef(groups);
+  // 测速中断器：切 tab / 停止内核 / 关闭应用时中止正在进行的测速
+  const testAbortRef = useRef<AbortController | null>(null);
   // 启动自动测速只跑一次：内核启动后等节点数据真正就绪再测，停止内核时重置
   const bootTestedRef = useRef(false);
   const tabRef = useRef<Tab>(tab);
@@ -482,6 +484,11 @@ export default function App() {
 
   const goTab = useCallback(
     (id: Tab) => {
+      // 切掉代理页时中止正在进行的测速，避免后台继续发请求浪费资源
+      if (id !== "proxies" && testAbortRef.current) {
+        testAbortRef.current.abort();
+        testAbortRef.current = null;
+      }
       if (id === "logs" && logBufRef.current.length) {
         const buf = logBufRef.current;
         logBufRef.current = [];
@@ -726,6 +733,12 @@ export default function App() {
         return;
       }
 
+      // 创建新的中断器，中止上一次未完成的测速（如有）
+      if (testAbortRef.current) testAbortRef.current.abort();
+      const ac = new AbortController();
+      testAbortRef.current = ac;
+      const isAborted = () => ac.signal.aborted;
+
       testingRef.current = true;
       // 静默模式不进入「测速中」状态：界面不再常驻转圈，用户只会看到延迟数字悄悄更新
       if (!silent) {
@@ -737,9 +750,11 @@ export default function App() {
       const next = { ...delaysRef.current };
       let done = 0;
       await mapPool(batch, 8, async (n) => {
+        if (isAborted()) return;
         if (!silent) setTestingNode(n);
         try {
           const r = await window.veyra!.testDelay(n);
+          if (isAborted()) return;
           const d = r.data?.delay;
           next[n] = typeof d === "number" ? d : 0;
         } catch {
@@ -747,11 +762,16 @@ export default function App() {
         }
         done += 1;
         // 静默时不做逐节点 setState：一次全量测速最多 80 次提交会持续占住主线程
-        if (!silent) {
+        if (!silent && !isAborted()) {
           setTestProgress(Math.round((done / batch.length) * 100));
           setDelays({ ...next });
         }
       });
+
+      if (isAborted()) {
+        testingRef.current = false;
+        return;
+      }
 
       delaysRef.current = next;
       setDelays(next);

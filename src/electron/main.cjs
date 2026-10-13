@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, clipboard, screen, globalShortcut, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, clipboard, screen, globalShortcut, dialog, Notification } = require("electron");
 const os = require("os");
 const { convertClashToSingbox } = require("./clash2singbox.cjs");
 const profilesLib = require("./profiles.cjs");
@@ -198,6 +198,18 @@ function sendProgress(phase, pct, label) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     try { mainWindow.webContents.send("core:progress", { phase, pct, label }); } catch {}
   }
+}
+
+// 系统通知：用于关键事件（内核崩溃、订阅下载失败、内核未找到）。
+// 用户最小化到托盘时也能看到，不会错过。
+function toastNotify(title, body) {
+  try {
+    if (Notification.isSupported()) {
+      const n = new Notification({ title: title || "Veyra", body: body || "", silent: false });
+      n.on("click", () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
+      n.show();
+    }
+  } catch {}
 }
 
 // ---- 双核管理：mihomo（默认） + sing-box（实验） ----
@@ -828,6 +840,7 @@ async function startCore() {
   const bin = coreBinPath(activeCore);
   const coreLabel = activeCore === "singbox" ? "sing-box" : "mihomo";
   if (!fs.existsSync(bin)) {
+    toastNotify("内核未找到", `${coreLabel} 未安装，请到设置 → 代理服务 里下载`);
     throw new Error(`内核(${coreLabel})未找到: ${bin}，请到 设置 → 代理服务 里下载/切换内核`);
   }
   // 已有本进程拉起的内核，或外部已占用我们的 controller。
@@ -2548,6 +2561,7 @@ app.whenReady().then(async () => {
   } catch (e) {
     console.error("core start failed", e);
     if (mainWindow) mainWindow.webContents.send("core:error", String(e.message || e));
+    toastNotify("内核启动失败", String(e.message || "请检查设置中的端口和内核路径"));
   }
   // 服务没起来却还指着我们的端口 → 关掉，避免整机断网
   if (!coreOnline) {

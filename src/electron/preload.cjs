@@ -1,0 +1,113 @@
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("veyra", {
+  minimize: () => ipcRenderer.invoke("window:minimize"),
+  maximize: () => ipcRenderer.invoke("window:maximize"),
+  close: () => ipcRenderer.invoke("window:close"),
+
+  startCore: () => ipcRenderer.invoke("core:start"),
+  stopCore: () => ipcRenderer.invoke("core:stop"),
+  restartCore: () => ipcRenderer.invoke("core:restart"),
+  coreStatus: () => ipcRenderer.invoke("core:status"),
+  coreInfo: () => ipcRenderer.invoke("core:info"),
+  checkCoreUpdate: () => ipcRenderer.invoke("core:checkUpdate"),
+  updateCore: () => ipcRenderer.invoke("core:update"),
+  matchCoreBuild: () => ipcRenderer.invoke("core:matchBuild"),
+  switchCore: (core) => ipcRenderer.invoke("core:switch", core),
+  coreList: () => ipcRenderer.invoke("core:list"),
+  onCoreStatus: (cb) => {
+    const fn = (_e, data) => cb(data);
+    ipcRenderer.on("core:status", fn);
+    return () => ipcRenderer.removeListener("core:status", fn);
+  },
+  onCoreLog: (cb) => {
+    const fn = (_e, line) => cb(line);
+    ipcRenderer.on("core:log", fn);
+    return () => ipcRenderer.removeListener("core:log", fn);
+  },
+  onCoreError: (cb) => {
+    const fn = (_e, msg) => cb(msg);
+    ipcRenderer.on("core:error", fn);
+    return () => ipcRenderer.removeListener("core:error", fn);
+  },
+
+  overview: () => ipcRenderer.invoke("proxy:overview"),
+  ports: () => ipcRenderer.invoke("app:ports"),
+  selectProxy: (group, name) => ipcRenderer.invoke("proxy:select", group, name),
+  testDelay: (name) => ipcRenderer.invoke("proxy:delay", name),
+  setMode: (mode) => ipcRenderer.invoke("proxy:mode", mode),
+  setSystemProxy: (enable) => ipcRenderer.invoke("system:proxy", enable),
+  systemProxyStatus: () => ipcRenderer.invoke("system:proxyStatus"),
+  onSystemProxyChanged: (cb) => {
+    const fn = (_e, data) => cb(data);
+    ipcRenderer.on("system:proxyChanged", fn);
+    return () => ipcRenderer.removeListener("system:proxyChanged", fn);
+  },
+  patchConfig: (body) => ipcRenderer.invoke("proxy:patchConfig", body),
+  closeAllConnections: () => ipcRenderer.invoke("connections:closeAll"),
+  listConnections: () => ipcRenderer.invoke("connections:list"),
+  closeConnection: (id) => ipcRenderer.invoke("connections:close", id),
+
+  listProfiles: () => ipcRenderer.invoke("profile:list"),
+  listProfilesRich: () => ipcRenderer.invoke("profile:listRich"),
+  importProfile: (payload) => ipcRenderer.invoke("profile:import", payload),
+  importProfileUrl: (payload) => ipcRenderer.invoke("profile:importUrl", payload),
+  listSubscriptions: () => ipcRenderer.invoke("profile:subscriptions"),
+  readActiveProfile: () => ipcRenderer.invoke("profile:readActive"),
+  activateProfile: (uid) => ipcRenderer.invoke("profile:activate", uid),
+  setProfileEnabled: (uid, enabled) => ipcRenderer.invoke("profile:setEnabled", uid, enabled),
+  createEnhanceProfile: (kind, name, global = false) =>
+    ipcRenderer.invoke("profile:createEnhance", kind, name, global),
+  deleteProfile: (uid) => ipcRenderer.invoke("profile:delete", uid),
+  readProfile: (uid) => ipcRenderer.invoke("profile:read", uid),
+  writeProfile: (uid, content) => ipcRenderer.invoke("profile:write", uid, content),
+  setProfileBinds: (uid, binds) => ipcRenderer.invoke("profile:setBinds", uid, binds),
+  enhancePreview: () => ipcRenderer.invoke("profile:enhancePreview"),
+  enhanceApply: () => ipcRenderer.invoke("profile:enhanceApply"),
+  readRuntime: () => ipcRenderer.invoke("runtime:read"),
+  writeRuntime: (content) => ipcRenderer.invoke("runtime:write", content),
+
+  listRules: () => ipcRenderer.invoke("rules:list"),
+  saveVisualRules: (rules) => ipcRenderer.invoke("rules:saveVisual", rules),
+  listProviders: () => ipcRenderer.invoke("providers:list"),
+  updateProvider: (kind, name) => ipcRenderer.invoke("providers:update", kind, name),
+
+  setProxyMode: (mode) => ipcRenderer.invoke("verge:proxyMode", mode),
+  validateDns: (ns) => ipcRenderer.invoke("verge:dnsValidate", ns),
+  serviceStatus: () => ipcRenderer.invoke("verge:serviceStatus"),
+  serviceInstall: () => ipcRenderer.invoke("verge:serviceInstall"),
+  serviceUninstall: () => ipcRenderer.invoke("verge:serviceUninstall"),
+  enableUwpLoopback: () => ipcRenderer.invoke("verge:uwpLoopback"),
+  backupExport: () => ipcRenderer.invoke("verge:backupExport"),
+  backupImport: () => ipcRenderer.invoke("verge:backupImport"),
+  backupReveal: () => ipcRenderer.invoke("verge:backupReveal"),
+  webdavUpload: () => ipcRenderer.invoke("verge:webdavUpload"),
+  webdavDownload: () => ipcRenderer.invoke("verge:webdavDownload"),
+  exitIp: () => ipcRenderer.invoke("verge:exitIp"),
+  detectProxyConflict: () => ipcRenderer.invoke("system:detectProxyConflict"),
+  streamingUnlock: () => ipcRenderer.invoke("verge:streaming"),
+  streamingUnlockOne: (id) => ipcRenderer.invoke("verge:streamingOne", id),
+  unlockCatalog: () => ipcRenderer.invoke("verge:unlockCatalog"),
+  proxyEnvText: () => ipcRenderer.invoke("verge:proxyEnv"),
+  importNodeUri: (uri) => ipcRenderer.invoke("verge:importUri", uri),
+  openWebUI: (which) => ipcRenderer.invoke("verge:openWebUI", which),
+  clearLogFiles: () => ipcRenderer.invoke("logs:clearFile"),
+  setNextUpdate: (url, nextUpdateAt) => ipcRenderer.invoke("profile:setNextUpdate", url, nextUpdateAt),
+  vcRuntime: () => ipcRenderer.invoke("verge:vcRuntime"),
+  downloadVc: () => ipcRenderer.invoke("verge:downloadVc"),
+  onLightweight: (cb) => {
+    const fn = (_e, data) => cb(data);
+    ipcRenderer.on("app:lightweight", fn);
+    return () => ipcRenderer.removeListener("app:lightweight", fn);
+  },
+
+  traffic: () => ipcRenderer.invoke("traffic:now"),
+  openExternal: (url) => ipcRenderer.invoke("open:external", url),
+
+  getSettings: () => ipcRenderer.invoke("settings:get"),
+  setSettings: (patch) => ipcRenderer.invoke("settings:set", patch),
+  applyNetwork: (patch) => ipcRenderer.invoke("settings:applyNetwork", patch),
+  openPath: (which) => ipcRenderer.invoke("settings:openPath", which),
+  copyText: (text) => ipcRenderer.invoke("settings:copy", text),
+  appInfo: () => ipcRenderer.invoke("app:info"),
+});

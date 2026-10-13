@@ -1,0 +1,194 @@
+{
+  "summary": [
+    {
+      "tab": "home",
+      "label": "首页",
+      "coldMs": 338,
+      "coldNodes": 458,
+      "coldLong": 191,
+      "warmMs": 355,
+      "warmLong": 189
+    },
+    {
+      "tab": "proxies",
+      "label": "代理",
+      "coldMs": 353,
+      "coldNodes": 554,
+      "coldLong": 105,
+      "warmMs": 796,
+      "warmLong": 140
+    },
+    {
+      "tab": "profiles",
+      "label": "订阅",
+      "coldMs": 263,
+      "coldNodes": 97,
+      "coldLong": 138,
+      "warmMs": 266,
+      "warmLong": 141
+    },
+    {
+      "tab": "connections",
+      "label": "连接",
+      "coldMs": 258,
+      "coldNodes": 28,
+      "coldLong": 108,
+      "warmMs": 292,
+      "warmLong": 142
+    },
+    {
+      "tab": "rules",
+      "label": "规则",
+      "coldMs": 568,
+      "coldNodes": 5710,
+      "coldLong": 268,
+      "warmMs": 314,
+      "warmLong": 161
+    },
+    {
+      "tab": "logs",
+      "label": "日志",
+      "coldMs": 305,
+      "coldNodes": 12,
+      "coldLong": 144,
+      "warmMs": 283,
+      "warmLong": 118
+    },
+    {
+      "tab": "tests",
+      "label": "测试",
+      "coldMs": 335,
+      "coldNodes": 153,
+      "coldLong": 171,
+      "warmMs": 278,
+      "warmLong": 120
+    },
+    {
+      "tab": "settings",
+      "label": "设置",
+      "coldMs": 339,
+      "coldNodes": 104,
+      "coldLong": 169,
+      "warmMs": 286,
+      "warmLong": 147
+    }
+  ],
+  "idleMutations": 0,
+  "totalDom": 7353,
+  "cold": {
+    "home": {
+      "ms": 338,
+      "frames": 6,
+      "timedOut": false,
+      "longMax": 191,
+      "nodes": 458
+    },
+    "proxies": {
+      "ms": 353,
+      "frames": 6,
+      "timedOut": false,
+      "longMax": 105,
+      "nodes": 554
+    },
+    "profiles": {
+      "ms": 263,
+      "frames": 5,
+      "timedOut": false,
+      "longMax": 138,
+      "nodes": 97
+    },
+    "connections": {
+      "ms": 258,
+      "frames": 5,
+      "timedOut": false,
+      "longMax": 108,
+      "nodes": 28
+    },
+    "rules": {
+      "ms": 568,
+      "frames": 6,
+      "timedOut": false,
+      "longMax": 268,
+      "nodes": 5710
+    },
+    "logs": {
+      "ms": 305,
+      "frames": 5,
+      "timedOut": false,
+      "longMax": 144,
+      "nodes": 12
+    },
+    "tests": {
+      "ms": 335,
+      "frames": 5,
+      "timedOut": false,
+      "longMax": 171,
+      "nodes": 153
+    },
+    "settings": {
+      "ms": 339,
+      "frames": 6,
+      "timedOut": false,
+      "longMax": 169,
+      "nodes": 104
+    }
+  },
+  "warm": {
+    "home": {
+      "ms": 355,
+      "frames": 6,
+      "timedOut": false,
+      "longMax": 189,
+      "nodes": 458
+    },
+    "proxies": {
+      "ms": 796,
+      "frames": 10,
+      "timedOut": false,
+      "longMax": 140,
+      "nodes": 316
+    },
+    "profiles": {
+      "ms": 266,
+      "frames": 6,
+      "timedOut": false,
+      "longMax": 141,
+      "nodes": 97
+    },
+    "connections": {
+      "ms": 292,
+      "frames": 5,
+      "timedOut": false,
+      "longMax": 142,
+      "nodes": 28
+    },
+    "rules": {
+      "ms": 314,
+      "frames": 5,
+      "timedOut": false,
+      "longMax": 161,
+      "nodes": 5710
+    },
+    "logs": {
+      "ms": 283,
+      "frames": 5,
+      "timedOut": false,
+      "longMax": 118,
+      "nodes": 12
+    },
+    "tests": {
+      "ms": 278,
+      "frames": 5,
+      "timedOut": false,
+      "longMax": 120,
+      "nodes": 153
+    },
+    "settings": {
+      "ms": 286,
+      "frames": 6,
+      "timedOut": false,
+      "longMax": 147,
+      "nodes": 104
+    }
+  }
+}

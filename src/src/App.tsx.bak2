@@ -1,0 +1,1618 @@
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  Cable,
+  Check,
+  Globe,
+  HardDrive,
+  Layers3,
+  LayoutDashboard,
+  Link2,
+  ListTree,
+  Minus,
+  Monitor,
+  Moon,
+  Network,
+  Plus,
+  Power,
+  Search,
+  Server,
+  SlidersHorizontal,
+  Sun,
+  Terminal,
+  FlaskConical,
+  Wifi,
+  X,
+  Zap,
+} from "lucide-react";
+import type { ConnectionItem, ProfileRich, ProxyNode } from "./vite-env";
+import appIcon from "./assets/app-icon.png";
+import SettingsPanel from "./SettingsPanel";
+import ConnectOrb from "./ConnectOrb";
+import WaveChart from "./WaveChart";
+import ConnectionsPage from "./ConnectionsPage";
+import RulesPage from "./RulesPage";
+import TestsPage from "./TestsPage";
+import YamlEditor from "./YamlEditor";
+import { ProxiesVisualEditor, GroupsVisualEditor } from "./VisualEditors";
+import { applyTheme, type ThemeMode } from "./theme";
+import { setLocale, t } from "./i18n";
+
+type Tab = "home" | "proxies" | "profiles" | "connections" | "rules" | "logs" | "tests" | "settings";
+type EnhanceKind = "merge" | "script" | "rules" | "proxies" | "groups";
+
+const GROUP_TYPES = new Set([
+  "Selector",
+  "URLTest",
+  "Fallback",
+  "LoadBalance",
+  "Relay",
+  "selector",
+  "url-test",
+  "fallback",
+  "load-balance",
+  "relay",
+]);
+
+function formatBytes(n = 0) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(2)} MB`;
+  return `${(n / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function formatRate(bps: number) {
+  if (bps < 1024) return `${Math.max(0, Math.round(bps))} B/s`;
+  if (bps < 1024 ** 2) return `${(bps / 1024).toFixed(1)} KB/s`;
+  return `${(bps / 1024 ** 2).toFixed(2)} MB/s`;
+}
+
+function delayClass(d?: number) {
+  if (d == null) return "na";
+  if (d <= 0) return "bad";
+  if (d < 200) return "good";
+  if (d < 500) return "mid";
+  return "bad";
+}
+
+function delayText(d?: number) {
+  if (d == null) return "—";
+  if (d <= 0) return "超时";
+  return `${d}`;
+}
+
+function isTestableNode(name: string) {
+  return !["DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE"].includes(name);
+}
+
+function sortNodesByDelay(names: string[], delays: Record<string, number>) {
+  return [...names].sort((a, b) => {
+    const da = delays[a];
+    const db = delays[b];
+    const sa = da == null ? 2 : da <= 0 ? 1 : 0;
+    const sb = db == null ? 2 : db <= 0 ? 1 : 0;
+    if (sa !== sb) return sa - sb;
+    if (sa === 0) return da - db;
+    return a.localeCompare(b, "zh");
+  });
+}
+
+async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T, i: number) => Promise<R>) {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < items.length) {
+      const i = cursor++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+  return results;
+}
+
+const MODE_LABEL: Record<string, string> = {
+  rule: "规则",
+  global: "全局",
+  direct: "直连",
+};
+
+const TAB_META: Record<Tab, { title: string; sub: string }> = {
+  home: { title: "首页", sub: "实时掌握代理运行状态与流量" },
+  proxies: { title: "代理组", sub: "选择出站节点 · 延迟与协议一览" },
+  profiles: { title: "订阅", sub: "订阅、增强、Provider 与运行时配置" },
+  connections: { title: "连接", sub: "筛选、排序与单条断开" },
+  rules: { title: "规则", sub: "可视化编辑路由规则" },
+  logs: { title: "日志", sub: "查看内核实时输出" },
+  tests: { title: "解锁测试", sub: "流媒体与 AI 平台可用性" },
+  settings: { title: "设置", sub: "网络 / TUN / DNS / 备份 / 热键" },
+};
+
+export default function App() {
+  const [tab, setTab] = useState<Tab>("home");
+  const [running, setRunning] = useState(false);
+  const [sysProxy, setSysProxy] = useState(false);
+  const [mode, setMode] = useState("rule");
+  const [toast, setToast] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [mixedPort, setMixedPort] = useState(17897);
+  const [controller, setController] = useState("127.0.0.1:19097");
+  const [version, setVersion] = useState("-");
+  const [upload, setUpload] = useState(0);
+  const [download, setDownload] = useState(0);
+  const [upRate, setUpRate] = useState(0);
+  const [downRate, setDownRate] = useState(0);
+  const [connections, setConnections] = useState<ConnectionItem[]>([]);
+  const [groups, setGroups] = useState<ProxyNode[]>([]);
+  const [proxyMap, setProxyMap] = useState<Record<string, ProxyNode>>({});
+  const [selectedGroup, setSelectedGroup] = useState("PROXY");
+  const [delays, setDelays] = useState<Record<string, number>>({});
+  const [query, setQuery] = useState("");
+  const [profileText, setProfileText] = useState("");
+  const [profileName, setProfileName] = useState("subscription.yaml");
+  const [subUrl, setSubUrl] = useState("");
+  const [profiles, setProfiles] = useState<
+    { name: string; size: number; uid?: string; type?: string; enabled?: boolean; global?: boolean; url?: string }[]
+  >([]);
+  const [richProfiles, setRichProfiles] = useState<ProfileRich[]>([]);
+  const [subs, setSubs] = useState<{ url: string; name: string; updatedAt: number; nextUpdateAt?: number }[]>([]);
+  const [nodeSortMode, setNodeSortMode] = useState<"delay" | "name" | "default">("delay");
+  const [enhanceLog, setEnhanceLog] = useState<string[]>([]);
+  const [editUid, setEditUid] = useState<string | null>(null);
+  const [exitIp, setExitIp] = useState<{ ip: string | null; country?: string; city?: string; isp?: string } | null>(
+    null
+  );
+  const [nodeUri, setNodeUri] = useState("");
+  const [providers, setProviders] = useState<{ proxies: string[]; rules: string[] }>({ proxies: [], rules: [] });
+  const [editorMode, setEditorMode] = useState<"profile" | "runtime">("profile");
+  const [bindTarget, setBindTarget] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testProgress, setTestProgress] = useState(0);
+  const [autoTest, setAutoTest] = useState(true);
+  const [autoPick, setAutoPick] = useState(true);
+  const [autoTestMs, setAutoTestMs] = useState(45_000);
+  const [subAutoUpdateMin, setSubAutoUpdateMin] = useState(0);
+  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+  const [activeCore, setActiveCore] = useState("mihomo");
+  const [lastTestAt, setLastTestAt] = useState(0);
+  const [testingNode, setTestingNode] = useState<string | null>(null);
+  const [rateHistory, setRateHistory] = useState<{ up: number[]; down: number[] }>({
+    up: [],
+    down: [],
+  });
+  const [banner, setBanner] = useState("");
+
+  const toastTimer = useRef<number | null>(null);
+  const lastSeqRef = useRef(0);
+  const trafficRef = useRef<{ up: number; down: number; t: number } | null>(null);
+  const selectedGroupRef = useRef(selectedGroup);
+  const testingRef = useRef(false);
+  const delaysRef = useRef(delays);
+  const autoPickRef = useRef(autoPick);
+  const groupsRef = useRef(groups);
+  const tabRef = useRef<Tab>(tab);
+  const visitedRef = useRef<Set<Tab>>(new Set<Tab>(["home"]));
+  const logBufRef = useRef<string[]>([]);
+  selectedGroupRef.current = selectedGroup;
+  delaysRef.current = delays;
+  autoPickRef.current = autoPick;
+  groupsRef.current = groups;
+  tabRef.current = tab;
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(""), 2400);
+  }, []);
+
+  const applyStatus = useCallback(
+    (data: { running?: boolean; seq?: number; version?: { version?: string } }) => {
+      if (typeof data.seq === "number") {
+        if (data.seq < lastSeqRef.current) return;
+        lastSeqRef.current = data.seq;
+      }
+      const r = !!data.running;
+      setRunning(r);
+      if (data.version && typeof data.version === "object" && "version" in data.version) {
+        setVersion(String(data.version.version));
+      }
+      if (!r) {
+        window.veyra
+          ?.systemProxyStatus()
+          .then((s) => setSysProxy(!!s.enabled))
+          .catch(() => {});
+      }
+    },
+    []
+  );
+
+  const refresh = useCallback(async () => {
+    if (!window.veyra) return;
+    try {
+      const st = await window.veyra.coreStatus();
+      applyStatus(st as { running?: boolean; seq?: number; version?: { version?: string } });
+      const heavy = tabRef.current === "home" || tabRef.current === "proxies";
+      if (!st.running) {
+        setUpRate(0);
+        setDownRate(0);
+        if (heavy) {
+          setRateHistory((h) => ({
+            up: [...h.up, 0].slice(-48),
+            down: [...h.down, 0].slice(-48),
+          }));
+          setConnections([]);
+        }
+        return;
+      }
+      const ov = await window.veyra.overview();
+      if (ov.mixedPort) setMixedPort(ov.mixedPort);
+      if (ov.controller) setController(ov.controller);
+      setMode(ov.configs?.mode || "rule");
+
+      const up = ov.connections?.uploadTotal || 0;
+      const down = ov.connections?.downloadTotal || 0;
+      const now = Date.now();
+      const prev = trafficRef.current;
+      let ur = 0;
+      let dr = 0;
+      if (prev && now > prev.t) {
+        const dt = (now - prev.t) / 1000;
+        ur = Math.max(0, (up - prev.up) / dt);
+        dr = Math.max(0, (down - prev.down) / dt);
+      }
+      setUpRate(ur);
+      setDownRate(dr);
+      trafficRef.current = { up, down, t: now };
+      setUpload(up);
+      setDownload(down);
+
+      if (heavy) {
+        setRateHistory((h) => ({
+          up: [...h.up, ur].slice(-48),
+          down: [...h.down, dr].slice(-48),
+        }));
+        setConnections(ov.connections?.connections || []);
+        const px = ov.proxies?.proxies || {};
+        setProxyMap(px);
+        const g = Object.values(px).filter((p) => GROUP_TYPES.has(p.type || ""));
+        setGroups(g);
+        if (g.length && !g.find((x) => x.name === selectedGroupRef.current)) {
+          setSelectedGroup(g[0].name || "");
+        }
+      }
+      setBanner("");
+
+      window.veyra
+        .systemProxyStatus()
+        .then((s) => setSysProxy(!!s.enabled))
+        .catch(() => {});
+    } catch {
+      /* transient */
+    }
+  }, []);
+
+  const goTab = useCallback(
+    (id: Tab) => {
+      visitedRef.current.add(id);
+      if (id === "logs" && logBufRef.current.length) {
+        const buf = logBufRef.current;
+        logBufRef.current = [];
+        setLogs((prev) => [...prev, ...buf].slice(-400));
+      }
+      startTransition(() => setTab(id));
+      if (id === "home" || id === "proxies") {
+        queueMicrotask(() => {
+          void refresh();
+        });
+      }
+    },
+    [refresh]
+  );
+
+  useEffect(() => {
+    if (!window.veyra) return;
+    const off1 = window.veyra.onCoreStatus((d) => {
+      applyStatus(d as { running?: boolean; seq?: number; version?: { version?: string } });
+    });
+    const off2 = window.veyra.onCoreLog((line) => {
+      if (tabRef.current === "logs") {
+        setLogs((prev) => [...prev.slice(-400), line]);
+      } else {
+        logBufRef.current.push(line);
+        if (logBufRef.current.length > 400) {
+          logBufRef.current = logBufRef.current.slice(-400);
+        }
+      }
+    });
+    const off3 = window.veyra.onCoreError((msg) => {
+      setBanner(msg);
+      showToast(msg);
+    });
+    const off4 = window.veyra.onSystemProxyChanged?.((d) => {
+      setSysProxy(!!(d as { enabled?: boolean }).enabled);
+    });
+
+    refresh();
+    window.veyra.readActiveProfile().then(setProfileText).catch(() => {});
+    const reloadProfiles = () => {
+      window.veyra?.listProfiles().then(setProfiles).catch(() => {});
+      window.veyra?.listProfilesRich?.().then(setRichProfiles).catch(() => {});
+      window.veyra?.listSubscriptions?.().then(setSubs).catch(() => {});
+    };
+    reloadProfiles();
+    window.veyra
+      .systemProxyStatus()
+      .then((s) => setSysProxy(!!s.enabled))
+      .catch(() => {});
+    window.veyra
+      .ports()
+      .then((p) => {
+        setMixedPort(p.mixedPort);
+        setController(p.controller);
+      })
+      .catch(() => {});
+    window.veyra
+      .getSettings()
+      .then((s) => {
+        setAutoTest(!!s.autoTest);
+        setAutoPick(!!s.autoPick);
+        setAutoTestMs(Math.max(15, s.autoTestIntervalSec || 45) * 1000);
+        setSubAutoUpdateMin(Math.max(0, s.subAutoUpdateMin || 0));
+        setActiveCore(s.core === "singbox" ? "singbox" : "mihomo");
+        const m = (s.theme as ThemeMode) || "system";
+        setThemeMode(m);
+        applyTheme(m);
+        if (s.locale) setLocale(s.locale);
+        if (s.nodeSort === "name" || s.nodeSort === "default" || s.nodeSort === "delay") {
+          setNodeSortMode(s.nodeSort);
+        }
+        if (s.customCss || s.themeColor) {
+          let el = document.getElementById("veyra-custom-css") as HTMLStyleElement | null;
+          if (!el) {
+            el = document.createElement("style");
+            el.id = "veyra-custom-css";
+            document.head.appendChild(el);
+          }
+          el.textContent = (s.themeColor ? `:root{--accent:${s.themeColor};}` : "") + "\n" + (s.customCss || "");
+        }
+      })
+      .catch(() => {
+        applyTheme("system");
+      });
+
+    const t = window.setInterval(refresh, 1500);
+    const onFocus = () => refresh();
+    const onVis = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      off1();
+      off2();
+      off3();
+      off4?.();
+      window.clearInterval(t);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+      if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    };
+  }, [refresh, showToast, applyStatus]);
+
+  const currentGroup = useMemo(
+    () => groups.find((g) => g.name === selectedGroup),
+    [groups, selectedGroup]
+  );
+
+  const nodes = useMemo(() => {
+    const all = currentGroup?.all || [];
+    const q = query.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter((n) => n.toLowerCase().includes(q));
+  }, [currentGroup, query]);
+
+  const sortedNodes = useMemo(() => {
+    if (nodeSortMode === "name") return [...nodes].sort((a, b) => a.localeCompare(b, "zh"));
+    if (nodeSortMode === "default") return nodes;
+    return sortNodesByDelay(nodes, delays);
+  }, [nodes, delays, nodeSortMode]);
+
+  const bestNode = useMemo(() => {
+    let best: { name: string; delay: number } | null = null;
+    for (const n of nodes) {
+      if (!isTestableNode(n)) continue;
+      const d = delays[n];
+      if (typeof d === "number" && d > 0 && (!best || d < best.delay)) best = { name: n, delay: d };
+    }
+    return best;
+  }, [nodes, delays]);
+
+  const recentConn = useMemo(() => connections.slice(0, 12), [connections]);
+
+  const currentNode = useMemo(() => {
+    const g = groups.find((x) => x.name === selectedGroup) || groups[0];
+    return g?.now || "—";
+  }, [groups, selectedGroup]);
+
+  const hasSubscription = groups.length > 0 || profiles.length > 0 || subs.length > 0;
+  const totalTraffic = upload + download;
+  const statusKey = !running ? "off" : running && sysProxy ? "on" : "idle";
+  const statusLabel = !running ? "未连接" : running && sysProxy ? "生效中" : "内核运行中";
+
+  const runSpeedTest = useCallback(
+    async (opts?: { silent?: boolean; pickBest?: boolean }) => {
+      if (!window.veyra || testingRef.current) return;
+      const groupName = selectedGroupRef.current;
+      const group = groupsRef.current.find((g) => g.name === groupName);
+      const all = group?.all || [];
+      const batch = all.filter(isTestableNode).slice(0, 80);
+      if (!batch.length) return;
+
+      testingRef.current = true;
+      setTesting(true);
+      setTestProgress(0);
+      if (!opts?.silent) showToast("测速中…");
+
+      const next = { ...delaysRef.current };
+      let done = 0;
+      await mapPool(batch, 8, async (n) => {
+        setTestingNode(n);
+        try {
+          const r = await window.veyra!.testDelay(n);
+          const d = r.data?.delay;
+          next[n] = typeof d === "number" ? d : 0;
+        } catch {
+          next[n] = 0;
+        }
+        done += 1;
+        setTestProgress(Math.round((done / batch.length) * 100));
+        setDelays({ ...next });
+      });
+
+      delaysRef.current = next;
+      setDelays(next);
+      setTestingNode(null);
+      setTesting(false);
+      testingRef.current = false;
+      setLastTestAt(Date.now());
+      setTestProgress(100);
+
+      const pick = opts?.pickBest ?? autoPickRef.current;
+      if (pick && window.veyra && group) {
+        let winner: string | null = null;
+        let best = Infinity;
+        for (const n of batch) {
+          const d = next[n];
+          if (typeof d === "number" && d > 0 && d < best) {
+            best = d;
+            winner = n;
+          }
+        }
+        if (winner && group.now !== winner) {
+          try {
+            await window.veyra.selectProxy(group.name || "", winner);
+            showToast(`已自动选用最低延迟：${winner}（${best} ms）`);
+            await refresh();
+          } catch {
+            showToast("自动切换节点失败");
+          }
+        } else if (winner && !opts?.silent) {
+          showToast(`最优节点：${winner}（${best} ms）`);
+        } else if (!opts?.silent) {
+          showToast("测速完成（无可用低延迟节点）");
+        }
+      } else if (!opts?.silent) {
+        showToast("测速完成");
+      }
+    },
+    [refresh, showToast]
+  );
+
+  useEffect(() => {
+    if (!running || !autoTest || !window.veyra) return;
+    let cancelled = false;
+    const kick = () => {
+      if (!cancelled) runSpeedTest({ silent: true, pickBest: autoPickRef.current });
+    };
+    const boot = window.setTimeout(kick, 1200);
+    const timer = window.setInterval(kick, autoTestMs);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(boot);
+      window.clearInterval(timer);
+    };
+  }, [running, autoTest, autoTestMs, selectedGroup, runSpeedTest]);
+
+  useEffect(() => {
+    if (themeMode !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    const onChange = () => applyTheme("system");
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [themeMode]);
+
+  async function changeTheme(m: ThemeMode) {
+    setThemeMode(m);
+    applyTheme(m);
+    await window.veyra?.setSettings({ theme: m });
+  }
+
+  useEffect(() => {
+    if (!running || !subAutoUpdateMin || !window.veyra) return;
+    const tick = async () => {
+      try {
+        const list = await window.veyra!.listSubscriptions();
+        if (!list.length) return;
+        const first = list[0];
+        await window.veyra!.importProfileUrl({ url: first.url, name: first.name });
+        showToast(`订阅已自动更新：${first.name}`);
+        refresh();
+      } catch (e) {
+        showToast(`订阅自动更新失败：${(e as Error).message || e}`);
+      }
+    };
+    const timer = window.setInterval(tick, subAutoUpdateMin * 60_000);
+    return () => window.clearInterval(timer);
+  }, [running, subAutoUpdateMin, refresh, showToast]);
+
+  async function toggleCore() {
+    if (!window.veyra) return showToast("请用 Electron 启动：npm run dev");
+    setBusy(true);
+    try {
+      if (running) {
+        const hadProxy = sysProxy;
+        await window.veyra.stopCore();
+        await refresh();
+        showToast(hadProxy ? "代理服务已停止，系统代理已关闭" : "代理服务已停止");
+      } else {
+        await window.veyra.startCore();
+        await refresh();
+        showToast("代理服务已启动");
+      }
+    } catch (e) {
+      showToast(String((e as Error).message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleSysProxy() {
+    if (!window.veyra) return;
+    setBusy(true);
+    try {
+      const next = !sysProxy;
+      const r = await window.veyra.setSystemProxy(next);
+      if (r.ok) {
+        setSysProxy(!!r.enabled);
+        showToast(next ? `系统代理 → 127.0.0.1:${mixedPort}` : "系统代理已关闭");
+      } else {
+        showToast("系统代理设置失败");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeMode(m: string) {
+    if (!window.veyra || !running) return;
+    await window.veyra.setMode(m);
+    setMode(m);
+    showToast(`模式：${MODE_LABEL[m] || m}`);
+  }
+
+  async function selectNode(name: string) {
+    if (!window.veyra || !currentGroup) return;
+    await window.veyra.selectProxy(currentGroup.name || "", name);
+    showToast(`已切换 → ${name}`);
+    refresh();
+  }
+
+  async function testAll() {
+    await runSpeedTest({ silent: false, pickBest: autoPick });
+  }
+
+  async function reloadProfileLists() {
+    if (!window.veyra) return;
+    setProfiles(await window.veyra.listProfiles());
+    setRichProfiles((await window.veyra.listProfilesRich?.()) || []);
+    setSubs(await window.veyra.listSubscriptions());
+  }
+
+  async function saveProfile() {
+    if (!window.veyra) return;
+    if (!profileText.trim()) return showToast("配置内容为空");
+    setBusy(true);
+    try {
+      if (editUid && window.veyra.writeProfile) {
+        await window.veyra.writeProfile(editUid, profileText);
+        const r = await window.veyra.enhanceApply?.();
+        const lines = [...(r?.warnings || []), ...(r?.scriptLogs || [])];
+        setEnhanceLog(lines);
+        showToast("已保存并重新增强");
+      } else {
+        const r = await window.veyra.importProfile({ name: profileName, content: profileText });
+        if (r.mixedPort) setMixedPort(r.mixedPort);
+        if (r.controller) setController(r.controller);
+        setEnhanceLog(r.warnings || []);
+        showToast("订阅已导入并增强");
+      }
+      await reloadProfileLists();
+      setProfileText(await window.veyra.readActiveProfile());
+      setEditUid(null);
+      await refresh();
+    } catch (e) {
+      showToast(String((e as Error).message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importFromUrl(url = subUrl) {
+    if (!window.veyra) return;
+    const u = url.trim();
+    if (!u) return showToast("请粘贴订阅链接");
+    setBusy(true);
+    try {
+      const r = await window.veyra.importProfileUrl({ url: u, name: profileName });
+      if (r.mixedPort) setMixedPort(r.mixedPort);
+      if (r.controller) setController(r.controller);
+      setProfileText(await window.veyra.readActiveProfile());
+      await reloadProfileLists();
+      setSubUrl(u);
+      setEditUid(null);
+      setEnhanceLog(r.warnings || []);
+      showToast(`链接导入成功（${r.bytes || 0} 字节）`);
+      await refresh();
+    } catch (e) {
+      showToast(String((e as Error).message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createEnhance(kind: EnhanceKind, global = false) {
+    if (!window.veyra?.createEnhanceProfile) return;
+    setBusy(true);
+    try {
+      const name = global ? `global-${kind}` : kind;
+      const item = await window.veyra.createEnhanceProfile(kind, name, global);
+      await reloadProfileLists();
+      if (item?.uid && window.veyra.readProfile) {
+        setEditUid(item.uid);
+        setProfileName(item.name);
+        setProfileText(await window.veyra.readProfile(item.uid));
+        setEditorMode("profile");
+      }
+      showToast(`已创建 ${kind}${global ? "（全局）" : ""}`);
+    } catch (e) {
+      showToast(String((e as Error).message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reloadProviders() {
+    try {
+      const p = await window.veyra?.listProviders?.();
+      setProviders({
+        proxies: Object.keys(p?.proxies || {}),
+        rules: Object.keys(p?.rules || {}),
+      });
+    } catch {
+      setProviders({ proxies: [], rules: [] });
+    }
+  }
+
+  async function applyEnhance() {
+    if (!window.veyra?.enhanceApply) return;
+    setBusy(true);
+    try {
+      const r = await window.veyra.enhanceApply();
+      const lines = [...(r.warnings || []), ...(r.scriptLogs || [])];
+      setEnhanceLog(lines);
+      setProfileText(await window.veyra.readActiveProfile());
+      showToast(lines.length ? `增强完成（${lines.length} 条提示）` : "增强已应用");
+      await refresh();
+    } catch (e) {
+      showToast(String((e as Error).message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const navItems = (
+    [
+      ["home", LayoutDashboard, t("nav.home", "首页"), null],
+      ["proxies", Wifi, t("nav.proxies", "代理"), nodes.length || groups.reduce((a, g) => a + (g.all?.length || 0), 0) || null],
+      ["profiles", Layers3, t("nav.profiles", "订阅"), subs.length + profiles.length || null],
+      ["connections", Cable, t("nav.connections", "连接"), connections.length || null],
+      ["rules", ListTree, t("nav.rules", "规则"), null],
+      ["logs", Terminal, t("nav.logs", "日志"), null],
+      ["tests", FlaskConical, t("nav.tests", "测试"), null],
+      ["settings", SlidersHorizontal, t("nav.settings", "设置"), null],
+    ] as const
+  );
+
+  return (
+    <div className={`app ${busy ? "busy" : ""} ${running ? "is-on" : ""} ${sysProxy ? "proxy-on" : ""}`}>
+      {/* ============ 左侧导航 ============ */}
+      <aside className="sidebar">
+        <div className="brand" data-drag>
+          <span className="brand-icon">
+            <img src={appIcon} alt="" draggable={false} />
+            <i className={`brand-dot ${statusKey === "on" ? "on" : statusKey === "idle" ? "idle" : ""}`} />
+          </span>
+          <div>
+            <div className="brand-name">
+              <b>Veyra</b>
+              <span className="ver-pill">v1.0</span>
+            </div>
+            <span className={`brand-sub ${statusKey === "on" ? "ok" : statusKey === "idle" ? "warn" : ""}`}>
+              {statusLabel}
+            </span>
+          </div>
+        </div>
+
+        <div className={`status-strip ${statusKey}`}>
+          <span className="status-orb" />
+          <div>
+            <b>{statusLabel}</b>
+            <span>{running ? `127.0.0.1:${mixedPort}` : "服务未启动"} · {activeCore === "singbox" ? "sing-box" : "mihomo"}</span>
+          </div>
+        </div>
+
+        <div className="menu-cap">导航</div>
+        <nav className="menu">
+          {navItems.map(([id, Icon, label, badge]) => (
+            <button
+              key={id}
+              type="button"
+              className={tab === id ? "active" : ""}
+              data-tip={label}
+              onClick={() => goTab(id)}
+            >
+              <span className="menu-ico">
+                <Icon size={18} strokeWidth={2.1} />
+              </span>
+              <span className="menu-label">{label}</span>
+              {typeof badge === "number" && badge > 0 ? (
+                <span className="nav-badge">{badge > 99 ? "99+" : badge}</span>
+              ) : null}
+            </button>
+          ))}
+        </nav>
+
+        <div className="side-foot">
+          <div className="side-card">
+            <div className="side-cap">
+              实时流量
+              {running ? <span className="side-live">RUN</span> : null}
+            </div>
+            <div className="side-rates">
+              <div className="rate" title="下载">
+                <span className="rate-ico dn"><ArrowDown size={13} strokeWidth={2.6} /></span>
+                <span className="rate-tx"><em>下载</em><b>{formatRate(downRate)}</b></span>
+              </div>
+              <div className="rate" title="上传">
+                <span className="rate-ico up"><ArrowUp size={13} strokeWidth={2.6} /></span>
+                <span className="rate-tx"><em>上传</em><b>{formatRate(upRate)}</b></span>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`side-core ${running ? "on" : ""}`}
+              onClick={toggleCore}
+              disabled={busy}
+              title={running ? "停止代理服务" : "启动代理服务"}
+            >
+              <Power size={15} strokeWidth={2.4} />
+              <span className="core-label">{running ? "停止服务" : "启动服务"}</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* ============ 右侧主区 ============ */}
+      <div className="content">
+        <header className="topbar">
+          <div className="topbar-title" data-drag>
+            <div className="title-main">{TAB_META[tab].title}</div>
+            <div className="title-sub">{TAB_META[tab].sub}</div>
+          </div>
+          <div className="topbar-actions">
+            <button
+              type="button"
+              className={`proxy-toggle ${sysProxy ? "on" : ""}`}
+              onClick={toggleSysProxy}
+              disabled={busy || (!running && !sysProxy)}
+              title="一键开关系统代理"
+            >
+              <span className="pt-dot" />
+              <span className="pt-text">系统代理 {sysProxy ? "开" : "关"}</span>
+              <span className="pt-switch" />
+            </button>
+            <div className="theme-seg" title="主题">
+              {(
+                [
+                  ["light", Sun],
+                  ["dark", Moon],
+                  ["system", Monitor],
+                ] as const
+              ).map(([modeKey, Icon]) => (
+                <button
+                  key={modeKey}
+                  type="button"
+                  className={themeMode === modeKey ? "active" : ""}
+                  onClick={() => changeTheme(modeKey)}
+                >
+                  <Icon size={14} />
+                </button>
+              ))}
+            </div>
+            <div className="win-btns">
+              <button type="button" onClick={() => window.veyra?.minimize()} aria-label="minimize">
+                <Minus size={16} />
+              </button>
+              <button type="button" className="close" onClick={() => window.veyra?.close()} aria-label="close">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {banner ? (
+          <div className="banner-err">
+            <span>{banner}</span>
+            <button type="button" className="btn ghost btn-sm" onClick={() => setBanner("")}>
+              关闭
+            </button>
+          </div>
+        ) : null}
+
+        <main className="stage">
+          {(tab === "home" || visitedRef.current.has("home")) && (
+            <div className="pane home" hidden={tab !== "home"}>
+              <ConnectOrb
+                sysProxy={sysProxy}
+                running={running}
+                busy={busy}
+                mixedPort={mixedPort}
+                nodeName={currentNode}
+                onToggleProxy={toggleSysProxy}
+                onToggleCore={toggleCore}
+              />
+
+              <div className="stat-tiles">
+                <div className="stat-tile">
+                  <span className="stat-ico dn"><ArrowDown size={17} strokeWidth={2.4} /></span>
+                  <span className="stat-tx"><em>下载速率</em><b>{formatRate(downRate)}</b></span>
+                </div>
+                <div className="stat-tile">
+                  <span className="stat-ico up"><ArrowUp size={17} strokeWidth={2.4} /></span>
+                  <span className="stat-tx"><em>上传速率</em><b>{formatRate(upRate)}</b></span>
+                </div>
+                <div className="stat-tile">
+                  <span className="stat-ico total"><HardDrive size={17} strokeWidth={2.2} /></span>
+                  <span className="stat-tx"><em>累计流量</em><b>{formatBytes(totalTraffic)}</b></span>
+                </div>
+                <div className="stat-tile">
+                  <span className="stat-ico sess"><Activity size={17} strokeWidth={2.2} /></span>
+                  <span className="stat-tx"><em>活跃会话</em><b>{connections.length}</b></span>
+                </div>
+                <div
+                  className="stat-tile"
+                  style={{ cursor: "pointer" }}
+                  title="点击刷新出口 IP"
+                  onClick={async () => {
+                    try {
+                      const r = await window.veyra?.exitIp?.();
+                      setExitIp(r || { ip: null });
+                      showToast(r?.ip ? `出口 ${r.ip}` : "未能获取出口 IP");
+                    } catch (e) {
+                      showToast(String((e as Error).message || e));
+                    }
+                  }}
+                >
+                  <span className="stat-ico total"><Globe size={17} strokeWidth={2.2} /></span>
+                  <span className="stat-tx">
+                    <em>出口 IP</em>
+                    <b>{exitIp?.ip || "点击检测"}</b>
+                  </span>
+                </div>
+              </div>
+
+              <section className="chart-card">
+                <div className="chart-hd">
+                  <div className="chart-title">
+                    <h2>实时速率</h2>
+                    {running ? <span className="chart-live">LIVE</span> : null}
+                  </div>
+                  <div className="chart-legend">
+                    <span className="lg dn">下载 {formatRate(downRate)}</span>
+                    <span className="lg up">上传 {formatRate(upRate)}</span>
+                  </div>
+                </div>
+                <div className="chart-body">
+                  <WaveChart up={rateHistory.up} down={rateHistory.down} />
+                </div>
+              </section>
+
+              <div className="home-grid">
+                <div className="block">
+                  <div className="block-hd">
+                    <h2><Globe size={15} /> 代理模式</h2>
+                    <span className="hd-count">{MODE_LABEL[mode] || mode}</span>
+                  </div>
+                  <div className="seg wide">
+                    {(["rule", "global", "direct"] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        className={mode === m ? "active" : ""}
+                        onClick={() => changeMode(m)}
+                        disabled={!running}
+                      >
+                        {MODE_LABEL[m]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mini-stats">
+                    <div>
+                      <em>累计上传</em>
+                      <b>{formatBytes(upload)}</b>
+                    </div>
+                    <div>
+                      <em>累计下载</em>
+                      <b>{formatBytes(download)}</b>
+                    </div>
+                    <div>
+                      <em>控制端口</em>
+                      <b>{controller.split(":")[1] || "—"}</b>
+                    </div>
+                  </div>
+                </div>
+
+                {!hasSubscription ? (
+                  <section className="block">
+                    <div className="block-hd">
+                      <h2><Plus size={15} /> 快速开始</h2>
+                    </div>
+                    <div className="empty-cta">
+                      <span className="cta-ico"><Link2 size={22} /></span>
+                      <p className="muted" style={{ margin: 0 }}>导入订阅链接后即可测速并选用节点。</p>
+                      <button type="button" className="btn primary" onClick={() => goTab("profiles")}>
+                        <Plus size={16} />
+                        导入订阅
+                      </button>
+                    </div>
+                  </section>
+                ) : (
+                  <button type="button" className="block node-jump" onClick={() => goTab("proxies")}>
+                    <div className="block-hd">
+                      <h2><Server size={15} /> 当前节点</h2>
+                      {bestNode ? <span className="nj-pill">最优 {bestNode.delay} ms</span> : null}
+                    </div>
+                    <strong title={currentNode}>{currentNode}</strong>
+                    <span className="nj-sub">
+                      {selectedGroup} · 点击前往节点页切换
+                    </span>
+                  </button>
+                )}
+              </div>
+
+              <section className="block conn-card">
+                <div className="block-hd">
+                  <h2><Network size={15} /> 活跃连接</h2>
+                  <span className="hd-count">{connections.length} 会话</span>
+                </div>
+                {!recentConn.length ? (
+                  <div className="empty slim">暂无出站连接 — 打开系统代理后开始浏览即可看到</div>
+                ) : (
+                  <div className="conn-table">
+                    {recentConn.map((c, i) => (
+                      <div key={c.id || i} className="conn-line">
+                        <span className="conn-host">
+                          <span className="conn-dot" />
+                          <b>{c.metadata?.host || c.metadata?.destinationIP || "unknown"}</b>
+                        </span>
+                        <i>{(c.chains || []).slice(-1)[0] || c.rule || "—"}</i>
+                        <em>{formatBytes(c.download || 0)}</em>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+
+          {(tab === "proxies" || visitedRef.current.has("proxies")) && (
+            <div className="pane px" hidden={tab !== "proxies"}>
+              <div className="px-header-card">
+                <div className="px-tabs">
+                  {groups.length ? (
+                    groups.map((g) => (
+                      <button
+                        key={g.name}
+                        type="button"
+                        className={`px-tab ${g.name === selectedGroup ? "active" : ""}`}
+                        onClick={() => setSelectedGroup(g.name || "")}
+                        title={g.name || ""}
+                      >
+                        <span className="gt-ico"><Server size={14} /></span>
+                        <span>
+                          <b>{g.name}</b>
+                          <small>{g.now || g.type}</small>
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="empty slim">暂无代理组 — 请先到订阅页导入配置</div>
+                  )}
+                </div>
+
+                <div className="px-toolbar">
+                  <div className="px-meta">
+                    <span className="meta-dot" />
+                    {nodes.length} 个节点
+                    {lastTestAt > 0 ? ` · 上次测速 ${new Date(lastTestAt).toLocaleTimeString()}` : ""}
+                  </div>
+                  <div className="px-tools">
+                    <label className="proxies-search">
+                      <Search size={15} />
+                      <input
+                        placeholder="搜索节点"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                      />
+                    </label>
+                    <label className="switch compact">
+                      <input
+                        type="checkbox"
+                        checked={autoTest}
+                        onChange={async (e) => {
+                          const v = e.target.checked;
+                          setAutoTest(v);
+                          await window.veyra?.setSettings({ autoTest: v });
+                        }}
+                      />
+                      自动测速
+                    </label>
+                    <label className="switch compact">
+                      <input
+                        type="checkbox"
+                        checked={autoPick}
+                        onChange={async (e) => {
+                          const v = e.target.checked;
+                          setAutoPick(v);
+                          await window.veyra?.setSettings({ autoPick: v });
+                        }}
+                      />
+                      选用最低
+                    </label>
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={testAll}
+                      disabled={!running || testing || !nodes.length}
+                    >
+                      <Zap size={15} />
+                      {testing ? `${testProgress}%` : "一键测速"}
+                    </button>
+                  </div>
+                </div>
+
+                {testing && (
+                  <div className="progress-line">
+                    <i style={{ width: `${testProgress}%` }} />
+                  </div>
+                )}
+              </div>
+
+              {!sortedNodes.length ? (
+                <div className="empty">没有可显示的节点</div>
+              ) : (
+                <div className="px-grid">
+                  {sortedNodes.map((n) => {
+                    const d = delays[n];
+                    const cls = delayClass(d);
+                    const active = currentGroup?.now === n;
+                    const isBest = bestNode?.name === n;
+                    const info = proxyMap[n];
+                    const ptype = info?.type || (GROUP_TYPES.has(info?.type || "") ? info?.type : "") || "";
+                    const isGroup = GROUP_TYPES.has(info?.type || "");
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        className={[
+                          "px-card",
+                          active ? "active" : "",
+                          isBest ? "best" : "",
+                          testingNode === n ? "testing" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        onClick={() => selectNode(n)}
+                        title={testingNode === n ? "正在测速…" : `切换到 ${n}`}
+                      >
+                        <span className={`px-dot ${active ? "on" : ""}`} />
+                        <span className="px-card-main">
+                          <span className="px-card-name" title={n}>{n}</span>
+                          <span className="px-card-meta">
+                            {ptype ? <em>{ptype}</em> : null}
+                            {info?.udp ? <i>UDP</i> : null}
+                            {info?.xudp ? <i>XUDP</i> : null}
+                            {isGroup ? <i>组</i> : null}
+                          </span>
+                        </span>
+                        <span className={`px-card-delay ${cls}`}>
+                          {testingNode === n ? "…" : delayText(d)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {(tab === "profiles" || visitedRef.current.has("profiles")) && (
+            <div className="pane pf" hidden={tab !== "profiles"}>
+              <section className="import-hero">
+                <h3><Link2 size={17} /> 订阅与增强</h3>
+                <p>Remote/Local · Merge/Script/Rules/Proxies/Groups · 订阅绑定 · Provider · 运行时配置</p>
+                <div className="import-bar">
+                  <Link2 size={16} />
+                  <input
+                    value={subUrl}
+                    onChange={(e) => setSubUrl(e.target.value)}
+                    placeholder="https://… 粘贴 Clash/Meta 订阅链接"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") importFromUrl();
+                    }}
+                  />
+                  <button type="button" className="btn primary" onClick={() => importFromUrl()} disabled={busy}>
+                    {busy ? "导入中…" : "导入"}
+                  </button>
+                </div>
+                <div className="import-bar" style={{ marginTop: 8 }}>
+                  <Server size={16} />
+                  <input
+                    value={nodeUri}
+                    onChange={(e) => setNodeUri(e.target.value)}
+                    placeholder="ss:// / vmess:// / vless:// / trojan:// 单节点 URI"
+                  />
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={busy}
+                    onClick={async () => {
+                      if (!nodeUri.trim()) return showToast("请粘贴节点 URI");
+                      setBusy(true);
+                      try {
+                        await window.veyra?.importNodeUri?.(nodeUri.trim());
+                        await reloadProfileLists();
+                        showToast("已导入节点 URI");
+                        setNodeUri("");
+                      } catch (e) {
+                        showToast(String((e as Error).message || e));
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    导入 URI
+                  </button>
+                </div>
+                <div className="s-actions wrap" style={{ marginTop: 12, gap: 8 }}>
+                  {(["merge", "script", "rules", "proxies", "groups"] as EnhanceKind[]).map((k) => (
+                    <button key={k} type="button" className="btn ghost btn-sm" disabled={busy} onClick={() => createEnhance(k, false)}>
+                      + {k}
+                    </button>
+                  ))}
+                  <button type="button" className="btn ghost btn-sm" disabled={busy} onClick={() => createEnhance("merge", true)}>
+                    + 全局 Merge
+                  </button>
+                  <button type="button" className="btn ghost btn-sm" disabled={busy} onClick={() => createEnhance("script", true)}>
+                    + 全局 Script
+                  </button>
+                  <button type="button" className="btn primary btn-sm" disabled={busy} onClick={() => applyEnhance()}>
+                    重新增强并应用
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost btn-sm"
+                    onClick={async () => {
+                      setEditorMode("runtime");
+                      setEditUid(null);
+                      setProfileName("runtime.yaml");
+                      setProfileText((await window.veyra?.readRuntime?.()) || "");
+                    }}
+                  >
+                    查看运行时配置
+                  </button>
+                  <button type="button" className="btn ghost btn-sm" onClick={() => reloadProviders()}>
+                    刷新 Provider
+                  </button>
+                </div>
+              </section>
+
+              <div className="pf-grid">
+                <section className="pf-card">
+                  <div className="pf-card-hd">
+                    <h2><Layers3 size={15} /> 配置列表</h2>
+                    <span className="hd-count">{richProfiles.length || profiles.length}</span>
+                  </div>
+                  {!(richProfiles.length || profiles.length) ? (
+                    <div className="empty slim">尚无配置 — 导入订阅或创建 Merge/Script</div>
+                  ) : (
+                    <div className="pf-list">
+                      {(richProfiles.length
+                        ? richProfiles.map((p) => ({
+                            key: p.uid,
+                            uid: p.uid,
+                            name: p.name,
+                            sub: `${p.type}${p.global ? " · 全局" : ""}${p.url ? ` · ${p.url}` : ""}`,
+                            size: p.size,
+                            enabled: p.enabled,
+                            type: p.type,
+                          }))
+                        : profiles.map((p) => ({
+                            key: p.uid || p.name,
+                            uid: p.uid,
+                            name: p.name,
+                            sub: p.type || "file",
+                            size: p.size,
+                            enabled: p.enabled !== false,
+                            type: (p.type as ProfileRich["type"]) || "local",
+                          }))
+                      ).map((p) => (
+                        <div key={p.key} className="pf-item">
+                          <span className="pf-item-ico"><Layers3 size={15} /></span>
+                          <div className="pf-item-body">
+                            <div className="pf-item-name">{p.name}</div>
+                            <div className="pf-item-sub">{p.sub}</div>
+                          </div>
+                          <div className="pf-item-side" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            {p.uid && (p.type === "remote" || p.type === "local") ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn ghost btn-sm"
+                                  onClick={async () => {
+                                    await window.veyra?.activateProfile?.(p.uid!);
+                                    await applyEnhance();
+                                    showToast(`已激活 ${p.name}`);
+                                  }}
+                                >
+                                  激活
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn ghost btn-sm"
+                                  onClick={() => setBindTarget(bindTarget === p.uid ? null : p.uid!)}
+                                >
+                                  绑定
+                                </button>
+                              </>
+                            ) : null}
+                            {p.uid &&
+                            (p.type === "merge" ||
+                              p.type === "script" ||
+                              p.type === "rules" ||
+                              p.type === "proxies" ||
+                              p.type === "groups") ? (
+                              <label className="switch compact" title="启用增强">
+                                <input
+                                  type="checkbox"
+                                  checked={!!p.enabled}
+                                  onChange={async (e) => {
+                                    await window.veyra?.setProfileEnabled?.(p.uid!, e.target.checked);
+                                    await reloadProfileLists();
+                                  }}
+                                />
+                              </label>
+                            ) : null}
+                            {p.uid ? (
+                              <button
+                                type="button"
+                                className="btn ghost btn-sm"
+                                onClick={async () => {
+                                  const text = await window.veyra?.readProfile?.(p.uid!);
+                                  if (text != null) {
+                                    setEditUid(p.uid!);
+                                    setProfileName(p.name);
+                                    setProfileText(text);
+                                    setEditorMode("profile");
+                                  }
+                                }}
+                              >
+                                编辑
+                              </button>
+                            ) : null}
+                            <span className="pf-item-date">{formatBytes(p.size)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                <section className="pf-card">
+                  <div className="pf-card-hd">
+                    <h2><Globe size={15} /> 订阅链接</h2>
+                    <span className="hd-count">{subs.length}</span>
+                  </div>
+                  {!subs.length ? (
+                    <div className="empty slim">导入过的链接会出现在这里，点击可重新拉取</div>
+                  ) : (
+                    <div className="pf-list">
+                      {subs.map((s) => (
+                        <div key={s.url} className="pf-item">
+                          <button
+                            type="button"
+                            className="pf-item"
+                            style={{ flex: 1, border: 0, background: "transparent", padding: 0 }}
+                            onClick={() => {
+                              setSubUrl(s.url);
+                              importFromUrl(s.url);
+                            }}
+                            title={s.url}
+                          >
+                            <span className="pf-item-ico"><Link2 size={15} /></span>
+                            <div className="pf-item-body">
+                              <div className="pf-item-name">{s.name}</div>
+                              <div className="pf-item-sub">
+                                {s.url}
+                                {s.nextUpdateAt
+                                  ? ` · 下次 ${new Date(s.nextUpdateAt).toLocaleString()}`
+                                  : ""}
+                              </div>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            className="btn ghost btn-sm"
+                            title="推迟 1 小时更新"
+                            onClick={async () => {
+                              const next = Date.now() + 3600000;
+                              await window.veyra?.setNextUpdate?.(s.url, next);
+                              await reloadProfileLists();
+                              showToast("下次更新已改为 1 小时后");
+                            }}
+                          >
+                            改期
+                          </button>
+                          <span className="pf-item-date">
+                            {s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : "—"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </div>
+
+              {bindTarget ? (
+                <section className="block" style={{ marginTop: 12 }}>
+                  <div className="block-hd">
+                    <h2>订阅绑定扩展</h2>
+                    <span className="pill dim">{bindTarget.slice(0, 8)}</span>
+                  </div>
+                  <p className="s-muted">为该 Remote/Local 指定专用 Merge / Script / Rules / Proxies / Groups</p>
+                  <div className="s-fields">
+                    {(["merge", "script", "rules", "proxies", "groups"] as const).map((k) => (
+                      <label key={k}>
+                        {k}
+                        <select
+                          className="s-input"
+                          defaultValue={richProfiles.find((x) => x.uid === bindTarget)?.binds?.[k] || ""}
+                          onChange={async (e) => {
+                            const cur = richProfiles.find((x) => x.uid === bindTarget);
+                            const binds = { ...(cur?.binds || {}), [k]: e.target.value || null };
+                            await window.veyra?.setProfileBinds?.(bindTarget, binds);
+                            await reloadProfileLists();
+                            showToast(`已绑定 ${k}`);
+                          }}
+                        >
+                          <option value="">（无）</option>
+                          {richProfiles
+                            .filter((x) => x.type === k || (k === "merge" && x.type === "merge"))
+                            .map((x) => (
+                              <option key={x.uid} value={x.uid}>
+                                {x.name}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {(providers.proxies.length || providers.rules.length) ? (
+                <section className="block" style={{ marginTop: 12 }}>
+                  <div className="block-hd"><h2>Provider</h2></div>
+                  <div className="pf-list">
+                    {providers.proxies.map((n) => (
+                      <div key={`pp-${n}`} className="pf-item">
+                        <div className="pf-item-body">
+                          <div className="pf-item-name">{n}</div>
+                          <div className="pf-item-sub">proxy-provider</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn ghost btn-sm"
+                          onClick={async () => {
+                            await window.veyra?.updateProvider?.("proxies", n);
+                            showToast(`已更新 ${n}`);
+                          }}
+                        >
+                          更新
+                        </button>
+                      </div>
+                    ))}
+                    {providers.rules.map((n) => (
+                      <div key={`rp-${n}`} className="pf-item">
+                        <div className="pf-item-body">
+                          <div className="pf-item-name">{n}</div>
+                          <div className="pf-item-sub">rule-provider</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn ghost btn-sm"
+                          onClick={async () => {
+                            await window.veyra?.updateProvider?.("rules", n);
+                            showToast(`已更新 ${n}`);
+                          }}
+                        >
+                          更新
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {enhanceLog.length ? (
+                <section className="block" style={{ marginTop: 12 }}>
+                  <div className="block-hd"><h2>增强日志</h2></div>
+                  <pre className="term-body" style={{ maxHeight: 120 }}>{enhanceLog.join("\n")}</pre>
+                </section>
+              ) : null}
+
+              <section className="block" style={{ marginTop: 12 }}>
+                <ProxiesVisualEditor onToast={showToast} onBusy={setBusy} />
+              </section>
+              <section className="block" style={{ marginTop: 12 }}>
+                <GroupsVisualEditor onToast={showToast} onBusy={setBusy} />
+              </section>
+
+              <section className="editor-card">
+                <div className="editor-bar">
+                  <input
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    placeholder={editorMode === "runtime" ? "runtime.yaml" : editUid ? "正在编辑已有配置" : "文件名"}
+                  />
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={busy}
+                    onClick={async () => {
+                      if (editorMode === "runtime") {
+                        setBusy(true);
+                        try {
+                          await window.veyra?.writeRuntime?.(profileText);
+                          showToast("运行时配置已写入并重载");
+                          await refresh();
+                        } catch (e) {
+                          showToast(String((e as Error).message || e));
+                        } finally {
+                          setBusy(false);
+                        }
+                      } else {
+                        await saveProfile();
+                      }
+                    }}
+                  >
+                    {editorMode === "runtime" ? "保存运行时" : editUid ? "保存并增强" : "保存 YAML"}
+                  </button>
+                </div>
+                <YamlEditor
+                  value={profileText}
+                  onChange={setProfileText}
+                  placeholder="粘贴 YAML / Merge / Script…"
+                  hint={editorMode === "runtime" ? "运行时配置（增强产物，可直接改）· schema: Clash Meta" : "YAML 编辑器 · 支持 Merge delete-rules 等"}
+                />
+              </section>
+            </div>
+          )}
+
+          {(tab === "rules" || visitedRef.current.has("rules")) && (
+            <div className="pane" hidden={tab !== "rules"}>
+              <RulesPage onToast={showToast} onBusy={setBusy} />
+            </div>
+          )}
+
+          {(tab === "connections" || visitedRef.current.has("connections")) && (
+            <div className="pane" hidden={tab !== "connections"}>
+              <ConnectionsPage onToast={showToast} />
+            </div>
+          )}
+
+          {(tab === "logs" || visitedRef.current.has("logs")) && (
+            <div className="pane term" hidden={tab !== "logs"}>
+              <div className="term-bar">
+                <div className="term-title">
+                  <span className="term-dots"><i /><i /><i /></span>
+                  <h1>内核日志</h1>
+                  <span className="pill dim">{logs.length} 行</span>
+                </div>
+                <div className="s-actions">
+                  <button
+                    type="button"
+                    className="btn ghost btn-sm"
+                    onClick={async () => {
+                      const r = await window.veyra?.clearLogFiles?.();
+                      showToast(`已清理文件 ${r?.removed || 0} 个`);
+                    }}
+                  >
+                    清理日志文件
+                  </button>
+                  <button type="button" className="btn ghost btn-sm" onClick={() => setLogs([])}>
+                    清空屏幕
+                  </button>
+                </div>
+              </div>
+              <pre className="term-body">{logs.join("") || "等待代理服务输出…\n启动内核后，这里会实时显示 mihomo 日志。"}</pre>
+            </div>
+          )}
+
+          {(tab === "tests" || visitedRef.current.has("tests")) && (
+            <div className="pane" hidden={tab !== "tests"}>
+              <TestsPage running={running} onToast={showToast} />
+            </div>
+          )}
+
+          {(tab === "settings" || visitedRef.current.has("settings")) && (
+            <div className="pane" hidden={tab !== "settings"}>
+              <SettingsPanel
+                running={running}
+                mixedPort={mixedPort}
+                controller={controller}
+                version={version}
+                autoTest={autoTest}
+                autoPick={autoPick}
+                themeMode={themeMode}
+                onThemeChange={changeTheme}
+                onToast={showToast}
+                onBusy={setBusy}
+                onPorts={(m, c) => {
+                  setMixedPort(m);
+                  setController(c);
+                }}
+                onPrefs={(p) => {
+                  if (p.autoTest != null) setAutoTest(p.autoTest);
+                  if (p.autoPick != null) setAutoPick(p.autoPick);
+                  if (p.autoTestIntervalSec != null) {
+                    setAutoTestMs(Math.max(15, p.autoTestIntervalSec) * 1000);
+                  }
+                  if (p.subAutoUpdateMin != null) {
+                    setSubAutoUpdateMin(Math.max(0, p.subAutoUpdateMin));
+                  }
+                }}
+                onRefresh={refresh}
+                onCoreChange={setActiveCore}
+              />
+            </div>
+          )}
+        </main>
+      </div>
+
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}

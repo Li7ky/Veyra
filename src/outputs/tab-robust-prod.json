@@ -1,0 +1,194 @@
+{
+  "summary": [
+    {
+      "tab": "home",
+      "label": "首页",
+      "coldBlock": 0,
+      "coldSettled": 30,
+      "nodes": 466,
+      "warmBlock": 0,
+      "warmSettled": 7
+    },
+    {
+      "tab": "proxies",
+      "label": "代理",
+      "coldBlock": 0,
+      "coldSettled": 24,
+      "nodes": 554,
+      "warmBlock": 0,
+      "warmSettled": 40
+    },
+    {
+      "tab": "profiles",
+      "label": "订阅",
+      "coldBlock": 0,
+      "coldSettled": 6,
+      "nodes": 97,
+      "warmBlock": 0,
+      "warmSettled": 4
+    },
+    {
+      "tab": "connections",
+      "label": "连接",
+      "coldBlock": 0,
+      "coldSettled": 6,
+      "nodes": 28,
+      "warmBlock": 0,
+      "warmSettled": 5
+    },
+    {
+      "tab": "rules",
+      "label": "规则",
+      "coldBlock": 0,
+      "coldSettled": 5,
+      "nodes": 266,
+      "warmBlock": 0,
+      "warmSettled": 5
+    },
+    {
+      "tab": "logs",
+      "label": "日志",
+      "coldBlock": 0,
+      "coldSettled": 5,
+      "nodes": 12,
+      "warmBlock": 0,
+      "warmSettled": 5
+    },
+    {
+      "tab": "tests",
+      "label": "测试",
+      "coldBlock": 0,
+      "coldSettled": 7,
+      "nodes": 153,
+      "warmBlock": 0,
+      "warmSettled": 6
+    },
+    {
+      "tab": "settings",
+      "label": "设置",
+      "coldBlock": 0,
+      "coldSettled": 9,
+      "nodes": 104,
+      "warmBlock": 0,
+      "warmSettled": 5
+    }
+  ],
+  "rounds": [
+    {
+      "home": {
+        "blockMs": 0,
+        "settledMs": 30,
+        "polls": 1,
+        "nodes": 466,
+        "cls": "pane home"
+      },
+      "proxies": {
+        "blockMs": 0,
+        "settledMs": 24,
+        "polls": 1,
+        "nodes": 554,
+        "cls": "pane px"
+      },
+      "profiles": {
+        "blockMs": 0,
+        "settledMs": 6,
+        "polls": 1,
+        "nodes": 97,
+        "cls": "pane pf"
+      },
+      "connections": {
+        "blockMs": 0,
+        "settledMs": 6,
+        "polls": 1,
+        "nodes": 28,
+        "cls": "pane"
+      },
+      "rules": {
+        "blockMs": 0,
+        "settledMs": 5,
+        "polls": 1,
+        "nodes": 266,
+        "cls": "pane"
+      },
+      "logs": {
+        "blockMs": 0,
+        "settledMs": 5,
+        "polls": 1,
+        "nodes": 12,
+        "cls": "pane term"
+      },
+      "tests": {
+        "blockMs": 0,
+        "settledMs": 7,
+        "polls": 1,
+        "nodes": 153,
+        "cls": "pane"
+      },
+      "settings": {
+        "blockMs": 0,
+        "settledMs": 9,
+        "polls": 1,
+        "nodes": 104,
+        "cls": "pane"
+      }
+    },
+    {
+      "home": {
+        "blockMs": 0,
+        "settledMs": 7,
+        "polls": 1,
+        "nodes": 466,
+        "cls": "pane home"
+      },
+      "proxies": {
+        "blockMs": 0,
+        "settledMs": 40,
+        "polls": 1,
+        "nodes": 554,
+        "cls": "pane px"
+      },
+      "profiles": {
+        "blockMs": 0,
+        "settledMs": 4,
+        "polls": 1,
+        "nodes": 97,
+        "cls": "pane pf"
+      },
+      "connections": {
+        "blockMs": 0,
+        "settledMs": 5,
+        "polls": 1,
+        "nodes": 28,
+        "cls": "pane"
+      },
+      "rules": {
+        "blockMs": 0,
+        "settledMs": 5,
+        "polls": 1,
+        "nodes": 266,
+        "cls": "pane"
+      },
+      "logs": {
+        "blockMs": 0,
+        "settledMs": 5,
+        "polls": 1,
+        "nodes": 12,
+        "cls": "pane term"
+      },
+      "tests": {
+        "blockMs": 0,
+        "settledMs": 6,
+        "polls": 1,
+        "nodes": 153,
+        "cls": "pane"
+      },
+      "settings": {
+        "blockMs": 0,
+        "settledMs": 5,
+        "polls": 1,
+        "nodes": 104,
+        "cls": "pane"
+      }
+    }
+  ]
+}

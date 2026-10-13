@@ -1,0 +1,33 @@
+# Veyra — default runtime config
+mixed-port: 17897
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:19097
+secret: veyra-secret
+unified-delay: true
+tcp-concurrent: true
+find-process-mode: strict
+
+profile:
+  store-selected: true
+
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver:
+    - 223.5.5.5
+    - 8.8.8.8
+
+proxies: []
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - DIRECT
+
+rules:
+  - MATCH,PROXY

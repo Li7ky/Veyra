@@ -30,6 +30,12 @@ contextBridge.exposeInMainWorld("veyra", {
     ipcRenderer.on("core:error", fn);
     return () => ipcRenderer.removeListener("core:error", fn);
   },
+  onCoreProgress: (cb) => {
+    // 长时间操作进度反馈：{ phase: string, pct: number, label: string }
+    const fn = (_e, data) => cb(data);
+    ipcRenderer.on("core:progress", fn);
+    return () => ipcRenderer.removeListener("core:progress", fn);
+  },
 
   overview: () => ipcRenderer.invoke("proxy:overview"),
   ports: () => ipcRenderer.invoke("app:ports"),

@@ -540,6 +540,14 @@ export default function App() {
     const off4 = window.veyra.onSystemProxyChanged?.((d) => {
       setSysProxy(!!(d as { enabled?: boolean }).enabled);
     });
+    const off5 = window.veyra.onCoreProgress?.((d: { phase: string; pct: number; label: string }) => {
+      if (d.pct >= 100) {
+        setBanner("");
+        showToast(d.label, 2000);
+      } else {
+        setBanner(`${d.label} (${d.pct}%)`);
+      }
+    });
 
     refresh();
     window.veyra.readActiveProfile().then(setProfileText).catch(() => {});
@@ -614,6 +622,7 @@ export default function App() {
       off2();
       off3();
       off4?.();
+      off5?.();
       window.clearInterval(t);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVis);

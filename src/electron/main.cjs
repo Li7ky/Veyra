@@ -194,6 +194,12 @@ function binPath() {
   return path.join(resourcesRoot(), "bin", name);
 }
 
+function sendProgress(phase, pct, label) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.webContents.send("core:progress", { phase, pct, label }); } catch {}
+  }
+}
+
 // ---- 双核管理：mihomo（默认） + sing-box（实验） ----
 function coreBinPath(core) {
   if (core === "singbox") {
@@ -263,6 +269,7 @@ async function materializeRuleSets(config) {
 
 // 把当前生效的 Clash YAML 翻译成 sing-box 配置并落盘；订阅为空时生成直连保底，保证能启动
 async function rebuildSingboxConfig() {
+  sendProgress("singbox:build", 5, "正在解析 Clash 订阅…");
   ensureDirs();
   let clash = {};
   try {
@@ -276,6 +283,7 @@ async function rebuildSingboxConfig() {
     }
   }
   if (!clash || typeof clash !== "object") clash = {};
+  sendProgress("singbox:build", 25, "正在转换 Clash → sing-box…");
   const { config, warnings, stats } = convertClashToSingbox(clash, {
     mixedPort: MIXED_PORT,
     controllerHost: "127.0.0.1",
@@ -284,6 +292,7 @@ async function rebuildSingboxConfig() {
     allowLan: !!(appSettings && appSettings.allowLan),
     logLevel: (appSettings && appSettings.logLevel) || "info",
   });
+  sendProgress("singbox:build", 55, "正在下载 rule-set 文件…");
   try {
     const dropped = await materializeRuleSets(config);
     if (dropped.length) {
@@ -291,7 +300,9 @@ async function rebuildSingboxConfig() {
       stats.rules = Array.isArray(config.route?.rules) ? config.route.rules.length : stats.rules;
     }
   } catch {}
+  sendProgress("singbox:build", 90, "正在写入 sing-box 配置…");
   fs.writeFileSync(singboxConfig(), JSON.stringify(config, null, 2), "utf8");
+  sendProgress("singbox:build", 100, "sing-box 配置已就绪");
   if (mainWindow) {
     const lines = [
       `[veyra] sing-box 配置已生成：${stats.nodes} 节点 / ${stats.groups} 分组 / ${stats.rules} 规则\n`,
@@ -467,13 +478,16 @@ function parseSubscriptionUserinfo(headers = {}) {
 }
 
 async function fetchSubscription(urlStr, opts = {}) {
+  sendProgress("sub:download", 10, "正在下载订阅…");
   // 只用Veyra自身代理，失败再直连；不走任何第三方客户端端口
   const viaProxy = appSettings?.subUpdateViaProxy !== false;
   const proxies = viaProxy ? [`http://127.0.0.1:${MIXED_PORT}`, null] : [null, `http://127.0.0.1:${MIXED_PORT}`];
   let lastErr;
   for (const p of proxies) {
     try {
-      return await fetchWithPowershell(urlStr, p, opts.timeoutMs);
+      const result = await fetchWithPowershell(urlStr, p, opts.timeoutMs);
+      sendProgress("sub:download", 60, "订阅下载完成，正在解析…");
+      return result;
     } catch (e) {
       lastErr = e;
     }

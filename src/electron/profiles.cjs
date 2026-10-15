@@ -9,7 +9,7 @@ function nowMs() {
 function sanitizeName(name) {
   const s = String(name || "profile")
     .trim()
-    .replace(/[\/\\:*?"<>|]/g, "_");
+    .replace(/[/\\:*?"<>|]/g, "_");
   return (
     s
       .replace(/\.ya?ml$/i, "")

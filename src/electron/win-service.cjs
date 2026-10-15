@@ -41,7 +41,7 @@ async function installService({ binPath, workDir, configFile }) {
   const wd = workDir.replace(/"/g, "");
   const cfg = configFile.replace(/"/g, "");
   // binPath 含参数时 sc 需要整体引号转义
-  const binPathArg = `\\\"${bin}\\\" -d \\\"${wd}\\\" -f \\\"${cfg}\\\"`;
+  const binPathArg = `\\"${bin}\\" -d \\"${wd}\\" -f \\"${cfg}\\"`;
   const script = `
 $ErrorActionPreference = 'Stop'
 $svc = Get-Service -Name '${SERVICE_NAME}' -ErrorAction SilentlyContinue

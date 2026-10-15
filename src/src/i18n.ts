@@ -124,7 +124,9 @@ export function setLocale(locale: string) {
   current = catalogs[l] ? l : "zh";
   try {
     document.documentElement.lang = current;
-  } catch {}
+  } catch {
+    /* 非浏览器环境（SSR/测试）无 document，忽略 */
+  }
 }
 
 export function getLocale(): Locale {

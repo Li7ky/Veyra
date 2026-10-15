@@ -262,7 +262,7 @@ async function materializeRuleSets(config) {
   const next = [];
   for (const s of sets) {
     if (!s || !s.url || !s.tag) continue;
-    const dest = path.join(rulesetsDir(), `${String(s.tag).replace(/[^\w.\-]/g, "_")}.srs`);
+    const dest = path.join(rulesetsDir(), `${String(s.tag).replace(/[^\w.-]/g, "_")}.srs`);
     const have = fs.existsSync(dest) && fs.statSync(dest).size > 0;
     if (!have) {
       try {
@@ -350,7 +350,7 @@ async function pickPorts() {
 }
 
 function patchYamlKey(yaml, key, value) {
-  const safeVal = /[:#\[\]{}|>&*!?,@`]/.test(value) ? JSON.stringify(value) : value;
+  const safeVal = /[:#[\]{}|>&*!?,@`]/.test(value) ? JSON.stringify(value) : value;
   const re = new RegExp(`^${key}:\\s*.+$`, "m");
   if (re.test(yaml)) return yaml.replace(re, `${key}: ${safeVal}`);
   return `${key}: ${safeVal}\n` + yaml;
@@ -702,10 +702,15 @@ function setLightweight(on) {
 }
 
 async function reloadRuntimeConfig() {
-  await pickPorts();
+  // 内核运行中时首选端口被自身占用，pickPorts 必判 false 而把端口漂移到 +10003，
+  // 随后 api() 打到死端口 → 落入 catch 强制全量重启并清掉系统代理。
+  // 故仅在内核未运行时才挑端口；运行中沿用现端口，让 mihomo 走真正的热重载。
+  const wasRunning = !!(coreProc || coreOnline);
+  if (!wasRunning) {
+    await pickPorts();
+  }
   // enhance 已写端口；再补丁一次防漂移
   patchRuntimePorts();
-  const wasRunning = !!(coreProc || coreOnline);
   if (activeCore === "singbox") {
     const wasProxy = sysProxyOn;
     if (wasRunning) {
@@ -719,8 +724,11 @@ async function reloadRuntimeConfig() {
     try {
       await api("/configs?force=true", "PUT", { path: runtimeConfig() });
     } catch {
-      await stopCore();
+      // 热重载失败需重启：保留系统代理并在重启后恢复，避免断流后代理被静默关闭
+      const wasProxy = sysProxyOn;
+      await stopCore({ clearProxy: false });
       await startCore();
+      if (wasProxy) await setSystemProxy(true);
     }
   }
   // 内核未运行时保持停止：更新订阅/切换配置不得自动拉起服务（用户显式启停为准）
@@ -889,13 +897,22 @@ async function startCore() {
     cwd: configDir(),
     windowsHide: true,
   });
+  const spawned = coreProc;
   const onData = (buf) => {
     const line = buf.toString();
-    if (mainWindow) mainWindow.webContents.send("core:log", line);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("core:log", line);
   };
   coreProc.stdout?.on("data", onData);
   coreProc.stderr?.on("data", onData);
+  // spawn 失败（无执行权限/被杀软拦截/二进制损坏）若无监听会抛未捕获异常致主进程崩溃
+  coreProc.on("error", (err) => {
+    if (coreProc === spawned) coreProc = null;
+    setCoreOnline(false, { code: -1, error: String((err && err.message) || err) });
+  });
   coreProc.on("exit", (code) => {
+    // 仅当退出的是当前内核时才清理：stop→start 重启序列里旧进程 exit 事件可能迟到，
+    // 不校验会误清新内核 coreProc 引用、并清掉刚恢复的系统代理。
+    if (coreProc !== spawned) return;
     coreProc = null;
     // 进程异常退出时清掉我们留下的系统代理，避免指向死端口
     clearOurSystemProxy()
@@ -1080,9 +1097,17 @@ function isOurProxyServer(server) {
 /** 仅关闭指向本机Veyra端口的系统代理，不误伤其它代理软件 */
 async function clearOurSystemProxy() {
   const st = await getSystemProxyStatus();
+  // PAC 模式下 ProxyEnable=0，故 ours / st.enabled 恒为 false，但 AutoConfigURL 仍指向本地 PAC；
+  // 用 systemProxyStatusRaw 的 pacUrl 兜底识别（指向 127.0.0.1/localhost 的 PAC 即视为我们留下），
+  // 否则 PAC 模式退出后 AutoConfigURL 残留指向死 PAC 服务器，浏览器/系统联网异常。
+  let ourPac = false;
+  if (sysProxyOn && !st.enabled) {
+    const raw = await systemProxyStatusRaw();
+    ourPac = !!raw.pacUrl && /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(raw.pacUrl.trim());
+  }
   // sysProxyOn 只代表「本软件曾在管」，注册表端口必须仍属于我们才动手清理；
   // 否则会把用户其它代理软件（如 127.0.0.1:7890）的代理配置一并关掉。
-  if (st.ours || (sysProxyOn && st.enabled && isOurProxyServer(st.server))) {
+  if (st.ours || (sysProxyOn && st.enabled && isOurProxyServer(st.server)) || ourPac) {
     return setSystemProxy(false);
   }
   if (sysProxyOn) {
@@ -1394,7 +1419,7 @@ function coreVersionInfo(core) {
   try {
     const args = core === "singbox" ? ["version"] : ["-v"];
     const out = execFileSync(bin, args, { encoding: "utf8", timeout: 8000 }).trim();
-    const m = out.match(/(\d+\.\d+[\.\d]*)/);
+    const m = out.match(/(\d+\.\d+[.\d]*)/);
     val = { installed: true, version: m ? m[1] : out.split("\n")[0].slice(0, 64) };
   } catch {
     val = { installed: true, version: "" };
@@ -2023,8 +2048,11 @@ function registerIpc() {
     // 若只按 coreProc 判断，改端口后内核仍监听旧端口，而系统代理已指向新端口 → 全部断流。
     const was = !!coreProc || !!coreOnline;
     if (was) {
-      await stopCore();
+      // 改端口/secret 重启后保留系统代理，避免用户代理被静默关闭
+      const wasProxy = sysProxyOn;
+      await stopCore({ clearProxy: false });
       await startCore();
+      if (wasProxy) await setSystemProxy(true);
     }
     return { settings: next, mixedPort: MIXED_PORT, controller: CONTROLLER };
   });

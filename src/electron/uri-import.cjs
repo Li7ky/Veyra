@@ -24,7 +24,7 @@ function parseQuery(q) {
 function safeName(n, fallback) {
   const s = String(n || fallback || "node")
     .trim()
-    .replace(/[\/\\:*?"<>|]/g, "_")
+    .replace(/[/\\:*?"<>|]/g, "_")
     .slice(0, 64);
   return s || fallback || "node";
 }

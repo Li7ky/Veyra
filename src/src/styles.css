@@ -612,6 +612,9 @@ code, pre { font-family: var(--font-mono); }
 .rail-status-item.on strong { color: var(--accent-strong); }
 
 /* 首页紧凑三栏布局下，侧栏只有 156px；改为横向指标行，避免三列卡片挤成窄条。 */
+.grid-12.rail-compact .rail-status-head { gap: 4px; }
+.grid-12.rail-compact .rail-status-head > div { min-width: 0; }
+.grid-12.rail-compact .rail-status-summary { font-size: 11px; white-space: nowrap; }
 .grid-12.rail-compact .rail-status-grid { grid-template-columns: 1fr; gap: 4px; }
 .grid-12.rail-compact .rail-status-item {
   min-height: 30px;

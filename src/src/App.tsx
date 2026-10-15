@@ -1719,47 +1719,34 @@ export default function App() {
                     </button>
                   ))}
                 </nav>
-                {/* 导航与「系统状态」之间需要明确分界：原先只有 12px 上边距 + 8px 内边距，
-                    在一块卡片里两个功能区几乎连成一片，看起来"挤"。加大到 16/14 并保留
-                    分隔线，同时把状态区标题字号提一点，形成清晰的两段式结构。 */}
-                <div className="mt-4 pt-3 border-t">
-                  <div className="nav-section-title">系统状态</div>
-                  {/* 状态行：标签 + 状态徽标。
-                      原先用 14px 环形指示 + 呼吸动画，读起来像仪表盘，与本应用的
-                      扁平圆角卡片语言冲突（用户反馈"花里胡哨"）。改为复用既有 badge
-                      体系：一个 6px 圆点 + 文字的轻量胶囊，开启态用强调色，关闭态
-                      用中性灰。信息密度不变，但视觉权重降到与导航项同级。 */}
-                  <div className="rail-stat-list">
-                    {[
-                      {
-                        key: "core",
-                        label: "内核",
-                        on: running,
-                        text: running ? "运行中" : "已停止",
-                      },
-                      {
-                        key: "net",
-                        label: "网络",
-                        on: sysProxy,
-                        text: sysProxy ? "已开启" : "未开启",
-                      },
-                      {
-                        key: "conn",
-                        label: "连接数",
-                        on: connCount > 0,
-                        text: String(connCount),
-                      },
-                    ].map((s) => (
-                      <div key={s.key} className="rail-stat">
-                        <span className="rail-stat-label">{s.label}</span>
-                        <span className={`rail-stat-pill${s.on ? " on" : ""}`}>
-                          <i className="rail-stat-dot" />
-                          {s.text}
-                        </span>
-                      </div>
-                    ))}
+                <section className="rail-status-panel" aria-label="系统状态">
+                  <div className="rail-status-head">
+                    <div>
+                      <div className="nav-section-title">系统状态</div>
+                      <div className="rail-status-summary">{running ? "代理服务在线" : "代理服务已停止"}</div>
+                    </div>
+                    <span className={`rail-status-mark${running ? " on" : ""}`} aria-hidden="true">
+                      <i />
+                    </span>
                   </div>
-                </div>
+                  <div className="rail-status-grid">
+                    <div className={`rail-status-item${running ? " on" : ""}`}>
+                      <Cpu size={14} />
+                      <span className="rail-status-label">内核</span>
+                      <strong>{running ? "运行" : "停止"}</strong>
+                    </div>
+                    <div className={`rail-status-item${sysProxy ? " on" : ""}`}>
+                      <Network size={14} />
+                      <span className="rail-status-label">代理</span>
+                      <strong>{sysProxy ? "开启" : "关闭"}</strong>
+                    </div>
+                    <div className={`rail-status-item${connCount > 0 ? " on" : ""}`}>
+                      <Cable size={14} />
+                      <span className="rail-status-label">连接</span>
+                      <strong>{connCount}</strong>
+                    </div>
+                  </div>
+                </section>
 
                 {/* 底部实时监控：填掉原先的空白区。所有值均为真实数据——
                      速率曲线取自全局累积的 rateHistory，内存来自 core:status 的 coreMemoryMB。

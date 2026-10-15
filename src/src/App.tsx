@@ -1516,6 +1516,7 @@ export default function App() {
         setProfileName(item.name);
         setProfileText(await window.veyra.readProfile(item.uid));
         setEditorMode("profile");
+        setPfTab("yaml");
       }
       showToast(`已创建 ${kind}${global ? "（全局）" : ""}`);
     } catch (e) {
@@ -2459,8 +2460,54 @@ export default function App() {
 
               {tab === "profiles" && (
                 <div className="pane pf" hidden={tab !== "profiles"} data-pf={pfTab}>
-                  {/* 订阅链接区 — Clash Verge 风格流量卡片 */}
-                  <section className="pf-card" style={{ marginBottom: 14 }}>
+                  <div className="pf-tabs" role="tablist" aria-label="订阅功能">
+                    {([
+                      ["sub", "订阅"],
+                      ["enhance", "增强"],
+                      ["nodes", "节点编辑"],
+                      ["yaml", "YAML"],
+                    ] as const).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        role="tab"
+                        aria-selected={pfTab === id}
+                        className={pfTab === id ? "active" : ""}
+                        onClick={() => setPfTab(id)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {pfTab === "sub" ? (
+                    <>
+                      <section className="import-hero">
+                        <h3><Globe size={15} /> 导入订阅</h3>
+                        <p>粘贴 Clash / Meta 订阅链接，导入后自动增强并应用。</p>
+                        <div className="import-bar">
+                          <input
+                            value={subUrl}
+                            onChange={(e) => setSubUrl(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void importFromUrl();
+                            }}
+                            placeholder="https://example.com/clash subscription"
+                            aria-label="订阅链接"
+                          />
+                          <button
+                            type="button"
+                            className="btn primary btn-sm"
+                            disabled={busy}
+                            onClick={() => void importFromUrl()}
+                          >
+                            导入
+                          </button>
+                        </div>
+                      </section>
+
+                      {/* 订阅链接区 — Clash Verge 风格流量卡片 */}
+                      <section className="pf-card" style={{ marginBottom: 14 }}>
                     <div className="pf-card-hd">
                       <h2>
                         <Globe size={15} /> {t("profiles.subscriptions", "订阅")}
@@ -2587,6 +2634,7 @@ export default function App() {
                                       setProfileName(p.name);
                                       setProfileText(t2);
                                       setEditorMode("profile");
+                                      setPfTab("yaml");
                                     }
                                   }}
                                 >
@@ -2599,7 +2647,39 @@ export default function App() {
                       </div>
                     )}
                   </section>
+                    </>
+                  ) : null}
 
+                  {pfTab === "enhance" ? (
+                    <>
+                      <section className="pf-card pf-enhance-tools">
+                        <div className="pf-card-hd">
+                          <h2><Layers3 size={15} /> 增强配置</h2>
+                          <span className="hd-count">{richProfiles.filter((p) => p.type !== "remote" && p.type !== "local").length}</span>
+                        </div>
+                        <div className="pf-enhance-actions">
+                          {(["merge", "script", "rules", "proxies", "groups"] as const).map((kind) => (
+                            <button
+                              key={kind}
+                              type="button"
+                              className="btn ghost btn-sm"
+                              disabled={busy}
+                              onClick={() => void createEnhance(kind)}
+                            >
+                              + {kind}
+                            </button>
+                          ))}
+                          <button type="button" className="btn ghost btn-sm" disabled={busy} onClick={() => void createEnhance("merge", true)}>
+                            + 全局 Merge
+                          </button>
+                          <button type="button" className="btn primary btn-sm" disabled={busy} onClick={() => void applyEnhance()}>
+                            应用增强
+                          </button>
+                          <button type="button" className="btn ghost btn-sm" onClick={() => void reloadProviders()}>
+                            刷新 Provider
+                          </button>
+                        </div>
+                      </section>
                   {bindTarget ? (
                     <section className="block pf-enhance" style={{ marginTop: 12 }}>
                       <div className="block-hd">
@@ -2695,8 +2775,10 @@ export default function App() {
                       </pre>
                     </section>
                   ) : null}
+                    </>
+                  ) : null}
 
-                  {pfSeen.nodes ? (
+                  {pfTab === "nodes" && pfSeen.nodes ? (
                     <>
                       <section className="block pf-nodes" style={{ marginTop: 12 }}>
                         <ProxiesVisualEditor onToast={showToast} onBusy={setBusy} />
@@ -2707,7 +2789,7 @@ export default function App() {
                     </>
                   ) : null}
 
-                  {pfSeen.yaml ? (
+                  {pfTab === "yaml" && pfSeen.yaml ? (
                     <section className="editor-card pf-yaml">
                       <div className="editor-bar">
                         <input

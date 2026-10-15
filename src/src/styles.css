@@ -1437,12 +1437,15 @@ code, pre { font-family: var(--font-mono); }
 .s-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .s-row:last-child { border-bottom: 0; }
 .s-row-lb, .s-row-text { min-width: 0; flex: 1; }
-.s-row-label { display: block; font-size: 12px; font-weight: 700; color: var(--text-100); }
-.s-row-desc { display: block; font-size: 11px; color: var(--text-400); margin-top: 2px; line-height: 1.5; }
-.s-row-ctrl { flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
+.s-row-label { display: block; overflow: hidden; color: var(--text-100); font-size: 12px; font-weight: 700; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.s-row-desc { display: block; overflow: hidden; color: var(--text-400); font-size: 11px; line-height: 1.5; margin-top: 2px; text-overflow: ellipsis; white-space: nowrap; }
+.s-row-ctrl { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-width: max-content; }
+.s-row-ctrl .s-actions { flex-wrap: nowrap; white-space: nowrap; }
+.s-row-ctrl .btn, .s-row-ctrl .seg, .s-row-ctrl .s-input { flex-shrink: 0; }
+.s-row-ctrl .btn { white-space: nowrap; }
 /* 主题自适应：不再硬编码深色 slate，浅色/深色共用同一套规则 */
 .s-nav { display: flex; gap: 4px; flex-wrap: wrap; padding: 4px; background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius-md); }
-.s-nav button { padding: 7px 14px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-400); font-size: 12px; font-weight: 600; transition: all 0.2s; }
+.s-nav button { min-width: 0; padding: 7px 14px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-400); font-size: 12px; font-weight: 600; line-height: 1.2; transition: all 0.2s; white-space: nowrap; }
 .s-nav button:hover { background: color-mix(in srgb, var(--text-100) 8%, transparent); color: var(--text-100); }
 .s-nav button.active { background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--accent); }
 .s-fields { display: grid; gap: 10px; }
@@ -1459,6 +1462,7 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
    作为卡片正文的直接子级时需要与上方字段拉开距离——此前完全没有垂直间距，
    按钮会紧贴输入框底边。gap 8px 对并排按钮也偏窄，提到 10px。 */
 .s-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.s-actions > .btn, .s-actions > button { flex-shrink: 0; white-space: nowrap; }
 .s-card-bd > .s-actions { margin-top: 12px; }
 .s-path { font-family: var(--font-mono); font-size: 11px; color: var(--text-400); background: var(--input-bg); border: 1px solid var(--card-border); border-radius: var(--radius-sm); padding: 4px 10px; user-select: text; }
 .s-field-block { display: grid; gap: 6px; }
@@ -1518,7 +1522,7 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
 .btn.ghost { background: transparent; border-color: transparent; color: var(--text-400); }
 .btn.ghost:hover { background: var(--input-bg); color: var(--text-100); }
 .seg { display: inline-flex; padding: 3px; border-radius: var(--radius-md); background: var(--input-bg); border: 1px solid var(--card-border); gap: 2px; }
-.seg button { min-height: 32px; padding: 5px 12px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-400); font-size: 12px; font-weight: 600; transition: all 0.2s; }
+.seg button { min-height: 32px; flex-shrink: 0; padding: 5px 12px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-400); font-size: 12px; font-weight: 600; line-height: 1.2; white-space: nowrap; transition: all 0.2s; }
 .seg button.active { background: var(--hover); color: var(--text-100); border: 1px solid var(--card-border); }
 
 /* ── Search / Select / Field ────────────────────────────── */

@@ -232,6 +232,11 @@ function SettingsPanel(props: Props) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [latestTag, setLatestTag] = useState("");
   const [svc, setSvc] = useState({ installed: false });
+  const [conflictScan, setConflictScan] = useState<{ busy: boolean; list: string[]; done: boolean }>({
+    busy: false,
+    list: [],
+    done: false,
+  });
   const [draftPort, setDraftPort] = useState(String(DEFAULTS.mixedPort));
   const [draftCtrl, setDraftCtrl] = useState(String(DEFAULTS.controllerPort));
   const [draftSecret, setDraftSecret] = useState(DEFAULTS.secret);
@@ -291,6 +296,23 @@ function SettingsPanel(props: Props) {
   useEffect(() => {
     reload().catch(() => {});
   }, [running, mixedPort, version]);
+
+  // 代理冲突检测：调用主进程扫描端口 + 进程，展示结果
+  async function scanConflict() {
+    if (!window.veyra) {
+      onToast(t("conflict.preview"));
+      return;
+    }
+    setConflictScan({ busy: true, list: [], done: false });
+    try {
+      const list = ((await window.veyra.detectProxyConflict?.()) || []) as string[];
+      setConflictScan({ busy: false, list, done: true });
+      onToast(list.length ? t("conflict.foundToast").replace("{n}", String(list.length)) : t("conflict.noneToast"));
+    } catch (e) {
+      setConflictScan({ busy: false, list: [], done: true });
+      onToast(String((e as Error).message || e));
+    }
+  }
 
   async function patchSettings(patch: Partial<AppSettings>) {
     if (!window.veyra) {
@@ -621,6 +643,54 @@ function SettingsPanel(props: Props) {
                 onChange={(e) => patchSettings({ disconnectOnProxyOff: e.target.checked })}
               />
             </Row>
+            <Row label={t("conflict.blockLabel")} desc={t("conflict.blockDesc")}>
+              <input
+                type="checkbox"
+                checked={s.blockConflict !== false}
+                onChange={(e) => patchSettings({ blockConflict: e.target.checked })}
+              />
+            </Row>
+            <Row label={t("conflict.scanLabel")} desc={t("conflict.scanDesc")}>
+              <button
+                type="button"
+                className="btn ghost btn-sm"
+                disabled={conflictScan.busy}
+                onClick={scanConflict}
+              >
+                <RefreshCw size={13} /> {conflictScan.busy ? t("conflict.scanning") : t("conflict.scanBtn")}
+              </button>
+            </Row>
+            {conflictScan.done ? (
+              <div
+                className="s-conflict-result"
+                style={{
+                  margin: "2px 0 8px",
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  background: conflictScan.list.length ? "rgba(239,68,68,.10)" : "rgba(34,197,94,.12)",
+                  border: `1px solid ${conflictScan.list.length ? "rgba(239,68,68,.35)" : "rgba(34,197,94,.35)"}`,
+                  color: conflictScan.list.length ? "var(--red-400)" : "var(--green-400, #16a34a)",
+                }}
+              >
+                {conflictScan.list.length ? (
+                  <>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                      {t("conflict.foundTitle").replace("{n}", String(conflictScan.list.length))}
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {conflictScan.list.map((c, i) => (
+                        <li key={i}>{c}</li>
+                      ))}
+                    </ul>
+                    <div style={{ marginTop: 4, opacity: 0.85 }}>{t("conflict.warnBlock")}</div>
+                  </>
+                ) : (
+                  <div style={{ fontWeight: 600 }}>{t("conflict.none")}</div>
+                )}
+              </div>
+            ) : null}
             <Row label="代理绕过">
               <button
                 type="button"

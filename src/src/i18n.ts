@@ -47,6 +47,18 @@ const zh: Dict = {
   "unlock.run": "流媒体检测",
   "lightweight.on": "轻量模式已开启",
   "lightweight.off": "轻量模式已关闭",
+  "conflict.blockLabel": "禁止与其他代理同时运行",
+  "conflict.blockDesc": "启动内核前检测 Clash/v2rayN 等，命中则拒绝启动",
+  "conflict.scanLabel": "代理冲突检测",
+  "conflict.scanDesc": "扫描常见代理端口与进程，检查是否有其他代理工具",
+  "conflict.scanBtn": "立即检测",
+  "conflict.scanning": "检测中…",
+  "conflict.preview": "预览模式无 Electron 接口，无法检测",
+  "conflict.foundToast": "检测到 {n} 个可能冲突",
+  "conflict.noneToast": "未检测到冲突",
+  "conflict.foundTitle": "检测到 {n} 个可能的代理冲突：",
+  "conflict.warnBlock": "若开启「禁止与其他代理同时运行」，启动内核将被拦截。建议先退出上述软件。",
+  "conflict.none": "✓ 未检测到其他代理软件，可安全运行",
 };
 
 const en: Dict = {
@@ -94,6 +106,18 @@ const en: Dict = {
   "unlock.run": "Unlock check",
   "lightweight.on": "Lightweight mode on",
   "lightweight.off": "Lightweight mode off",
+  "conflict.blockLabel": "Block other proxies",
+  "conflict.blockDesc": "Detect Clash/v2rayN etc. before starting core; block if found",
+  "conflict.scanLabel": "Proxy conflict scan",
+  "conflict.scanDesc": "Scan common proxy ports and processes for other proxy tools",
+  "conflict.scanBtn": "Scan now",
+  "conflict.scanning": "Scanning…",
+  "conflict.preview": "Preview mode has no Electron API, cannot detect",
+  "conflict.foundToast": "Found {n} possible conflicts",
+  "conflict.noneToast": "No conflicts detected",
+  "conflict.foundTitle": "Found {n} possible proxy conflicts:",
+  "conflict.warnBlock": "If 'Block other proxies' is on, core startup will be blocked. Please exit the above apps first.",
+  "conflict.none": "✓ No other proxy tools detected, safe to run",
 };
 
 /** 其余语言先回落英文，保证 13 语种入口齐全 */

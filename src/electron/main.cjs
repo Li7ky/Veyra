@@ -98,6 +98,7 @@ const DEFAULT_SETTINGS = {
   proxyMode: "system", // system | pac | off
   proxyGuard: false,
   disconnectOnProxyOff: true,
+  blockConflict: true, // 禁止与其他主流代理工具同时运行（启动内核前检测并拦截）
   bindAddress: "127.0.0.1",
   // TUN
   tunEnable: false,
@@ -820,6 +821,51 @@ async function syncCoreModeFromApi() {
   } catch {}
 }
 
+// 主流代理工具进程名（Windows）→ 用于进程级冲突检测。
+// 注意排除自家内核（mihomo/sing-box 由本软件拉起，不算冲突）。
+const PROXY_PROCESS_NAMES = [
+  ["clash.exe", "Clash for Windows"],
+  ["clash-verge.exe", "Clash Verge"],
+  ["verge.exe", "Clash Verge"],
+  ["clash-verge-service.exe", "Clash Verge Service"],
+  ["clash-win.exe", "Clash"],
+  ["v2rayn.exe", "v2rayN"],
+  ["v2ray.exe", "v2ray"],
+  ["xray.exe", "Xray"],
+  ["qv2ray.exe", "Qv2ray"],
+  ["nekoray.exe", "NekoRay"],
+  ["nekobox.exe", "NekoBox"],
+  ["shadowsocks.exe", "Shadowsocks"],
+  ["shadowsocks-qt5.exe", "Shadowsocks-Qt5"],
+  ["ss-local.exe", "Shadowsocks"],
+  ["trojan.exe", "Trojan"],
+  ["trojan-go.exe", "Trojan-Go"],
+  ["hysteria.exe", "Hysteria"],
+  ["proxifier.exe", "Proxifier"],
+];
+
+// 进程级检测：Windows 用 tasklist 列出进程名，匹配主流代理工具。
+// 失败/非 Windows 平台安全返回空数组，不影响端口检测。
+function detectProxyProcesses() {
+  return new Promise((resolve) => {
+    if (process.platform !== "win32") return resolve([]);
+    try {
+      execFile("tasklist", ["/fo", "csv", "/nh"], { windowsHide: true, timeout: 4000 }, (err, stdout) => {
+        if (err) return resolve([]);
+        const out = String(stdout || "").toLowerCase();
+        const hits = [];
+        for (const [proc, label] of PROXY_PROCESS_NAMES) {
+          // CSV 每行形如 "clash.exe","1234","Console","1","5,000 K"，按带引号的进程名精确匹配
+          if (out.includes(`"${proc}"`)) hits.push(`${label}（进程 ${proc}）`);
+        }
+        resolve([...new Set(hits)]);
+      });
+    } catch {
+      resolve([]);
+    }
+  });
+}
+
 async function detectOtherProxy() {
   const conflicts = [];
   // 常见代理软件端口
@@ -843,7 +889,17 @@ async function detectOtherProxy() {
     });
     if (inUse) conflicts.push(`${label} (端口 ${port} 被占用)`);
   }
+  // 端口检测之外补进程级检测（更可靠，避免端口改过就漏报）
+  const procs = await detectProxyProcesses();
+  conflicts.push(...procs);
   return conflicts;
+}
+
+// 启动内核前的冲突拦截：开启 blockConflict 且检测到其他代理工具时返回冲突列表，
+// 由调用方决定是拒绝启动还是仅提示。返回 [] 表示可安全启动。
+async function checkConflictForStart() {
+  if (!(appSettings && appSettings.blockConflict)) return [];
+  return await detectOtherProxy();
 }
 
 async function startCore() {
@@ -1898,7 +1954,16 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle("core:start", async () => startCore());
+  ipcMain.handle("core:start", async () => {
+    // 禁止与其他主流代理同时运行：启动前检测，命中则拒绝启动并提示
+    const conflicts = await checkConflictForStart();
+    if (conflicts.length) {
+      const msg = `检测到其他代理软件正在运行：${conflicts.join("、")}。已阻止启动以避免冲突，请先退出它们，或到「设置 → 网络与系统代理」关闭「禁止与其他代理同时运行」。`;
+      toastNotify("启动被拦截", msg);
+      throw new Error(msg);
+    }
+    return startCore();
+  });
   ipcMain.handle("core:stop", async () => {
     await stopCore({ clearProxy: true });
     return { running: false, sysProxy: false };
@@ -2636,7 +2701,15 @@ app.whenReady().then(async () => {
   if (appSettings.lightweightMode || (appSettings.startMinimized && openedAtLogin)) mainWindow?.hide();
   // 内核随软件常驻：打开即运行；会话内显式停止后，更新订阅也不会再拉起（见 reloadRuntimeConfig）
   try {
-    await startCore();
+    // 开机自启同样受「禁止与其他代理同时运行」约束，命中则不自动拉起内核
+    const conflicts = await checkConflictForStart();
+    if (conflicts.length) {
+      const msg = `检测到其他代理软件正在运行：${conflicts.join("、")}。已跳过自动启动，请先退出它们，或到「设置」关闭「禁止与其他代理同时运行」。`;
+      if (mainWindow) mainWindow.webContents.send("core:error", msg);
+      toastNotify("已跳过自动启动", msg);
+    } else {
+      await startCore();
+    }
   } catch (e) {
     console.error("core start failed", e);
     if (mainWindow) mainWindow.webContents.send("core:error", String(e.message || e));

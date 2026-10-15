@@ -50,6 +50,7 @@ export interface AppSettings {
   proxyMode?: string;
   proxyGuard?: boolean;
   disconnectOnProxyOff?: boolean;
+  blockConflict?: boolean;
   bindAddress?: string;
   tunEnable?: boolean;
   tunStack?: string;

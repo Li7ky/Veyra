@@ -177,6 +177,7 @@ export interface VeyraAPI {
   onCoreStatus: (cb: (data: unknown) => void) => () => void;
   onCoreLog: (cb: (line: string) => void) => () => void;
   onCoreError: (cb: (msg: string) => void) => () => void;
+  onCoreProgress: (cb: (data: { phase: string; pct: number; label: string }) => void) => () => void;
   onSystemProxyChanged: (cb: (data: { enabled?: boolean }) => void) => () => void;
   overview: () => Promise<{
     proxies: { proxies?: Record<string, ProxyNode> };

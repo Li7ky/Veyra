@@ -1,4 +1,14 @@
-﻿import { startTransition, useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense, type ReactNode } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  lazy,
+  Suspense,
+  type ReactNode,
+} from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -44,12 +54,28 @@ import {
   NavTestsIcon,
   NavSettingsIcon,
 } from "./NavIcons";
-import { CardSubIcon, CardNodeIcon, CardNetIcon, CardModeIcon, CardTrafficIcon, CardIpIcon, CardCoreIcon, CardSysIcon, CardWebIcon, WebGoogleIcon, WebGithubIcon, WebYoutubeIcon, WebXIcon } from "./NavIcons";
+import {
+  CardSubIcon,
+  CardNodeIcon,
+  CardNetIcon,
+  CardModeIcon,
+  CardTrafficIcon,
+  CardIpIcon,
+  CardCoreIcon,
+  CardSysIcon,
+  CardWebIcon,
+  WebGoogleIcon,
+  WebGithubIcon,
+  WebYoutubeIcon,
+  WebXIcon,
+} from "./NavIcons";
 import type { ConnectionItem, ProfileRich, ProxyNode } from "./vite-env";
 import SettingsPanel from "./SettingsPanel";
 import ConnectionsPage from "./ConnectionsPage";
 import RulesPage from "./RulesPage";
 import TestsPage from "./TestsPage";
+import WaveChart from "./WaveChart";
+import Sparkline from "./Sparkline";
 // Monaco 体积占主包的绝大部分（约 4.4MB）；改为懒加载，首屏 JS 解析时间大幅下降，
 // 只有用户首次切到「YAML」子标签时才加载编辑器 chunk。
 const YamlEditor = lazy(() => import("./YamlEditor"));
@@ -98,6 +124,24 @@ function formatUptime(ms: number) {
   return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
+function relativeTime(ts?: number) {
+  if (!ts) return "—";
+  const diff = Date.now() - ts;
+  if (diff < 60000) return "刚刚";
+  if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`;
+  return `${Math.floor(diff / 86400000)} 天前`;
+}
+
+function expiryText(ts?: number) {
+  if (!ts || ts <= 0) return null;
+  const d = new Date(ts * 1000);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function delayClass(d?: number) {
   if (d == null) return "na";
   if (d <= 0) return "bad";
@@ -110,6 +154,186 @@ function delayText(d?: number) {
   if (d == null) return "—";
   if (d <= 0) return "超时";
   return `${d}`;
+}
+
+const COUNTRY_FLAGS: [RegExp, string][] = [
+  // ── 亚洲 ──────────────────────────────────────────
+  [/日本|jp|japan|tokyo|osaka|nagoya|fukuoka/i, "JP"],
+  [/韩国|kr|korea|seoul|busan/i, "KR"],
+  [/新加坡|sg|singapore/i, "SG"],
+  [/香港|hong.?kong|hk/i, "HK"],
+  [/台湾|taiwan|tw|taipei|kaohsiung/i, "TW"],
+  [/泰国|thailand|th|bangkok|chiang.?mai/i, "TH"],
+  [/越南|vietnam|vn|hanoi|ho.?chi.?minh|saigon|danang/i, "VN"],
+  [/菲律宾|philippines|ph|manila|cebu/i, "PH"],
+  [/马来西亚|malaysia|my|kuala.?lumpur|penang/i, "MY"],
+  [/印度尼西亚|indonesia|id|jakarta|bali|surabaya/i, "ID"],
+  [/印度|india|in|mumbai|delhi|bangalore|chennai|kolkata|hyderabad|pune/i, "IN"],
+  [/巴基斯坦|pakistan|pk|karachi|lahore/i, "PK"],
+  [/孟加拉国|bangladesh|bd|dhaka/i, "BD"],
+  [/斯里兰卡|sri.?lanka|lk|colombo/i, "LK"],
+  [/缅甸|myanmar|mm|yangon|rangoon/i, "MM"],
+  [/柬埔寨|cambodia|kh|phnom.?penh/i, "KH"],
+  [/老挝|laos|la|vientiane/i, "LA"],
+  [/蒙古|mongolia|mn|ulaanbaatar/i, "MN"],
+  [/尼泊尔|nepal|np|kathmandu/i, "NP"],
+  [/不丹|bhutan|bt|thimphu/i, "BT"],
+  [/马尔代夫|maldives|mv|male/i, "MV"],
+  [/文莱|brunei|bn|bandar.?seri.?begawan/i, "BN"],
+  [/东帝汶|timor|tl|dili/i, "TL"],
+  [/阿富汗|afghanistan|af|kabul/i, "AF"],
+
+  // ── 中东 ──────────────────────────────────────────
+  [/阿联酋|uae|united.?arab.?emirates|dubai|abu.?dhabi/i, "AE"],
+  [/沙特|saudi|sa|riyadh|jeddah/i, "SA"],
+  [/以色列|israel|il|tel.?aviv|jerusalem/i, "IL"],
+  [/土耳其|turkey|tr|istanbul|ankara|izmir/i, "TR"],
+  [/伊朗|iran|ir|tehran/i, "IR"],
+  [/伊拉克|iraq|iq|baghdad/i, "IQ"],
+  [/卡塔尔|qa|doha/i, "QA"],
+  [/科威特|kw|kuwait/i, "KW"],
+  [/巴林|bahrain|bh|manama/i, "BH"],
+  [/阿曼|oman|om|muscat/i, "OM"],
+  [/约旦|jordan|jo|amman/i, "JO"],
+  [/黎巴嫩|lebanon|lb|beirut/i, "LB"],
+  [/叙利亚|syria|sy|damascus/i, "SY"],
+  [/也门|yemen|ye|sanaa/i, "YE"],
+  [/塞浦路斯|cyprus|cy|nicosia/i, "CY"],
+  [/格鲁吉亚|georgia(?!\s*C)|ge|tbilisi/i, "GE"],
+  [/亚美尼亚|armenia|am|yerevan/i, "AM"],
+  [/阿塞拜疆|azerbaijan|az|baku/i, "AZ"],
+
+  // ── 欧洲 ──────────────────────────────────────────
+  [/英国|uk|britain|england|london|manchester|edinburgh|birmingham|glasgow|scotland|wales/i, "GB"],
+  [/德国|germany|de|berlin|munich|frankfurt|hamburg|cologne|dusseldorf|stuttgart/i, "DE"],
+  [/法国|france|fr|paris|lyon|marseille|toulouse|nice|nantes|strasbourg/i, "FR"],
+  [/意大利|italy|it|rome|milan|naples|florence|venice|turin|bologna|genoa/i, "IT"],
+  [/西班牙|spain|es|madrid|barcelona|valencia|seville|bilbao|malaga/i, "ES"],
+  [/葡萄牙|portugal|pt|lisbon|porto|faro/i, "PT"],
+  [/荷兰|nl|netherlands|amsterdam|rotterdam|the.?hague|utrecht|eindhoven/i, "NL"],
+  [/比利时|belgium|be|brussels|antwerp|ghent|bruges/i, "BE"],
+  [/瑞士|switzerland|ch|zurich|geneva|basel|bern|lausanne/i, "CH"],
+  [/奥地利|austria|at|vienna|salzburg|graz|innsbruck/i, "AT"],
+  [/瑞典|sweden|se|stockholm|gothenburg|malmo|uppsala/i, "SE"],
+  [/挪威|norway|no|oslo|bergen|stavanger|trondheim/i, "NO"],
+  [/丹麦|denmark|dk|copenhagen|aarhus|odense/i, "DK"],
+  [/芬兰|finland|fi|helsinki|espoo|tampere|oulu/i, "FI"],
+  [/冰岛|iceland|is|reykjavik/i, "IS"],
+  [/爱尔兰|ireland|ie|dublin|cork|galway|limerick/i, "IE"],
+  [/波兰|poland|pl|warsaw|krakow|gdansk|wroclaw|poznan/i, "PL"],
+  [/捷克|czech|cz|prague|brno|ostrava/i, "CZ"],
+  [/斯洛伐克|sk|bratislava|kosice/i, "SK"],
+  [/匈牙利|hungary|hu|budapest|debrecen|szeged/i, "HU"],
+  [/罗马尼亚|romania|ro|bucharest|cluj|timisoara/i, "RO"],
+  [/保加利亚|bulgaria|bg|sofia|plovdiv|varna/i, "BG"],
+  [/希腊|greece|gr|athens|thessaloniki|crete|rhodes|patras/i, "GR"],
+  [/克罗地亚|croatia|hr|zagreb|split|dubrovnik/i, "HR"],
+  [/塞尔维亚|serbia|rs|belgrade|novi.?sad/i, "RS"],
+  [/斯洛文尼亚|slovenia|si|ljubljana|maribor/i, "SI"],
+  [/波黑|bosnia|ba|sarajevo|mostar/i, "BA"],
+  [/黑山|montenegro|me|podgorica/i, "ME"],
+  [/北马其顿|macedonia|mk|skopje/i, "MK"],
+  [/阿尔巴尼亚|albania|al|tirana|durres/i, "AL"],
+  [/卢森堡|luxembourg|lu/i, "LU"],
+  [/爱沙尼亚|estonia|ee|tallinn|tartu/i, "EE"],
+  [/拉脱维亚|latvia|lv|riga/i, "LV"],
+  [/立陶宛|lithuania|lt|vilnius|kaunas/i, "LT"],
+  [/白俄罗斯|belarus|by|minsk/i, "BY"],
+  [/摩尔多瓦|moldova|md|chisinau/i, "MD"],
+  [/乌克兰|ukraine|ua|kyiv|lviv|kharkiv|odesa/i, "UA"],
+  [/俄罗斯|russia|ru|russian|moscow|st.?petersburg|novosibirsk/i, "RU"],
+
+  // ── 北美 ──────────────────────────────────────────
+  [
+    /美国|us|united.?states|america|los.?angeles|new.?york|chicago|seattle|san.?francisco|washington|dallas|houston|miami|boston|atlanta|denver|phoenix/i,
+    "US",
+  ],
+  [/加拿大|canada|ca|toronto|vancouver|montreal|calgary|ottawa|edmonton/i, "CA"],
+  [/墨西哥|mexico|mx|guadalajara|monterrey|cancun/i, "MX"],
+
+  // ── 中美 / 加勒比 ─────────────────────────────────
+  [/哥斯达黎加|costa.?rica|cr|san.?jose/i, "CR"],
+  [/巴拿马|panama|pa/i, "PA"],
+  [/古巴|cuba|cu|havana/i, "CU"],
+  [/牙买加|jamaica|jm|kingston/i, "JM"],
+  [/海地|haiti|ht|port.?au.?prince/i, "HT"],
+  [/多米尼加|dominican|dr|santo.?domingo/i, "DR"],
+  [/波多黎各|puerto.?rico|pr|san.?juan/i, "PR"],
+  [/危地马拉|guatemala|gt/i, "GT"],
+  [/洪都拉斯|hn|tegucigalpa/i, "HN"],
+  [/萨尔瓦多|el.?salvador|sv|san.?salvador/i, "SV"],
+  [/尼加拉瓜|nicaragua|ni|managua/i, "NI"],
+  [/伯利兹|belize|bz|belmopan/i, "BZ"],
+
+  // ── 南美 ──────────────────────────────────────────
+  [/巴西|brazil|br|rio|brasilia|sao.?paulo|salvador|recife|fortaleza/i, "BR"],
+  [/阿根廷|argentina|ar|buenos.?aires|cordoba|rosario|mendoza/i, "AR"],
+  [/智利|chile|cl|santiago|valparaiso|concepcion/i, "CL"],
+  [/哥伦比亚|colombia|co|bogota|medellin|cali|barranquilla/i, "CO"],
+  [/秘鲁|peru|pe|lima|arequipa|cusco|trujillo/i, "PE"],
+  [/委内瑞拉|venezuela|ve|caracas|maracaibo|valencia/i, "VE"],
+  [/厄瓜多尔|ecuador|ec|quito|guayaquil/i, "EC"],
+  [/玻利维亚|bolivia|bo|sucre|la.?paz|cochabamba/i, "BO"],
+  [/巴拉圭|paraguay|py|asuncion|ciudad.?del.?este/i, "PY"],
+  [/乌拉圭|uruguay|uy|montevideo/i, "UY"],
+  [/圭亚那|guyana|gy|georgetown/i, "GY"],
+
+  // ── 非洲 ──────────────────────────────────────────
+  [/南非|south.?africa|za|cape.?town|johannesburg|durban/i, "ZA"],
+  [/埃及|egypt|eg|cairo|alexandria|giza/i, "EG"],
+  [/摩洛哥|morocco|ma|casablanca|rabat|marrakech/i, "MA"],
+  [/阿尔及利亚|algeria|dz|algiers/i, "DZ"],
+  [/突尼斯|tunisia|tn|tunis/i, "TN"],
+  [/利比亚|libya|ly|tripoli/i, "LY"],
+  [/肯尼亚|kenya|ke|nairobi|mombasa/i, "KE"],
+  [/尼日利亚|nigeria|ng|lagos|abuja/i, "NG"],
+  [/加纳|ghana|gh|accra/i, "GH"],
+  [/埃塞俄比亚|ethiopia|et|addis.?ababa/i, "ET"],
+  [/坦桑尼亚|tanzania|tz|dodoma|dar.?es.?salaam/i, "TZ"],
+  [/安哥拉|angola|ao|luanda/i, "AO"],
+  [/莫桑比克|mozambique|mz|maputo/i, "MZ"],
+  [/马达加斯加|madagascar|mg|antananarivo/i, "MG"],
+  [/毛里求斯|mauritius|mu|port.?louis/i, "MU"],
+  [/塞舌尔|seychelles|sc|victoria|mahe/i, "SC"],
+  [/纳米比亚|namibia|na|windhoek/i, "NA"],
+  [/博茨瓦纳|botswana|bw|gaborone/i, "BW"],
+  [/赞比亚|zambia|zm|lusaka/i, "ZM"],
+  [/津巴布韦|zimbabwe|zw|harare/i, "ZW"],
+  [/卢旺达|rwanda|rw|kigali/i, "RW"],
+  [/乌干达|uganda|ug|kampala/i, "UG"],
+  [/刚果|congo|cd|kinshasa|brazzaville/i, "CG"],
+  [/加蓬|gabon|ga|libreville/i, "GA"],
+  [/喀麦隆|cameroon|cm|yaounde|douala/i, "CM"],
+  [/科特迪瓦|ivory|ci|abidjan/i, "CI"],
+  [/塞内加尔|senegal|sn|dakar/i, "SN"],
+  [/马里|ml|bamako/i, "ML"],
+  [/布基纳法索|burkina|bf|ouagadougou/i, "BF"],
+  [/尼日尔|ne|niamey/i, "NE"],
+  [/乍得|td|ndjamena/i, "TD"],
+  [/苏丹|sd|khartoum|omdurman/i, "SD"],
+  [/索马里|somalia|so|mogadishu/i, "SO"],
+  [/加纳|ghana|gh|accra/i, "GH"],
+
+  // ── 大洋洲 ────────────────────────────────────────
+  [/澳大利亚|australia|au|sydney|melbourne|brisbane|perth|adelaide|canberra|darwin/i, "AU"],
+  [/新西兰|new.?zealand|nz|auckland|wellington|christchurch|queenstown/i, "NZ"],
+  [/斐济|fiji|suva/i, "FJ"],
+  [/巴布亚新几内亚|papua|pg|port.?moresby/i, "PG"],
+  [/萨摩亚|samoa|ws|apia/i, "WS"],
+  [/汤加|tonga|to|nuku'alofa/i, "TO"],
+  [/瓦努阿图|vanuatu|vu|port.?vila/i, "VU"],
+  [/所罗门群岛|solomon|sb|honiara/i, "SB"],
+  [/密克罗尼西亚|micronesia|fm|palikir/i, "FM"],
+  [/帕劳|palau|pw/i, "PW"],
+  [/基里巴斯|kiribati|ki|tarawa/i, "KI"],
+];
+function countryFlagSvg(name: string) {
+  for (const [re, code] of COUNTRY_FLAGS) {
+    if (re.test(name)) {
+      return `https://flagcdn.com/w40/${code.toLowerCase()}.png`;
+    }
+  }
+  return null;
 }
 
 function isTestableNode(name: string) {
@@ -160,6 +384,80 @@ const MODE_LABEL: Record<string, string> = {
   direct: "直连",
 };
 
+// 首页信息小卡（区段 5-7 共用）。抽成常量避免三处重复内联样式，
+// 也便于统一调整内边距/圆角。
+const HOME_TILE: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  padding: "12px 14px",
+  background: "var(--card-solid)",
+  borderRadius: 11,
+  border: "0.5px solid var(--card-border)",
+  boxShadow: "var(--shadow-sm)",
+};
+const HOME_TILE_LABEL: React.CSSProperties = {
+  fontSize: 10,
+  color: "var(--text-500)",
+  fontWeight: 500,
+  letterSpacing: "0.04em",
+  marginBottom: 4,
+};
+const HOME_TILE_VALUE: React.CSSProperties = {
+  fontSize: 14,
+  fontWeight: 600,
+  color: "var(--text-100)",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+// 延迟着色：与节点卡徽章共用 delayClass 的阈值判定，避免出现第二套会漂移的分级。
+// 之前这里自己判一次且漏了 `d <= 0`，导致超时节点在首页显示绿色、在代理网格显示红色。
+const DELAY_COLOR: Record<ReturnType<typeof delayClass>, string> = {
+  good: "var(--green-400)",
+  mid: "var(--amber-400)",
+  bad: "var(--red-400)",
+  na: "var(--text-500)",
+};
+function delayColor(ms?: number | null): string {
+  return DELAY_COLOR[delayClass(ms ?? undefined)];
+}
+// 迷你图柱子同样只依据 delayClass 判定，避免再复制一份 200/500 阈值。
+// 超时（<=0）在文字标签里是红色，这里给红色而不是灰色，两者必须一致。
+const DELAY_DOT: Record<ReturnType<typeof delayClass>, string> = {
+  good: "dot-green",
+  mid: "dot-amber",
+  bad: "dot-red",
+  na: "dot-off",
+};
+function delayDotClass(ms: number | null | undefined): string {
+  return DELAY_DOT[delayClass(ms ?? undefined)];
+}
+
+// 右栏「解锁状态」展示项：按用途分两组，各取最有代表性的 3 项，共 6 项。
+// 全量 12 项（含 B站、Bahamut、Prime、Spotify、TikTok）保留在测试页，此处不重复堆砌，
+// 否则 324px 宽的右栏会被撑到需要滚动，失去「扫一眼」的价值。
+const RAIL_UNLOCK_GROUPS: { key: string; label: string; ids: [string, string][] }[] = [
+  {
+    key: "ai",
+    label: "AI",
+    ids: [
+      ["chatgpt", "ChatGPT"],
+      ["claude", "Claude"],
+      ["gemini", "Gemini"],
+    ],
+  },
+  {
+    key: "stream",
+    label: "流媒体",
+    ids: [
+      ["netflix", "Netflix"],
+      ["disney", "Disney+"],
+      ["youtube", "YouTube"],
+    ],
+  },
+];
+
 // 首页卡片信息行：图标点缀 + 标签/值居中 + 明显描边框
 function InfoRow({
   icon: Icon,
@@ -174,7 +472,9 @@ function InfoRow({
 }) {
   return (
     <div className="info-row">
-      <span className="info-row-ico"><Icon size={15} /></span>
+      <span className="info-row-ico">
+        <Icon size={15} />
+      </span>
       <div className="info-row-main">
         <em>{label}</em>
         <b className={mono ? "mono" : ""}>{children}</b>
@@ -190,8 +490,10 @@ export default function App() {
   const [railOverride, setRailOverride] = useState<boolean | null>(null);
   const showRail = railOverride === null ? tab === "home" : railOverride;
   // 切页时回到「按页自动」策略
-  useEffect(() => { setRailOverride(null); }, [tab]);
-  const [pfTab, setPfTab] = useState<"sub"|"enhance"|"nodes"|"yaml">("sub");
+  useEffect(() => {
+    setRailOverride(null);
+  }, [tab]);
+  const [pfTab, setPfTab] = useState<"sub" | "enhance" | "nodes" | "yaml">("sub");
   // 订阅页子标签首次访问后才挂载，之后保活：避免每次打开订阅页都重建 Monaco 与可视化编辑器
   const [pfSeen, setPfSeen] = useState<Record<string, boolean>>({ sub: true });
   const [running, setRunning] = useState(false);
@@ -233,10 +535,26 @@ export default function App() {
   const [profileName, setProfileName] = useState("subscription.yaml");
   const [subUrl, setSubUrl] = useState("");
   const [profiles, setProfiles] = useState<
-    { name: string; size: number; uid?: string; type?: string; enabled?: boolean; global?: boolean; url?: string }[]
+    {
+      name: string;
+      size: number;
+      uid?: string;
+      type?: string;
+      enabled?: boolean;
+      global?: boolean;
+      url?: string;
+    }[]
   >([]);
   const [richProfiles, setRichProfiles] = useState<ProfileRich[]>([]);
-  const [subs, setSubs] = useState<{ url: string; name: string; updatedAt: number; nextUpdateAt?: number; userinfo?: { upload: number; download: number; total: number; expire: number } }[]>([]);
+  const [subs, setSubs] = useState<
+    {
+      url: string;
+      name: string;
+      updatedAt: number;
+      nextUpdateAt?: number;
+      userinfo?: { upload: number; download: number; total: number; expire: number };
+    }[]
+  >([]);
   const [nodeSortMode, setNodeSortMode] = useState<"delay" | "name" | "default">("delay");
   // 首屏只渲染前 30 个节点，挂载完成后再补全：消除首页→代理切换的卡顿
   const [pxNodeLimit, setPxNodeLimit] = useState(PX_NODE_FIRST);
@@ -254,11 +572,20 @@ export default function App() {
     timezone?: string;
     lat?: number;
     lon?: number;
-  } | null>(
-    null
-  );
+  } | null>(null);
+  const [exitIpLoading, setExitIpLoading] = useState(false);
+
+  // 右栏「解锁状态」：只放 AI + 主流流媒体的代表项（全量 12 项在测试页）。
+  // runUnlockChecks 是串行外网探测，耗时可达数十秒，故仅手动触发，不随 tab 自动跑。
+  const [unlockMap, setUnlockMap] = useState<
+    Record<string, { ok: boolean; fail?: boolean; region?: string | null; note: string; testedAt?: number }>
+  >({});
+  const [unlockBusy, setUnlockBusy] = useState<string | null>(null);
   const [nodeUri, setNodeUri] = useState("");
-  const [providers, setProviders] = useState<{ proxies: string[]; rules: string[] }>({ proxies: [], rules: [] });
+  const [providers, setProviders] = useState<{ proxies: string[]; rules: string[] }>({
+    proxies: [],
+    rules: [],
+  });
   const [editorMode, setEditorMode] = useState<"profile" | "runtime">("profile");
   const [bindTarget, setBindTarget] = useState<string | null>(null);
   // 首页6卡片可见性
@@ -275,9 +602,7 @@ export default function App() {
   });
   const [testing, setTesting] = useState(false);
   const [testProgress, setTestProgress] = useState(0);
-  const [autoTest, setAutoTest] = useState(true);
   const [autoPick, setAutoPick] = useState(true);
-  const [autoTestMs, setAutoTestMs] = useState(300_000);
   const [subAutoUpdateMin, setSubAutoUpdateMin] = useState(0);
   const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const [activeCore, setActiveCore] = useState("mihomo");
@@ -287,6 +612,8 @@ export default function App() {
     up: [],
     down: [],
   });
+  // 内存显示文本：抽出来避免 JSX 表达式内嵌模板字面量导致解析歧义。
+  const memText = typeof coreMemMB === "number" ? coreMemMB + " MB" : "—";
   const [banner, setBanner] = useState("");
   const [homeCfgOpen, setHomeCfgOpen] = useState(false);
   const [homeCfgDraft, setHomeCfgDraft] = useState(homeCards);
@@ -295,6 +622,15 @@ export default function App() {
   const [platformLabel, setPlatformLabel] = useState("Windows");
   const [startWithWindows, setStartWithWindows] = useState(false);
   const [mihomoChannel, setMihomoChannel] = useState("stable");
+
+  // 首页设置弹窗：关闭时统一走 closeHomeCfg，保证焦点一定回到入口按钮
+  const homeCfgTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const homeCfgBoxRef = useRef<HTMLDivElement | null>(null);
+  const closeHomeCfg = useCallback(() => {
+    setHomeCfgOpen(false);
+    // 关闭后焦点回到入口按钮；延迟一帧，等遮罩真正卸载再 focus
+    window.requestAnimationFrame(() => homeCfgTriggerRef.current?.focus());
+  }, []);
 
   const toastTimer = useRef<number | null>(null);
   const lastSeqRef = useRef(0);
@@ -309,8 +645,6 @@ export default function App() {
   const groupsRef = useRef(groups);
   // 测速中断器：切 tab / 停止内核 / 关闭应用时中止正在进行的测速
   const testAbortRef = useRef<AbortController | null>(null);
-  // 启动自动测速只跑一次：内核启动后等节点数据真正就绪再测，停止内核时重置
-  const bootTestedRef = useRef(false);
   const tabRef = useRef<Tab>(tab);
   // applyStatus 是稳定引用（空依赖），不能直接读 state 里的 running ——
   // 那样闭包会永远捕获初始值 false，把每次状态推送都当成「刚启动」，运行时间被反复清零。
@@ -337,16 +671,31 @@ export default function App() {
       return () => window.clearTimeout(t);
     }
   }, [groups.length, coreVersion, version]);
+
+  // 弹窗：打开时把焦点移入弹窗；Esc 或按钮关闭后统一把焦点还给入口按钮，
+  // 避免焦点掉回 body（键盘用户会「丢失位置」）
+  useEffect(() => {
+    if (!homeCfgOpen) return;
+    homeCfgBoxRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeHomeCfg();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [homeCfgOpen]);
   useEffect(() => {
     const t = window.setTimeout(() => setBootReady(true), 1600);
     return () => window.clearTimeout(t);
   }, []);
 
   const showToast = useCallback((msg: string, ms = 2400) => {
-     setToast(msg);
-     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-     toastTimer.current = window.setTimeout(() => setToast(""), ms);
-   }, []);
+    setToast(msg);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(""), ms);
+  }, []);
 
   const applyStatus = useCallback(
     (data: { running?: boolean; seq?: number; version?: { version?: string } }) => {
@@ -386,18 +735,20 @@ export default function App() {
       applyStatus(st as { running?: boolean; seq?: number; version?: { version?: string } });
       // heavy：首页/代理页需要连接列表与流量历史；另外「首次还没拿到代理组」时也必须拉一次，
       // 否则用户启动后直接切到别的标签页，节点数据永远为空、启动自动测速也就永远不会触发
-      const heavy = tabRef.current === "home" || tabRef.current === "proxies" || groupsRef.current.length === 0;
+      const heavy =
+        tabRef.current === "home" || tabRef.current === "proxies" || groupsRef.current.length === 0;
       if (!st.running) {
         upRateRef.current = 0;
         downRateRef.current = 0;
         setUpRate(0);
         setDownRate(0);
         setCoreMemMB(null);
+        // 与运行分支保持一致：未运行时也持续喂 0，侧栏曲线才会平滑回落到基线而不是断档
+        setRateHistory((h) => ({
+          up: [...h.up, 0].slice(-48),
+          down: [...h.down, 0].slice(-48),
+        }));
         if (heavy) {
-          setRateHistory((h) => ({
-            up: [...h.up, 0].slice(-48),
-            down: [...h.down, 0].slice(-48),
-          }));
           setConnections([]);
           setConnCount(0);
         }
@@ -455,14 +806,14 @@ export default function App() {
         setCoreMemMB(mem);
       }
 
+      // 流量历史：首页波形图与侧栏迷你曲线都要用，故不受 heavy 限制（heavy 只在首页/代理页为真）。
+      // 每 1.5s 一次 48 元素数组拷贝，开销可忽略；换来侧栏在任何标签页下曲线都连续。
+      setRateHistory((h) => ({
+        up: [...h.up, upRateRef.current].slice(-48),
+        down: [...h.down, downRateRef.current].slice(-48),
+      }));
+
       if (heavy) {
-        // 流量历史图只在首页用：不在首页时跳过，省一次数组拷贝与重渲染
-        if (tabRef.current === "home") {
-          setRateHistory((h) => ({
-            up: [...h.up, upRateRef.current].slice(-48),
-            down: [...h.down, downRateRef.current].slice(-48),
-          }));
-        }
         const conns = ov.connections?.connections || [];
         const totalCount = typeof ov.connectionsCount === "number" ? ov.connectionsCount : conns.length;
         // 连接列表：空闲（总数与累计流量不变）时跳过，活跃时才刷新
@@ -536,11 +887,16 @@ export default function App() {
   useEffect(() => {
     if (!window.veyra) return;
     // 启动时检测其他代理软件冲突
-    window.veyra.detectProxyConflict?.().then((conflicts) => {
-      if (conflicts?.length) {
-        setBanner(`检测到其他代理软件可能正在运行：${conflicts.join("、")}。建议一次只运行一个代理软件，避免端口冲突。`);
-      }
-    }).catch(() => {});
+    window.veyra
+      .detectProxyConflict?.()
+      .then((conflicts) => {
+        if (conflicts?.length) {
+          setBanner(
+            `检测到其他代理软件可能正在运行：${conflicts.join("、")}。建议一次只运行一个代理软件，避免端口冲突。`
+          );
+        }
+      })
+      .catch(() => {});
     const off1 = window.veyra.onCoreStatus((d) => {
       applyStatus(d as { running?: boolean; seq?: number; version?: { version?: string } });
     });
@@ -571,11 +927,23 @@ export default function App() {
     });
 
     refresh();
-    window.veyra.readActiveProfile().then(setProfileText).catch(() => {});
+    window.veyra
+      .readActiveProfile()
+      .then(setProfileText)
+      .catch(() => {});
     const reloadProfiles = () => {
-      window.veyra?.listProfiles().then(setProfiles).catch(() => {});
-      window.veyra?.listProfilesRich?.().then(setRichProfiles).catch(() => {});
-      window.veyra?.listSubscriptions?.().then(setSubs).catch(() => {});
+      window.veyra
+        ?.listProfiles()
+        .then(setProfiles)
+        .catch(() => {});
+      window.veyra
+        ?.listProfilesRich?.()
+        .then(setRichProfiles)
+        .catch(() => {});
+      window.veyra
+        ?.listSubscriptions?.()
+        .then(setSubs)
+        .catch(() => {});
     };
     reloadProfiles();
     window.veyra
@@ -600,9 +968,7 @@ export default function App() {
     window.veyra
       .getSettings()
       .then((s) => {
-        setAutoTest(!!s.autoTest);
         setAutoPick(!!s.autoPick);
-        setAutoTestMs(Math.max(120, s.autoTestIntervalSec || 300) * 1000);
         setSubAutoUpdateMin(Math.max(0, s.subAutoUpdateMin || 0));
         setActiveCore(s.core === "singbox" ? "singbox" : "mihomo");
         setStartWithWindows(!!s.startWithWindows);
@@ -624,7 +990,8 @@ export default function App() {
             el.id = "veyra-custom-css";
             document.head.appendChild(el);
           }
-          el.textContent = (s.themeColor ? `:root{--accent:${s.themeColor};}` : "") + "\n" + (s.customCss || "");
+          el.textContent =
+            (s.themeColor ? `:root{--accent:${s.themeColor};}` : "") + "\n" + (s.customCss || "");
         }
       })
       .catch(() => {
@@ -656,16 +1023,10 @@ export default function App() {
     setPfSeen((seen) => (seen[pfTab] ? seen : { ...seen, [pfTab]: true }));
   }, [pfTab]);
 
-  const currentGroup = useMemo(
-    () => groups.find((g) => g.name === selectedGroup),
-    [groups, selectedGroup]
-  );
+  const currentGroup = useMemo(() => groups.find((g) => g.name === selectedGroup), [groups, selectedGroup]);
 
   // 组内可选节点（过滤掉机场信息节点）；代理页列表与首页"节点"下拉共用同一份数据
-  const groupNodes = useMemo(
-    () => (currentGroup?.all || []).filter((n) => !isInfoNode(n)),
-    [currentGroup]
-  );
+  const groupNodes = useMemo(() => (currentGroup?.all || []).filter((n) => !isInfoNode(n)), [currentGroup]);
 
   const nodes = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -801,7 +1162,9 @@ export default function App() {
         }
         try {
           localStorage.setItem("veyra-delay-history", JSON.stringify(updated));
-        } catch {}
+        } catch {
+          /* localStorage 不可用（隐私模式/配额满）时忽略：延迟历史只是锦上添花 */
+        }
         return updated;
       });
       setTestingNode(null);
@@ -827,7 +1190,7 @@ export default function App() {
         const curName = group.now || "";
         const curRaw = next[curName];
         const curDelay = typeof curRaw === "number" ? curRaw : 0;
-        const worthSwitching = curDelay > 0 ? (best <= curDelay * 0.85 || curDelay - best >= 40) : true;
+        const worthSwitching = curDelay > 0 ? best <= curDelay * 0.85 || curDelay - best >= 40 : true;
         if (winner && curName !== winner && worthSwitching) {
           try {
             await window.veyra.selectProxy(group.name || "", winner);
@@ -855,56 +1218,14 @@ export default function App() {
     [refresh, showToast]
   );
 
-  // 自动保持最优节点：两级调度，避免「一直在全量测速」
-  //   快检（20s）：只测当前节点，确认它还活着；一旦失效立刻触发全量重扫
-  //   全量（≥2 分钟）：扫一遍找更优节点，静默切换，不打扰用户
-  useEffect(() => {
-    if (!running || !autoTest || !window.veyra) return;
-    let cancelled = false;
-
-    const fullScan = () => {
-      if (cancelled) return;
-      void runSpeedTest({ silent: true, pickBest: autoPickRef.current });
-    };
-    const quickCheck = async () => {
-      if (cancelled) return;
-      const cur = groupsRef.current.find((g) => g.name === selectedGroupRef.current)?.now;
-      if (!cur || !isTestableNode(cur)) return;
-      await runSpeedTest({ silent: true, pickBest: false, only: [cur] });
-      const d = delaysRef.current[cur];
-      // 当前节点失效（超时/测不到）→ 立即全量重扫换节点，保证「任何时候都在用可用最优」
-      if (!(typeof d === "number" && d > 0)) fullScan();
-    };
-
-    const quickTimer = window.setInterval(quickCheck, 20_000);
-    const fullTimer = window.setInterval(fullScan, Math.max(autoTestMs, 120_000));
-    return () => {
-      cancelled = true;
-      window.clearInterval(quickTimer);
-      window.clearInterval(fullTimer);
-    };
-  }, [running, autoTest, autoTestMs, selectedGroup, runSpeedTest]);
-
-  // 启动后自动测一次速（可见）：不再盲目等 1.2s —— 之前若节点数据还没加载完，
-  // 全量测速会因为 batch 为空直接静默返回，用户既看不到进度也看不到结果，
-  // 完全不知道到底测没测。改为「等节点数据真正就绪」再触发，保证打开软件必测一次。
-  // 内核停止时重置标记，下次启动会重新测。
-  useEffect(() => {
-    if (!running) {
-      bootTestedRef.current = false;
-      return;
-    }
-    if (!autoTest || !window.veyra) return;
-    if (bootTestedRef.current) return;
-    const g = groups.find((x) => x.name === selectedGroup) || groups[0];
-    const ready = (g?.all || []).filter(isTestableNode).length > 0;
-    if (!ready) return; // 节点尚未就绪：等 groups 更新后本 effect 会再跑一次
-    const t = window.setTimeout(() => {
-      bootTestedRef.current = true;
-      void runSpeedTest({ silent: false, pickBest: autoPickRef.current });
-    }, 400);
-    return () => window.clearTimeout(t);
-  }, [running, autoTest, groups, selectedGroup, runSpeedTest]);
+  // 测速现在是纯手动行为，三处触发点都在用户操作路径上：
+  //   「一键测速」按钮、单个节点卡片点击、设置页「测试全部」。
+  // 已移除的自动触发逻辑：
+  //   1) 打开软件 / 内核启动时的全量测速 effect
+  //   2) 后台 20s 快检 + 定时全量复测 + 静默切节点 的定时器
+  // 同时删除了配套设置项 autoTest / autoTestIntervalSec（设置面板与代理页工具栏入口一并下线）。
+  // autoPick（「选用最低」）保留：它只在用户手动测速完成后决定是否切到最低延迟节点，
+  // 自身不会发起任何测速请求，与"自动测速"无关。
 
   useEffect(() => {
     if (themeMode !== "system") return;
@@ -926,33 +1247,114 @@ export default function App() {
     setController(c);
   }, []);
 
-  const handlePrefs = useCallback((p: {
-    autoTest?: boolean;
-    autoPick?: boolean;
-    autoTestIntervalSec?: number;
-    subAutoUpdateMin?: number;
-  }) => {
-    if (p.autoTest != null) setAutoTest(p.autoTest);
-    if (p.autoPick != null) setAutoPick(p.autoPick);
-    if (p.autoTestIntervalSec != null) {
-      setAutoTestMs(Math.max(120, p.autoTestIntervalSec) * 1000);
-    }
-    if (p.subAutoUpdateMin != null) {
-      setSubAutoUpdateMin(Math.max(0, p.subAutoUpdateMin));
-    }
-  }, []);
+  const handlePrefs = useCallback(
+    (p: {
+      autoPick?: boolean;
+      subAutoUpdateMin?: number;
+    }) => {
+      if (p.autoPick != null) setAutoPick(p.autoPick);
+      if (p.subAutoUpdateMin != null) {
+        setSubAutoUpdateMin(Math.max(0, p.subAutoUpdateMin));
+      }
+    },
+    []
+  );
 
-  useEffect(() => {
-    if (!running || !window.veyra?.exitIp) return;
-    // 服务启动时自动检测出口 IP（真实检测）
-    window.veyra.exitIp().then((r) => {
+  // 出口 IP 检测的唯一入口：首屏自动调用一次，右栏卡片刷新按钮也复用它。
+  // 加 loading 守卫避免并发重复请求（快速点刷新时）。
+  const refreshExitIp = useCallback(async () => {
+    const api = window.veyra?.exitIp;
+    if (!api) return;
+    setExitIpLoading((busy) => {
+      if (busy) return busy;
+      return true;
+    });
+    try {
+      const r = await api();
       setExitIp(r || { ip: null });
       if (!r?.ip) showToast("IP 检测失败，请点击重试");
-    }).catch(() => {
+    } catch {
       setExitIp({ ip: null });
       showToast("IP 检测失败，请点击重试");
-    });
-  }, [running]);
+    } finally {
+      setExitIpLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!running) return;
+    // 服务启动时自动检测出口 IP（真实检测）
+    void refreshExitIp();
+  }, [running, refreshExitIp]);
+
+  // 右栏解锁状态：全量测试（串行，耗时长）。切换内核后结果即失效，由调用方决定何时重跑。
+  const testAllUnlock = useCallback(async () => {
+    const api = window.veyra?.streamingUnlock;
+    if (!api) {
+      showToast("解锁检测接口不可用");
+      return;
+    }
+    setUnlockBusy("__all__");
+    try {
+      const list = (await api()) || [];
+      const next: typeof unlockMap = {};
+      for (const it of list) {
+        next[it.id] = {
+          ok: !!it.ok,
+          fail: !!it.fail,
+          region: it.region ?? null,
+          note: it.note || "",
+          testedAt: it.testedAt,
+        };
+      }
+      setUnlockMap(next);
+      const okCount = list.filter((x) => x.ok).length;
+      showToast(`解锁检测完成：${okCount}/${list.length} 可用`);
+    } catch (e) {
+      showToast(`解锁检测失败：${(e as Error).message || e}`);
+    } finally {
+      setUnlockBusy(null);
+    }
+  }, [showToast]);
+
+  // 单项重测：在右栏点某一项时不跑全量，避免动辄几十秒的等待
+  const testOneUnlock = useCallback(
+    async (id: string) => {
+      const api = window.veyra?.streamingUnlockOne;
+      if (!api) {
+        showToast("解锁检测接口不可用");
+        return;
+      }
+      setUnlockBusy(id);
+      try {
+        const r = await api(id);
+        setUnlockMap((prev) => ({
+          ...prev,
+          [id]: {
+            ok: !!r.ok,
+            fail: !!r.fail,
+            region: r.region ?? null,
+            note: r.note || "",
+            testedAt: r.testedAt,
+          },
+        }));
+      } catch (e) {
+        setUnlockMap((prev) => ({
+          ...prev,
+          [id]: {
+            ok: false,
+            fail: true,
+            region: null,
+            note: String((e as Error).message || e),
+            testedAt: Date.now(),
+          },
+        }));
+      } finally {
+        setUnlockBusy(null);
+      }
+    },
+    [showToast]
+  );
 
   useEffect(() => {
     if (!window.veyra) return;
@@ -1152,30 +1554,40 @@ export default function App() {
     }
   }
 
-  const navItems = (
+  const navItems = [
+    ["home", NavHomeIcon, t("nav.home", "首页"), null],
     [
-      ["home", NavHomeIcon, t("nav.home", "首页"), null],
-      ["proxies", NavProxiesIcon, t("nav.proxies", "代理"), nodes.length || groups.reduce((a, g) => a + (g.all?.length || 0), 0) || null],
-      ["profiles", NavProfilesIcon, t("nav.profiles", "订阅"), subs.length + profiles.length || null],
-      ["connections", NavConnectionsIcon, t("nav.connections", "连接"), connCount || null],
-      ["rules", NavRulesIcon, t("nav.rules", "规则"), null],
-      ["logs", NavLogsIcon, t("nav.logs", "日志"), null],
-      ["tests", NavTestsIcon, t("nav.tests", "测试"), null],
-      ["settings", NavSettingsIcon, t("nav.settings", "设置"), null],
-    ] as const
-  );
+      "proxies",
+      NavProxiesIcon,
+      t("nav.proxies", "代理"),
+      nodes.length || groups.reduce((a, g) => a + (g.all?.length || 0), 0) || null,
+    ],
+    ["profiles", NavProfilesIcon, t("nav.profiles", "订阅"), subs.length + profiles.length || null],
+    ["connections", NavConnectionsIcon, t("nav.connections", "连接"), connCount || null],
+    ["rules", NavRulesIcon, t("nav.rules", "规则"), null],
+    ["logs", NavLogsIcon, t("nav.logs", "日志"), null],
+    ["tests", NavTestsIcon, t("nav.tests", "测试"), null],
+    ["settings", NavSettingsIcon, t("nav.settings", "设置"), null],
+  ] as const;
 
   // Before anything renders — show splash while booting
   if (!bootReady) {
     return (
       <div className="app boot-splash">
         <div className="container">
-          <header className="header"><div className="logo">Veyra</div></header>
+          <header className="header">
+            <div className="logo">Veyra</div>
+          </header>
           <div className="boot-skeleton">
-            <div className="sk sk-bar w30" /><div className="sk sk-bar w60" />
+            <div className="sk sk-bar w30" />
+            <div className="sk sk-bar w60" />
             <div className="sk-grid">
-              <div className="sk sk-card" /><div className="sk sk-card" /><div className="sk sk-card" />
-              <div className="sk sk-card" /><div className="sk sk-card" /><div className="sk sk-card" />
+              <div className="sk sk-card" />
+              <div className="sk sk-card" />
+              <div className="sk sk-card" />
+              <div className="sk sk-card" />
+              <div className="sk sk-card" />
+              <div className="sk sk-card" />
             </div>
           </div>
         </div>
@@ -1189,48 +1601,40 @@ export default function App() {
         {/* Header */}
         <header className="header">
           <div className="header-brand">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="32" height="32" style={{color:'var(--cyan-500)'}}><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/><line x1="12" y1="22" x2="12" y2="15.5"/><polyline points="22 8.5 12 15.5 2 8.5"/><polyline points="2 15.5 12 8.5 22 15.5"/><line x1="12" y1="2" x2="12" y2="8.5"/></svg>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              width="32"
+              height="32"
+              style={{ color: "var(--cyan-500)" }}
+            >
+              <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2" />
+              <line x1="12" y1="22" x2="12" y2="15.5" />
+              <polyline points="22 8.5 12 15.5 2 8.5" />
+              <polyline points="2 15.5 12 8.5 22 15.5" />
+              <line x1="12" y1="2" x2="12" y2="8.5" />
+            </svg>
             <span className="brand-text">VEYRA PROXY</span>
+            {/* 用真实应用版本；之前硬编码 v1.1.2，升级后会与设置页显示的版本矛盾 */}
+            <span className="brand-ver">{appVersion ? `v${appVersion.replace(/^v/, "")}` : "—"}</span>
           </div>
           <div className="header-actions">
-            <button
-              type="button"
-              className={`speed-chip${testing ? " testing" : lastTestAt > 0 ? " done" : " idle"}`}
-              onClick={() => {
-                if (testing || !running) return;
-                void runSpeedTest({ silent: false, pickBest: autoPick });
-              }}
-              title={
-                testing
-                  ? `正在测速：${testProgress}%（${nodes.length} 个节点）`
-                  : !running
-                    ? "内核未运行，启动后才能测速"
-                    : lastTestAt > 0
-                      ? `上次测速 ${new Date(lastTestAt).toLocaleString()} · 当前节点 ${currentNode} · 点击立即重新测速`
-                      : "点击立即测速"
-              }
-            >
-              {testing ? (
-                <>
-                  <span className="speed-chip-dot spin" />
-                  <span>测速中 {testProgress}%</span>
-                </>
-              ) : lastTestAt > 0 ? (
-                <>
-                  <span className="speed-chip-dot ok" />
-                  <span className="speed-chip-node" title={currentNode}>{currentNode}</span>
-                  <b className={delayClass(currentNodeInfo.delay)}>{delayText(currentNodeInfo.delay)}</b>
-                  <span className="speed-chip-time">{new Date(lastTestAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>
-                </>
-              ) : (
-                <>
-                  <span className="speed-chip-dot" />
-                  <span>{autoTest ? "等待自动测速…" : "自动测速已关闭"}</span>
-                </>
-              )}
-            </button>
             <div className="header-search">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                width="16"
+                height="16"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
               <input
                 type="text"
                 placeholder="搜索节点..."
@@ -1254,49 +1658,140 @@ export default function App() {
               >
                 <PanelRight size={18} />
               </button>
-              <button type="button" className="icon-btn" onClick={() => window.veyra?.minimize()}><Minus size={18} /></button>
-              <button type="button" className="icon-btn" onClick={() => window.veyra?.close()}><X size={18} /></button>
+              <button type="button" className="icon-btn" onClick={() => window.veyra?.minimize()} aria-label="最小化" title="最小化">
+                <Minus size={18} />
+              </button>
+              <button type="button" className="icon-btn" onClick={() => window.veyra?.close()} aria-label="关闭窗口" title="关闭窗口">
+                <X size={18} />
+              </button>
             </div>
           </div>
         </header>
 
         {banner ? (
-          <div className="card" style={{marginBottom:16,borderColor:'color-mix(in srgb, var(--bad) 50%, transparent)',background:'color-mix(in srgb, var(--bad) 10%, transparent)',padding:'10px 16px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style={{color:'var(--red-400)',fontSize:13}}>{banner}</span>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBanner("")}>关闭</button>
+          <div
+            className="card"
+            style={{
+              marginBottom: 8,
+              borderColor: "color-mix(in srgb, var(--bad) 50%, transparent)",
+              background: "color-mix(in srgb, var(--bad) 10%, transparent)",
+              padding: "10px 16px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <span style={{ color: "var(--red-400)", fontSize: 13 }}>{banner}</span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBanner("")}>
+              关闭
+            </button>
           </div>
         ) : null}
 
         {/* 三栏骨架：侧栏 + 主区 + 右栏（可收起） */}
-        <div className={`grid-12${showRail ? "" : " no-rail"}`}>
+        {/* rail-compact：仅首页使用。首页无宽内容（全是自适应卡片），
+            允许在 1320px 以下的窄窗口仍保留右栏；连接/规则等宽表格页不受此影响。 */}
+        <div
+          className={`grid-12${showRail ? "" : " no-rail"}${
+            showRail && tab === "home" ? " rail-compact" : ""
+          }`}
+        >
           {/* Left Sidebar */}
           <div className="col-sidebar">
-            <div className="card" style={{height:'fit-content',position:'sticky',top:16}}>
+            <div className="card">
               <div className="card-body tight">
                 <nav className="nav-list">
                   {navItems.map(([id, Icon, label, badge]) => (
-                    <button key={id} type="button" className={`nav-item ${tab === id ? "active" : ""}`} onClick={() => goTab(id)}>
+                    <button
+                      key={id}
+                      type="button"
+                      className={`nav-item ${tab === id ? "active" : ""}`}
+                      onClick={() => goTab(id)}
+                    >
                       <Icon />
                       <span>{label}</span>
                       {typeof badge === "number" && badge > 0 ? (
-                        <span className="badge badge-cyan" style={{marginLeft:'auto'}}>{badge > 99 ? "99+" : badge}</span>
+                        <span className="badge badge-cyan" style={{ marginLeft: "auto" }}>
+                          {badge > 99 ? "99+" : badge}
+                        </span>
                       ) : null}
                     </button>
                   ))}
                 </nav>
-                <div className="mt-8 pt-6 border-t">
+                {/* 导航与「系统状态」之间需要明确分界：原先只有 12px 上边距 + 8px 内边距，
+                    在一块卡片里两个功能区几乎连成一片，看起来"挤"。加大到 16/14 并保留
+                    分隔线，同时把状态区标题字号提一点，形成清晰的两段式结构。 */}
+                <div className="mt-4 pt-3 border-t">
                   <div className="nav-section-title">系统状态</div>
-                  <div className="status-item">
-                    <div className="status-item-hd"><span>内核</span><span>{running ? "运行中" : "已停止"}</span></div>
-                    <div className="status-bar"><i className={running ? "cyan" : "purple"} style={{width:running?"100%":"0%"}}/></div>
+                  {/* 状态行：标签 + 状态徽标。
+                      原先用 14px 环形指示 + 呼吸动画，读起来像仪表盘，与本应用的
+                      扁平圆角卡片语言冲突（用户反馈"花里胡哨"）。改为复用既有 badge
+                      体系：一个 6px 圆点 + 文字的轻量胶囊，开启态用强调色，关闭态
+                      用中性灰。信息密度不变，但视觉权重降到与导航项同级。 */}
+                  <div className="rail-stat-list">
+                    {[
+                      {
+                        key: "core",
+                        label: "内核",
+                        on: running,
+                        text: running ? "运行中" : "已停止",
+                      },
+                      {
+                        key: "net",
+                        label: "网络",
+                        on: sysProxy,
+                        text: sysProxy ? "已开启" : "未开启",
+                      },
+                      {
+                        key: "conn",
+                        label: "连接数",
+                        on: connCount > 0,
+                        text: String(connCount),
+                      },
+                    ].map((s) => (
+                      <div key={s.key} className="rail-stat">
+                        <span className="rail-stat-label">{s.label}</span>
+                        <span className={`rail-stat-pill${s.on ? " on" : ""}`}>
+                          <i className="rail-stat-dot" />
+                          {s.text}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                  <div className="status-item">
-                    <div className="status-item-hd"><span>网络</span><span>{sysProxy ? "已开启" : "未开启"}</span></div>
-                    <div className="status-bar"><i className={sysProxy ? "green" : "blue"} style={{width:sysProxy?"100%":"0%"}}/></div>
-                  </div>
-                  <div className="status-item">
-                    <div className="status-item-hd"><span>连接数</span><span>{connCount}</span></div>
-                    <div className="status-bar"><i className="blue" style={{width:`${Math.min(100,connCount*5)}%`}}/></div>
+                </div>
+
+                {/* 底部实时监控：填掉原先的空白区。所有值均为真实数据——
+                     速率曲线取自全局累积的 rateHistory，内存来自 core:status 的 coreMemoryMB。
+                     运行时始终显示速率条（含 0 B/s 基线），停止时显示「服务未运行」。 */}
+                <div className="rail-monitor">
+                  <div className="rail-monitor-title">实时速率</div>
+                  {running ? (
+                    <div className="rail-monitor-bands">
+                      <div className="rail-monitor-band">
+                        <span className="rail-monitor-band-label">↓</span>
+                        <span className="rail-monitor-band-val down">{formatRate(downRate)}</span>
+                        <Sparkline data={rateHistory.down} color="var(--accent)" width={120} height={18} />
+                      </div>
+                      <div className="rail-monitor-band">
+                        <span className="rail-monitor-band-label">↑</span>
+                        <span className="rail-monitor-band-val up">{formatRate(upRate)}</span>
+                        <Sparkline data={rateHistory.up} color="#f59e0b" width={120} height={18} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rail-monitor-idle">服务未运行</div>
+                  )}
+                  <div className="rail-monitor-meta">
+                    <div className="rail-monitor-cell">
+                      <div className="rail-monitor-label">内存</div>
+                      <div className="rail-monitor-num">{memText}</div>
+                    </div>
+                    <div className="rail-monitor-cell">
+                      <div className="rail-monitor-label">运行</div>
+                      <div className="rail-monitor-num">
+                        {running && coreStartTime ? formatUptime(Date.now() - coreStartTime) : "—"}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1305,1043 +1800,1056 @@ export default function App() {
 
           {/* Main Content */}
           <div className="col-main">
-        <main className="stage">
-          {tab === "home" && (
-            <div className="pane home" hidden={tab !== "home"}>
-              <section className={`overview-strip ${running ? "online" : "offline"}`}>
-                <div className="overview-status">
-                  <span className="overview-pulse" />
-                  <div>
-                    <span className="overview-eyebrow">代理服务</span>
-                    <strong>{running ? "运行正常" : "服务已停止"}</strong>
-                    <small>{running ? `127.0.0.1:${mixedPort} · ${activeCore === "singbox" ? "sing-box" : "mihomo"}` : "启动服务后即可接管系统流量"}</small>
-                  </div>
-                </div>
-                <div className="overview-metrics">
-                  <div><span>当前模式</span><b>{MODE_LABEL[mode] || mode}</b></div>
-                  <div><span>活动连接</span><b>{connCount}</b></div>
-                  <div><span>下载速率</span><b>{formatRate(downRate)}</b></div>
-                </div>
-                <button type="button" className={`overview-action ${sysProxy ? "enabled" : ""}`} onClick={toggleSysProxy} disabled={busy || !running}>
-                  <Power size={16} />
-                  {sysProxy ? "系统代理已开启" : "开启系统代理"}
-                </button>
-              </section>
-              {/* 6卡片网格 */}
-              <div className="home-cards">
-                {homeCards.subscription && (
-                  <section className="home-card" style={{ order: 3 }}>
-                    <div className="home-card-hd">
-                      <h2><CardSubIcon /> 订阅</h2>
-                      <div className="home-card-hd-actions">
-                        <button type="button" className="home-card-link" onClick={updateSubscriptions}>
-                          更新
-                        </button>
-                        <button type="button" className="home-card-link" onClick={() => goTab("profiles")}>
-                          订阅 &gt;
-                        </button>
+            <main className="stage">
+              {tab === "home" && (
+                <div className="pane home" hidden={tab !== "home"}>
+                  {/* 区段 1: KPI + 核心状态 */}
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{ fontSize: 18, fontWeight: 600, color: "var(--text-100)", marginBottom: 4 }}
+                      >
+                        Veyra ·{" "}
+                        {running ? t("home.connected", "网络畅通") : t("home.disconnected", "服务已停止")}
                       </div>
-                    </div>
-                    <div className="home-card-bd">
-                      {(() => {
-                        const sub = subs.find((s) => s.userinfo) || subs[0];
-                        if (!sub) {
-                          return (
-                            <>
-                              <p className="muted">导入订阅链接后即可测速并选用节点。</p>
-                              <button type="button" className="btn primary" onClick={() => goTab("profiles")}>
-                                <Plus size={16} />
-                                导入订阅
-                              </button>
-                            </>
-                          );
-                        }
-                        const fmtGB = (b: number) => (b / 1024 ** 3).toFixed(1) + "GB";
-                        let host = "";
-                        try { host = new URL(sub.url).host; } catch {}
-                        const u = sub.userinfo;
-                        const used = u ? u.upload + u.download : 0;
-                        const pct = u && u.total > 0
-                          ? Math.min(100, Math.max(0, Math.round(((u.upload + u.download) / u.total) * 100)))
-                          : null;
-                        return (
-                          <div className="sub-usage">
-                            <InfoRow icon={Globe} label="来自" mono>{host || sub.name}</InfoRow>
-                            <InfoRow icon={Clock} label="更新时间" mono>
-                              {new Date(sub.updatedAt).toLocaleString("zh-CN", { hour12: false })}
-                            </InfoRow>
-                            {u && (
-                              <>
-                                <InfoRow icon={PieChart} label="已使用 / 总量" mono>
-                                  {fmtGB(used)} / {fmtGB(u.total)}
-                                </InfoRow>
-                                <InfoRow icon={Database} label="剩余流量" mono>
-                                  {fmtGB(Math.max(0, u.total - used))}
-                                </InfoRow>
-                                <InfoRow icon={CalendarClock} label="到期时间" mono>
-                                  {u.expire ? new Date(u.expire * 1000).toLocaleDateString("zh-CN") : "—"}
-                                </InfoRow>
-                                <div className="sub-quota">
-                                  <div className="sub-quota-bar"><i style={{ width: `${pct ?? 0}%` }} /></div>
-                                  <span>{pct ?? 0}%</span>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  </section>
-                )}
-
-                {homeCards.node && (
-                  <section className="home-card" style={{ order: 1 }}>
-                    <div className="home-card-hd">
-                      <h2><CardNodeIcon /> 当前节点</h2>
-                      <button type="button" className="home-card-link" onClick={() => goTab("proxies")}>
-                        代理 &gt;
-                      </button>
-                    </div>
-                    <div className="home-card-bd">
-                      {groups.length === 0 ? (
-                        <p className="muted">暂无节点，请先<button type="button" className="link-btn" onClick={() => goTab("profiles")}>导入订阅</button>。</p>
-                      ) : (
-                        <>
-                          <div className="node-hero">
-                            <i className={`node-dot ${running ? "on" : ""}`} />
-                            <div className="node-hero-main">
-                              <b className="node-hero-name" title={currentNode}>{currentNode || "—"}</b>
-                              <span className="node-hero-tags">
-                                {currentNodeInfo.type ? <em>{currentNodeInfo.type}</em> : null}
-                                {currentNodeInfo.udp ? <i>UDP</i> : null}
-                              </span>
-                            </div>
-                            <span className={`node-delay ${delayClass(currentNodeInfo.delay)}`} title="当前节点延迟">
-                              {delayText(currentNodeInfo.delay)}
-                            </span>
-                          </div>
-                          <div className="node-selects">
-                        <div>
-                          <em>代理组</em>
-                          <select
-                            value={selectedGroup}
-                            onChange={(e) => setSelectedGroup(e.target.value)}
-                            disabled={!running}
-                          >
-                            {groups.map((g) => (
-                              <option key={g.name} value={g.name}>{g.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <em>节点</em>
-                          <select
-                            disabled={!running || !groupNodes.length}
-                            value={currentGroup?.now || ""}
-                            onChange={(e) => selectNode(e.target.value)}
-                            title="切换当前组内的节点"
-                          >
-                            {groupNodes.length ? (
-                              groupNodes.map((n) => (
-                                <option key={n} value={n}>{n}</option>
-                              ))
-                            ) : (
-                              <option value="">{currentNode || "—"}</option>
-                            )}
-                          </select>
-                        </div>
+                      <div style={{ fontSize: 13, color: "var(--text-400)", marginBottom: 6 }}>
+                        {MODE_LABEL[mode] || mode} · {nodes.length} {t("home.nodesAvailable", "节点可用")} ·{" "}
+                        {formatRate(downRate)} ↓
                       </div>
-                        </>
-                      )}
-                    </div>
-                  </section>
-                )}
-
-                {homeCards.network && (
-                  <section className="home-card" style={{ order: 4 }}>
-                    <div className="home-card-hd">
-                      <h2><CardNetIcon /> 网络设置</h2>
-                    </div>
-                    <div className="home-card-bd">
-                      <InfoRow icon={ShieldCheck} label="系统代理">
-                        <button
-                          type="button"
-                          className={`switch ${sysProxy ? "on" : ""}`}
-                          onClick={toggleSysProxy}
-                          aria-label="系统代理开关"
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <div
+                          style={{
+                            flex: 1,
+                            padding: "10px 14px",
+                            background: "var(--card-solid)",
+                            borderRadius: 11,
+                            border: "0.5px solid var(--card-border)",
+                            boxShadow: "var(--shadow-sm)",
+                          }}
                         >
-                          <i />
-                        </button>
-                      </InfoRow>
-                      <InfoRow icon={Cable} label="混合端口" mono>127.0.0.1:{mixedPort}</InfoRow>
-                      <InfoRow icon={Terminal} label="控制端口" mono>{controller.split(":")[1] || "—"}</InfoRow>
-                      <InfoRow icon={Cpu} label="内核">{activeCore === "singbox" ? "sing-box" : "mihomo"}</InfoRow>
-                    </div>
-                  </section>
-                )}
-
-                {homeCards.mode && (
-                  <section className="home-card" style={{ order: 2 }}>
-                    <div className="home-card-hd">
-                      <h2><CardModeIcon /> 代理模式</h2>
-                    </div>
-                    <div className="home-card-bd">
-                      <div className="mode-cards text-only">
-                        {([
-                          ["rule", "规则", "智能分流", "#2c71e8", Route],
-                          ["global", "全局", "全部代理", "#10b981", Globe],
-                          ["direct", "直连", "直接连接", "#f59e0b", Zap],
-                        ] as const).map(([m, label, desc, color, Icon]) => (
-                          <button
-                            key={m}
-                            type="button"
-                            className={`mode-tcard${mode === m ? " active" : ""}`}
-                            onClick={() => changeMode(m)}
-                            disabled={!running}
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: "var(--text-500)",
+                              fontWeight: 500,
+                              marginBottom: 3,
+                            }}
                           >
-                            <span className="mode-tcard-ico"><Icon /></span>
-                            <span className="mode-tcard-word" style={{ color: mode === m ? color : undefined }}>{label}</span>
-                            <span className="mode-tcard-desc">{desc}</span>
-                          </button>
-                        ))}
+                            ↑ {t("home.uploadSpeed", "上传速率")}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 16,
+                              fontWeight: 600,
+                              color: "#10b981",
+                              fontFamily: "var(--font-mono)",
+                            }}
+                          >
+                            {formatRate(upRate)}
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            flex: 1,
+                            padding: "10px 14px",
+                            background: "var(--card-solid)",
+                            borderRadius: 11,
+                            border: "0.5px solid var(--card-border)",
+                            boxShadow: "var(--shadow-sm)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: "var(--text-500)",
+                              fontWeight: 500,
+                              marginBottom: 3,
+                            }}
+                          >
+                            ↓ {t("home.downloadSpeed", "下载速率")}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 16,
+                              fontWeight: 600,
+                              color: "#2c71e8",
+                              fontFamily: "var(--font-mono)",
+                            }}
+                          >
+                            {formatRate(downRate)}
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            flex: 1,
+                            padding: "10px 14px",
+                            background: "var(--card-solid)",
+                            borderRadius: 11,
+                            border: "0.5px solid var(--card-border)",
+                            boxShadow: "var(--shadow-sm)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: "var(--text-500)",
+                              fontWeight: 500,
+                              marginBottom: 3,
+                            }}
+                          >
+                            {t("home.activeConnections", "活跃连接")}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 16,
+                              fontWeight: 600,
+                              color: "var(--text-100)",
+                              fontFamily: "var(--font-mono)",
+                            }}
+                          >
+                            {connCount}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </section>
-                )}
+                    {/* 首页卡片配置入口：这个弹窗此前没有任何入口（setHomeCfgOpen(true) 全项目 0 次调用），
+                        卡片开关逻辑与持久化都已实现好，只是打不开。 */}
+                    <button
+                      ref={homeCfgTriggerRef}
+                      type="button"
+                      className="btn ghost btn-sm home-cfg-open"
+                      onClick={() => {
+                        setHomeCfgDraft(homeCards);
+                        setHomeCfgOpen(true);
+                      }}
+                      title={t("home.configureCards", "自定义首页卡片")}
+                      aria-haspopup="dialog"
+                    >
+                      <SlidersHorizontal size={14} />
+                      {t("home.configureCards", "自定义首页卡片")}
+                    </button>
+                  </div>
 
-                {homeCards.traffic && (
-                  <section className="home-card" style={{ order: 5 }}>
-                    <div className="home-card-hd">
-                      <h2><CardTrafficIcon /> 流量统计</h2>
-                    </div>
-                    <div className="home-card-bd">
-                      <div className="traffic-grid">
-                        <div className="traffic-cell">
-                          <em><ArrowUp size={13} /> 上传速度</em>
-                          <b>{formatRate(upRate)}</b>
-                        </div>
-                        <div className="traffic-cell">
-                          <em><ArrowDown size={13} /> 下载速度</em>
-                          <b>{formatRate(downRate)}</b>
-                        </div>
-                        <div className="traffic-cell">
-                          <em><Network size={13} /> 活跃连接</em>
-                          <b>{connCount}</b>
-                        </div>
-                        <div className="traffic-cell">
-                          <em><ArrowUp size={13} /> 上传量</em>
-                          <b>{formatBytes(upload)}</b>
-                        </div>
-                        <div className="traffic-cell">
-                          <em><ArrowDown size={13} /> 下载量</em>
-                          <b>{formatBytes(download)}</b>
-                        </div>
-                        <div className="traffic-cell">
-                          <em><HardDrive size={13} /> 内核占用</em>
-                          <b>{coreMemMB != null ? `${coreMemMB.toFixed(0)} MB` : "—"}</b>
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-                )}
-
-                {homeCards.ip && (
-                  <section className="home-card" style={{ order: 7 }}>
-                    <div className="home-card-hd">
-                      <h2><CardIpIcon /> IP 信息</h2>
-                      <button
-                        type="button"
-                        className="home-card-link"
-                        title="刷新"
-                        onClick={async () => {
-                          try {
-                            const r = await window.veyra?.exitIp?.();
-                            setExitIp(r || { ip: null });
-                          } catch (e) {
-                            showToast(String((e as Error).message || e));
-                          }
+                  {/* 区段 2: 实时流量图
+                      原实现为 3 条硬编码 path 的静态装饰图，不随时间/流量变化，具有欺骗性。
+                      改用项目已有的 WaveChart 组件消费真实累积的 rateHistory（见 setRateHistory）。 */}
+                  <div
+                    style={{
+                      background: "var(--card-solid)",
+                      borderRadius: 12,
+                      border: "0.5px solid var(--card-border)",
+                      padding: "10px 12px",
+                      boxShadow: "var(--shadow-sm)",
+                      marginBottom: 8,
+                    }}
+                  >
+                    {rateHistory.down.length || rateHistory.up.length ? (
+                      <WaveChart up={rateHistory.up} down={rateHistory.down} />
+                    ) : (
+                      <div
+                        style={{
+                          height: 80,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 12,
+                          color: "var(--text-500)",
                         }}
                       >
-                        <RefreshCw size={14} />
-                      </button>
-                    </div>
-                    <div className="home-card-bd">
-                      {exitIp?.ip ? (
-                        <>
-                          <div className="ip-main">
-                            <span className="ip-flag">{exitIp.countryCode || exitIp.country?.slice(0, 2).toUpperCase() || "—"}</span>
-                            <div>
-                              <div className="mono ip-addr">{exitIp.ip}</div>
-                              <div className="muted ip-loc">{[exitIp.city, exitIp.region, exitIp.country].filter(Boolean).join(", ") || "未知地区"}</div>
-                            </div>
-                          </div>
-                          <InfoRow icon={Building2} label="服务商">{exitIp.isp || "—"}</InfoRow>
-                          <InfoRow icon={Layers3} label="组织">{exitIp.org || "—"}</InfoRow>
-                          <InfoRow icon={Network} label="自治域" mono>{exitIp.as || "—"}</InfoRow>
-                          <InfoRow icon={Globe} label="时区" mono>{exitIp.timezone || "—"}</InfoRow>
-                          {(exitIp.lat != null && exitIp.lon != null) && (
-                            <InfoRow icon={MapPin} label="坐标" mono>{exitIp.lat}, {exitIp.lon}</InfoRow>
-                          )}
-                          <button
-                            type="button"
-                            className="btn sm"
-                            onClick={async () => {
-                              try {
-                                const r = await window.veyra?.exitIp?.();
-                                setExitIp(r || { ip: null });
-                              } catch (e) {
-                                showToast(String((e as Error).message || e));
-                              }
+                        {running ? "正在采集流量数据…" : "服务未运行"}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 区段 3: 订阅状态 */}
+                  {homeCards.subscription && subs.length > 0 && (
+                    <div style={{ marginBottom: 14 }}>
+                      <div
+                        style={{ fontSize: 14, fontWeight: 600, color: "var(--text-100)", marginBottom: 8 }}
+                      >
+                        {t("home.subscriptions", "订阅")}{" "}
+                        <span style={{ fontSize: 11, color: "var(--text-500)", fontWeight: 400 }}>
+                          {subs.length}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                        {subs.slice(0, 3).map((sub, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              padding: "8px 12px",
+                              background: "var(--card-solid)",
+                              borderRadius: 9,
+                              border: "0.5px solid var(--card-border)",
                             }}
                           >
-                            重新检测
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <p className="muted">检测当前出口 IP 及归属地。</p>
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={async () => {
-                              try {
-                                const r = await window.veyra?.exitIp?.();
-                                setExitIp(r || { ip: null });
-                                showToast(r?.ip ? `出口 ${r.ip}` : "未能获取出口 IP");
-                              } catch (e) {
-                                showToast(String((e as Error).message || e));
-                              }
-                            }}
-                          >
-                            点击检测
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </section>
-                )}
-
-                {homeCards.core && (
-                  <section className="home-card" style={{ order: 6 }}>
-                    <div className="home-card-hd">
-                      <h2><CardCoreIcon /> 内核信息</h2>
-                    </div>
-                    <div className="home-card-bd">
-                      <InfoRow icon={Cpu} label="内核版本" mono>
-                        {coreVersion ? `${coreVersion} ${coreType === "sing-box" ? "Sing-Box" : "Mihomo"}` : "—"}
-                      </InfoRow>
-                      <InfoRow icon={ShieldCheck} label="系统代理地址" mono>127.0.0.1:{mixedPort}</InfoRow>
-                      <InfoRow icon={Cable} label="混合代理端口" mono>{mixedPort}</InfoRow>
-                      <InfoRow icon={Clock} label="运行时间" mono>
-                        {running && coreStartTime ? formatUptime(Date.now() - coreStartTime) : "—"}
-                      </InfoRow>
-                      <InfoRow icon={ListTree} label="规则数量" mono>{ruleCount != null ? ruleCount : "—"}</InfoRow>
-                    </div>
-                  </section>
-                )}
-
-                {homeCards.system && (
-                  <section className="home-card" style={{ order: 8 }}>
-                    <div className="home-card-hd">
-                      <h2><CardSysIcon /> 系统信息</h2>
-                      <button
-                        type="button"
-                        className="home-card-link"
-                        title="设置"
-                        onClick={() => goTab("settings")}
-                      >
-                        <Settings size={14} />
-                      </button>
-                    </div>
-                    <div className="home-card-bd">
-                      <InfoRow icon={Monitor} label="操作系统信息">{platformLabel}</InfoRow>
-                      <InfoRow icon={Power} label="开机自启">
-                        <button
-                          type="button"
-                          className="status-pill"
-                          style={
-                            startWithWindows
-                              ? undefined
-                              : { background: "color-mix(in srgb, var(--text-500) 15%, transparent)", color: "var(--text-400)" }
-                          }
-                          onClick={() => goTab("settings")}
-                          title="点击到「设置 → 系统」中修改"
-                        >
-                          {startWithWindows ? "已启用" : "未启用"}
-                        </button>
-                      </InfoRow>
-                      <InfoRow icon={SlidersHorizontal} label="运行模式"><b className="ok-text">桌面模式</b></InfoRow>
-                      <InfoRow icon={RefreshCw} label="内核通道" mono>{mihomoChannel === "alpha" ? "测试版 alpha" : "稳定版 stable"}</InfoRow>
-                      <InfoRow icon={Layers3} label="应用版本" mono>v{appVersion || "—"}</InfoRow>
-                    </div>
-                  </section>
-                )}
-
-                {homeCards.webtest && (
-                  <section className="home-card wide" style={{ order: 9 }}>
-                    <div className="home-card-hd">
-                      <h2><CardWebIcon /> 网站测试</h2>
-                      <button
-                        type="button"
-                        className="link-btn"
-                        onClick={() => goTab("tests")}
-                      >
-                        更多 &gt;
-                      </button>
-                    </div>
-                    <div className="home-card-bd">
-                      <div className="webtest-grid">
-                        {[
-                          { name: "Google", Icon: WebGoogleIcon, url: "https://www.google.com/generate_204" },
-                          { name: "GitHub", Icon: WebGithubIcon, url: "https://api.github.com" },
-                          { name: "YouTube", Icon: WebYoutubeIcon, url: "https://www.youtube.com/generate_204" },
-                          { name: "X", Icon: WebXIcon, url: "https://api.twitter.com" },
-                        ].map(({ name, Icon, url }) => (
-                          <div key={name} className="webtest-item">
-                            <span className="webtest-logo">
-                              <Icon />
-                            </span>
-                            <span className="webtest-name">{name}</span>
-                            <button
-                              type="button"
-                              className="link-btn webtest-test"
-                              onClick={async () => {
-                                showToast(`正在测试 ${name}...`);
-                                try {
-                                  const start = Date.now();
-                                  await fetch(url, { mode: "no-cors", signal: AbortSignal.timeout(8000) });
-                                  const ms = Date.now() - start;
-                                  showToast(`${name} 连通 (${ms}ms)`);
-                                } catch {
-                                  showToast(`${name} 连接失败`);
-                                }
+                            <div
+                              style={{
+                                width: 6,
+                                height: 6,
+                                borderRadius: 50,
+                                background:
+                                  sub.userinfo && sub.userinfo.total > 0
+                                    ? "var(--green-500)"
+                                    : "var(--text-500)",
+                                flexShrink: 0,
+                              }}
+                            />
+                            <span
+                              style={{
+                                fontSize: 12,
+                                color: "var(--text-100)",
+                                flex: 1,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
                               }}
                             >
-                              测试
-                            </button>
+                              {sub.name}
+                            </span>
+                            {sub.userinfo ? (
+                              <span
+                                style={{
+                                  fontSize: 10.5,
+                                  color: "var(--green-500)",
+                                  fontFamily: "var(--font-mono)",
+                                }}
+                              >
+                                {(() => {
+                                  const pct =
+                                    sub.userinfo.total > 0
+                                      ? Math.min(
+                                          100,
+                                          Math.round(
+                                            ((sub.userinfo.upload + sub.userinfo.download) /
+                                              sub.userinfo.total) *
+                                              100
+                                          )
+                                        )
+                                      : 0;
+                                  return pct + "%";
+                                })()}
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: 10.5, color: "var(--text-500)" }}>—</span>
+                            )}
                           </div>
                         ))}
                       </div>
                     </div>
-                  </section>
-                )}
-              </div>
-            </div>
-          )}
+                  )}
 
-          {tab === "proxies" && (
-            <div className="pane px" hidden={tab !== "proxies"}>
-              <div className="px-header-card">
-                <div className="px-tabs">
-                  {groups.length ? (
-                    groups.map((g) => (
-                      <button
-                        key={g.name}
-                        type="button"
-                        className={`px-tab ${g.name === selectedGroup ? "active" : ""}`}
-                        onClick={() => setSelectedGroup(g.name || "")}
-                        title={g.name || ""}
+                  {/* 区段 4: 内核信息 */}
+                  {homeCards.core && (
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <div
+                        style={{
+                          flex: 1,
+                          padding: "12px 14px",
+                          background: "var(--card-solid)",
+                          borderRadius: 11,
+                          border: "0.5px solid var(--card-border)",
+                          boxShadow: "var(--shadow-sm)",
+                        }}
                       >
-                        <span className="gt-ico"><Server size={14} /></span>
-                        <span className="gt-txt">
-                          <b>{g.name}</b>
-                          <small>{g.now || g.type}</small>
-                        </span>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="empty slim">暂无代理组 — 请先到订阅页导入配置</div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: "var(--text-500)",
+                            fontWeight: 500,
+                            letterSpacing: "0.04em",
+                            marginBottom: 4,
+                          }}
+                        >
+                          {t("home.kernel", "内核")}
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-100)" }}>
+                          {activeCore === "singbox" ? "sing-box" : "mihomo"}
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--ok)", marginTop: 3 }}>
+                          {/* 没有做版本检查，就不要断言「已是最新」——之前无条件显示，
+                              与旁边读到的版本号自相矛盾。改为显示真实内核版本（version 由 applyStatus 写入）。 */}
+                          {version && version !== "-"
+                            ? `v${version.replace(/^v/, "")}`
+                            : t("home.versionUnknown", "版本未知")}
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          flex: 1,
+                          padding: "12px 14px",
+                          background: "var(--card-solid)",
+                          borderRadius: 11,
+                          border: "0.5px solid var(--card-border)",
+                          boxShadow: "var(--shadow-sm)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: "var(--text-500)",
+                            fontWeight: 500,
+                            letterSpacing: "0.04em",
+                            marginBottom: 4,
+                          }}
+                        >
+                          {t("home.uptime", "运行时长")}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: "var(--text-100)",
+                            fontFamily: "var(--font-mono)",
+                          }}
+                        >
+                          {running && coreStartTime ? formatUptime(Date.now() - coreStartTime) : "—"}
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
+                          {t("home.stable", "无重启 · 稳定")}
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          flex: 1,
+                          padding: "12px 14px",
+                          background: "var(--card-solid)",
+                          borderRadius: 11,
+                          border: "0.5px solid var(--card-border)",
+                          boxShadow: "var(--shadow-sm)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: "var(--text-500)",
+                            fontWeight: 500,
+                            letterSpacing: "0.04em",
+                            marginBottom: 4,
+                          }}
+                        >
+                          {t("home.rules", "规则数量")}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: "var(--text-100)",
+                            fontFamily: "var(--font-mono)",
+                          }}
+                        >
+                          {ruleCount != null ? ruleCount : "—"}
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
+                          {t("home.ruleCount", "条规则")}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 区段 5: 当前节点（原 homeCards.node 开关无效，此处补齐） */}
+                  {homeCards.node && (
+                    <div style={{ marginTop: 14 }}>
+                      <div
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          color: "var(--text-100)",
+                          marginBottom: 8,
+                        }}
+                      >
+                        {t("home.currentNode", "当前节点")}
+                      </div>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <div style={HOME_TILE}>
+                          <div style={HOME_TILE_LABEL}>{t("home.nodeName", "节点")}</div>
+                          <div style={HOME_TILE_VALUE} title={currentNode}>
+                            {currentNode || "—"}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
+                            {currentNodeInfo.type || "—"}
+                            {currentNodeInfo.udp ? " · UDP" : ""}
+                          </div>
+                        </div>
+                        <div style={HOME_TILE}>
+                          <div style={HOME_TILE_LABEL}>{t("home.delay", "延迟")}</div>
+                          <div
+                            style={{
+                              ...HOME_TILE_VALUE,
+                              color: delayColor(currentNodeInfo.delay),
+                              fontFamily: "var(--font-mono)",
+                            }}
+                          >
+                            {currentNodeInfo.delay != null ? `${currentNodeInfo.delay} ms` : "—"}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
+                            {t("home.nodesAvailable", "可用节点")} {nodes.length}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 区段 6: 网络设置 + 代理模式（原 homeCards.network / mode 开关无效，此处补齐） */}
+                  {(homeCards.network || homeCards.mode) && (
+                    <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                      {homeCards.network && (
+                        <div style={{ ...HOME_TILE, flex: 1 }}>
+                          <div style={HOME_TILE_LABEL}>{t("home.sysProxy", "系统代理")}</div>
+                          <div
+                            style={{
+                              ...HOME_TILE_VALUE,
+                              color: sysProxy ? "var(--green-500)" : "var(--text-400)",
+                            }}
+                          >
+                            {sysProxy ? t("home.on", "已开启") : t("home.off", "已关闭")}
+                          </div>
+                          <button
+                            type="button"
+                            className="btn ghost btn-xs"
+                            style={{ marginTop: 6 }}
+                            onClick={toggleSysProxy}
+                            disabled={!running}
+                          >
+                            {sysProxy ? t("home.turnOff", "关闭") : t("home.turnOn", "开启")}
+                          </button>
+                        </div>
+                      )}
+                      {homeCards.mode && (
+                        <div style={{ ...HOME_TILE, flex: 1 }}>
+                          <div style={HOME_TILE_LABEL}>{t("home.mode", "代理模式")}</div>
+                          <div style={HOME_TILE_VALUE}>{MODE_LABEL[mode] || mode}</div>
+                          <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                            {(["rule", "global", "direct"] as const).map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                className={`btn ghost btn-xs${mode === m ? " on" : ""}`}
+                                onClick={() => changeMode(m)}
+                                disabled={!running}
+                              >
+                                {MODE_LABEL[m] || m}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 区段 7: 系统信息（原 homeCards.system 开关无效，此处补齐） */}
+                  {homeCards.system && (
+                    <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                      <div style={{ ...HOME_TILE, flex: 1 }}>
+                        <div style={HOME_TILE_LABEL}>{t("home.platform", "系统")}</div>
+                        <div style={HOME_TILE_VALUE}>{platformLabel || "—"}</div>
+                      </div>
+                      <div style={{ ...HOME_TILE, flex: 1 }}>
+                        <div style={HOME_TILE_LABEL}>{t("home.version", "版本")}</div>
+                        <div style={{ ...HOME_TILE_VALUE, fontFamily: "var(--font-mono)" }}>
+                          {appVersion ? `v${appVersion.replace(/^v/, "")}` : "—"}
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
+                          {mihomoChannel}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 区段 8: 累计流量（原 homeCards.traffic 开关无效，此处补齐） */}
+                  {homeCards.traffic && (
+                    <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                      <div style={{ ...HOME_TILE, flex: 1 }}>
+                        <div style={HOME_TILE_LABEL}>{t("home.totalDown", "累计下行")}</div>
+                        <div style={{ ...HOME_TILE_VALUE, fontFamily: "var(--font-mono)" }}>
+                          {formatBytes(download)}
+                        </div>
+                      </div>
+                      <div style={{ ...HOME_TILE, flex: 1 }}>
+                        <div style={HOME_TILE_LABEL}>{t("home.totalUp", "累计上行")}</div>
+                        <div style={{ ...HOME_TILE_VALUE, fontFamily: "var(--font-mono)" }}>
+                          {formatBytes(upload)}
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
+              )}
 
-                <div className="px-toolbar">
-                  <div className="px-meta">
-                    <span className="meta-dot" />
-                    {nodes.length} 个节点
-                    {autoTest && autoPick
-                      ? ` · 自动保持最优（每 ${Math.max(2, Math.round(autoTestMs / 60000))} 分钟全量复测 · 20 秒快检当前节点）`
-                      : autoTest
-                        ? " · 自动测速（只测不切）"
-                        : " · 自动测速已关闭"}
-                    {lastTestAt > 0 ? ` · 上次测速 ${new Date(lastTestAt).toLocaleTimeString()}` : ""}
-                  </div>
-                  <div className="px-tools">
-                    <label className="proxies-search">
-                      <Search size={15} />
-                      <input
-                        placeholder="搜索节点"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                      />
-                    </label>
-                    <label className="switch compact">
-                      <input
-                        type="checkbox"
-                        checked={autoTest}
-                        onChange={async (e) => {
-                          const v = e.target.checked;
-                          setAutoTest(v);
-                          await window.veyra?.setSettings({ autoTest: v });
-                        }}
-                      />
-                      自动测速
-                    </label>
-                    <label className="switch compact">
-                      <input
-                        type="checkbox"
-                        checked={autoPick}
-                        onChange={async (e) => {
-                          const v = e.target.checked;
-                          setAutoPick(v);
-                          await window.veyra?.setSettings({ autoPick: v });
-                          // 刚打开「选用最低」时立刻测一次并切过去，避免用户以为没生效
-                          if (v) void runSpeedTest({ silent: false, pickBest: true });
-                        }}
-                      />
-                      选用最低
-                    </label>
-                    <button
-                      type="button"
-                      className="btn primary"
-                      onClick={testAll}
-                      disabled={!running || testing || !nodes.length}
-                    >
-                      <Zap size={15} />
-                      {testing ? `${testProgress}%` : "一键测速"}
-                    </button>
-                  </div>
-                </div>
+              {tab === "proxies" && (
+                <div className="pane px" hidden={tab !== "proxies"}>
+                  <div className="px-header-card">
+                    <div className="px-tabs">
+                      {groups.length ? (
+                        groups.map((g) => (
+                          <button
+                            key={g.name}
+                            type="button"
+                            className={`px-tab ${g.name === selectedGroup ? "active" : ""}`}
+                            onClick={() => setSelectedGroup(g.name || "")}
+                            title={g.name || ""}
+                          >
+                            <span className="gt-ico">
+                              <Server size={14} />
+                            </span>
+                            <span className="gt-txt">
+                              <b>{g.name}</b>
+                              <small>{g.now || g.type}</small>
+                            </span>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="empty slim">暂无代理组 — 请先到订阅页导入配置</div>
+                      )}
+                    </div>
 
-                {testing && (
-                  <div className="progress-line">
-                    <i style={{ width: `${testProgress}%` }} />
-                  </div>
-                )}
-              </div>
-
-              {!sortedNodes.length ? (
-                <div className="empty">没有可显示的节点</div>
-              ) : (
-                <div className="px-grid">
-                  {sortedNodes.slice(0, pxNodeLimit).map((n) => {
-                    const d = delays[n];
-                    const cls = delayClass(d);
-                    const active = currentGroup?.now === n;
-                    const isBest = bestNode?.name === n;
-                    const info = proxyMap[n];
-                    const ptype = info?.type || (GROUP_TYPES.has(info?.type || "") ? info?.type : "") || "";
-                    const isGroup = GROUP_TYPES.has(info?.type || "");
-                    return (
-                      <button
-                        key={n}
-                        type="button"
-                        className={[
-                          "px-card",
-                          active ? "active" : "",
-                          isBest ? "best" : "",
-                          testingNode === n ? "testing" : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                        onClick={() => selectNode(n)}
-                        title={testingNode === n ? "正在测速…" : `切换到 ${n}`}
-                      >
-                        <span className={`px-dot ${active ? "on" : ""}`} />
-                        <span className="px-card-main">
-                          <span className="px-card-name" title={n}>{n}</span>
-                          <span className="px-card-meta">
-                            {ptype ? <em>{ptype}</em> : null}
-                            {info?.udp ? <i>UDP</i> : null}
-                            {info?.xudp ? <i>XUDP</i> : null}
-                            {isGroup ? <i>组</i> : null}
-                            {isSystemOutbound(n) ? <i>系统</i> : null}
-                          </span>
-                        </span>
-                        <span
-                          className={`px-card-delay ${cls}`}
-                          title={(() => {
-                            const h = delayHistory[n];
-                            if (!h?.length) return "暂无历史延迟数据";
-                            return h
-                              .slice(-5)
-                              .reverse()
-                              .map((r) => `${new Date(r.t).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}: ${r.ms}ms`)
-                              .join("\n");
-                          })()}
+                    <div className="px-toolbar">
+                      <div className="px-meta">
+                        <span className="meta-dot" />
+                        {nodes.length} 个节点
+                        {lastTestAt > 0 ? ` · 上次测速 ${new Date(lastTestAt).toLocaleTimeString()}` : " · 手动测速"}
+                      </div>
+                      <div className="px-tools">
+                        <label className="proxies-search">
+                          <Search size={15} />
+                          <input
+                            placeholder="搜索节点"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                          />
+                        </label>
+                        <label className="switch compact">
+                          <input
+                            type="checkbox"
+                            checked={autoPick}
+                            onChange={async (e) => {
+                              const v = e.target.checked;
+                              setAutoPick(v);
+                              await window.veyra?.setSettings({ autoPick: v });
+                              // 刚打开「选用最低」时立刻测一次并切过去，避免用户以为没生效
+                              if (v) void runSpeedTest({ silent: false, pickBest: true });
+                            }}
+                          />
+                          选用最低
+                        </label>
+                        <button
+                          type="button"
+                          className="btn primary"
+                          onClick={testAll}
+                          disabled={!running || testing || !nodes.length}
                         >
-                          {testingNode === n ? "…" : delayText(d)}
-                        </span>
-                      </button>
-                    );
-                  })}
+                          <Zap size={15} />
+                          {testing ? `${testProgress}%` : "一键测速"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {testing && (
+                      <div className="progress-line">
+                        <i style={{ width: `${testProgress}%` }} />
+                      </div>
+                    )}
+                  </div>
+
+                  {!sortedNodes.length ? (
+                    <div className="empty">没有可显示的节点</div>
+                  ) : (
+                    <div className="px-grid">
+                      {sortedNodes.slice(0, pxNodeLimit).map((n) => {
+                        const d = delays[n];
+                        const cls = delayClass(d);
+                        const active = currentGroup?.now === n;
+                        const isBest = bestNode?.name === n;
+                        const info = proxyMap[n];
+                        const ptype =
+                          info?.type || (GROUP_TYPES.has(info?.type || "") ? info?.type : "") || "";
+                        const isGroup = GROUP_TYPES.has(info?.type || "");
+                        const hist = delayHistory[n]?.slice(-15) || [];
+                        const maxMs = Math.max(...hist.map((h) => (h.ms > 0 ? h.ms : 0)), 50);
+                        const flagSvg = countryFlagSvg(n);
+                        return (
+                          <button
+                            key={n}
+                            type="button"
+                            className={[
+                              "px-card",
+                              active ? "active" : "",
+                              isBest ? "best" : "",
+                              testingNode === n ? "testing" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                            onClick={() => selectNode(n)}
+                            title={testingNode === n ? "正在测速…" : `切换到 ${n}`}
+                          >
+                            <span className="px-flag">
+                              {flagSvg ? (
+                                <img
+                                  src={flagSvg}
+                                  alt=""
+                                  style={{
+                                    width: 20,
+                                    height: 14,
+                                    borderRadius: 2,
+                                    verticalAlign: "middle",
+                                    boxShadow: "var(--shadow-sm)",
+                                  }}
+                                />
+                              ) : (
+                                <span style={{ fontSize: 14, opacity: 0.5 }}>🌐</span>
+                              )}
+                            </span>
+                            <span className={`px-dot ${active ? "on" : ""}`} />
+                            <span className="px-card-main">
+                              <span className="px-card-name" title={n}>
+                                {n}
+                              </span>
+                              <span className="px-card-meta">
+                                {ptype ? <em>{ptype}</em> : null}
+                                {info?.udp ? <i>UDP</i> : null}
+                                {info?.xudp ? <i>XUDP</i> : null}
+                                {isGroup ? <i>组</i> : null}
+                                {isSystemOutbound(n) ? <i>系统</i> : null}
+                              </span>
+                              {hist.length > 1 && (
+                                <span className="px-sparkline" aria-hidden="true">
+                                  {hist.map((h, i) => {
+                                    const hgt =
+                                      h.ms > 0
+                                        ? Math.max(2, Math.min(14, Math.round((h.ms / maxMs) * 14)))
+                                        : 1;
+                                    return (
+                                      <span
+                                        key={i}
+                                        className={`px-spark-bar ${delayDotClass(h.ms)}`}
+                                        style={{ height: `${hgt}px` }}
+                                      />
+                                    );
+                                  })}
+                                </span>
+                              )}
+                            </span>
+                            <span
+                              className={`px-card-delay ${cls}`}
+                              title={(() => {
+                                const h = delayHistory[n];
+                                if (!h?.length) return "暂无历史延迟数据";
+                                return h
+                                  .slice(-5)
+                                  .reverse()
+                                  .map(
+                                    (r) =>
+                                      `${new Date(r.t).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}: ${r.ms}ms`
+                                  )
+                                  .join("\n");
+                              })()}
+                            >
+                              {testingNode === n ? "…" : delayText(d)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          )}
 
-          {tab === "profiles" && (
-            <div className="pane pf" hidden={tab !== "profiles"} data-pf={pfTab}>
-              <section className="import-hero">
-                <h3><Link2 size={17} /> 订阅与增强</h3>
-                <p>Remote/Local · Merge/Script/Rules/Proxies/Groups · 订阅绑定 · 远程配置 · 运行时配置</p>
-                <div className="seg pf-seg" style={{ marginTop: 12 }}>
-                  <button type="button" className={pfTab === "sub" ? "active" : ""} onClick={() => setPfTab("sub")}>订阅</button>
-                  <button type="button" className={pfTab === "enhance" ? "active" : ""} onClick={() => setPfTab("enhance")}>增强</button>
-                  <button type="button" className={pfTab === "nodes" ? "active" : ""} onClick={() => setPfTab("nodes")}>节点</button>
-                  <button type="button" className={pfTab === "yaml" ? "active" : ""} onClick={() => setPfTab("yaml")}>YAML</button>
-                </div>
-                <div className="import-bar pf-sub">
-                  <Link2 size={16} />
-                  <input
-                    value={subUrl}
-                    onChange={(e) => setSubUrl(e.target.value)}
-                    placeholder="https://… 粘贴 Clash/Meta 订阅链接"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") importFromUrl();
-                    }}
-                  />
-                  <button type="button" className="btn primary" onClick={() => importFromUrl()} disabled={busy}>
-                    {busy ? "导入中…" : "导入"}
-                  </button>
-                </div>
-                <div className="import-bar pf-sub" style={{ marginTop: 8 }}>
-                  <Server size={16} />
-                  <input
-                    value={nodeUri}
-                    onChange={(e) => setNodeUri(e.target.value)}
-                    placeholder="ss:// / vmess:// / vless:// / trojan:// 单节点 URI"
-                  />
-                  <button
-                    type="button"
-                    className="btn ghost"
-                    disabled={busy}
-                    onClick={async () => {
-                      if (!nodeUri.trim()) return showToast("请粘贴节点 URI");
-                      setBusy(true);
-                      try {
-                        await window.veyra?.importNodeUri?.(nodeUri.trim());
-                        await reloadProfileLists();
-                        showToast("已导入节点 URI");
-                        setNodeUri("");
-                      } catch (e) {
-                        showToast(String((e as Error).message || e));
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  >
-                    导入 URI
-                  </button>
-                </div>
-                <div className="s-actions wrap" style={{ marginTop: 12, gap: 8 }}>
-                  {(["merge", "script", "rules", "proxies", "groups"] as EnhanceKind[]).map((k) => (
-                    <button key={k} type="button" className="btn ghost btn-sm" disabled={busy} onClick={() => createEnhance(k, false)}>
-                      + {k}
-                    </button>
-                  ))}
-                  <button type="button" className="btn ghost btn-sm" disabled={busy} onClick={() => createEnhance("merge", true)}>
-                    + 全局 Merge
-                  </button>
-                  <button type="button" className="btn ghost btn-sm" disabled={busy} onClick={() => createEnhance("script", true)}>
-                    + 全局 Script
-                  </button>
-                  <button type="button" className="btn primary btn-sm" disabled={busy || !hasSubscription} onClick={() => applyEnhance()}>
-                    重新增强并应用
-                  </button>
-                  <button
-                    type="button"
-                    className="btn ghost btn-sm"
-                    onClick={async () => {
-                      setEditorMode("runtime");
-                      setEditUid(null);
-                      setProfileName("runtime.yaml");
-                      setProfileText((await window.veyra?.readRuntime?.()) || "");
-                      setPfTab("yaml");
-                    }}
-                  >
-                    查看运行时配置
-                  </button>
-                  <button type="button" className="btn ghost btn-sm" onClick={() => reloadProviders()}>
-                    刷新远程配置
-                  </button>
-                </div>
-              </section>
+              {tab === "profiles" && (
+                <div className="pane pf" hidden={tab !== "profiles"} data-pf={pfTab}>
+                  {/* 订阅链接区 — Clash Verge 风格流量卡片 */}
+                  <section className="pf-card" style={{ marginBottom: 14 }}>
+                    <div className="pf-card-hd">
+                      <h2>
+                        <Globe size={15} /> {t("profiles.subscriptions", "订阅")}
+                      </h2>
+                      <span className="hd-count">{subs.length}</span>
+                    </div>
+                    {!subs.length ? (
+                      <div className="empty slim">
+                        {t("profiles.noSubs", "暂无订阅 - 从顶部输入链接导入")}
+                      </div>
+                    ) : (
+                      <div className="sub-grid">
+                        {subs.map((s) => {
+                          const used = (s.userinfo?.upload || 0) + (s.userinfo?.download || 0);
+                          const total = s.userinfo?.total || 0;
+                          const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+                          const expireDate = expiryText(s.userinfo?.expire);
+                          return (
+                            <div key={s.url} className="sub-card">
+                              <div className="sub-card-dot" />
+                              <div className="sub-card-body">
+                                <div className="sub-card-name">{s.name}</div>
+                                <div className="sub-card-domain">
+                                  {s.url.replace(/^https?:\/\//, "").split("/")[0]}
+                                </div>
+                                <div className="sub-card-meta">
+                                  <span>{relativeTime(s.updatedAt)}</span>
+                                  <span className="sub-card-sep">·</span>
+                                  <span>
+                                    {total > 0 ? `${formatBytes(used)} / ${formatBytes(total)}` : ""}
+                                  </span>
+                                </div>
+                                {total > 0 && (
+                                  <div className="sub-card-track">
+                                    <div className="sub-card-progress" style={{ width: `${pct}%` }} />
+                                  </div>
+                                )}
+                              </div>
+                              <div className="sub-card-side">
+                                {expireDate && <span className="sub-card-expire">{expireDate}</span>}
+                                <button
+                                  type="button"
+                                  className="sub-card-refresh"
+                                  onClick={() => {
+                                    setSubUrl(s.url);
+                                    importFromUrl(s.url);
+                                  }}
+                                  title="刷新"
+                                >
+                                  <RefreshCw size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
 
-              <div className="pf-grid pf-sub">
-                <section className="pf-card">
-                  <div className="pf-card-hd">
-                    <h2><Layers3 size={15} /> 配置列表</h2>
-                    <span className="hd-count">{richProfiles.length || profiles.length}</span>
-                  </div>
-                  {!(richProfiles.length || profiles.length) ? (
-                    <div className="empty slim">尚无配置 — 导入订阅或创建 Merge/Script</div>
-                  ) : (
-                    <div className="pf-list">
-                      {(richProfiles.length
-                        ? richProfiles.map((p) => ({
-                            key: p.uid,
-                            uid: p.uid,
-                            name: p.name,
-                            sub: `${p.type}${p.global ? " · 全局" : ""}${p.url ? ` · ${p.url}` : ""}`,
-                            size: p.size,
-                            enabled: p.enabled,
-                            type: p.type,
-                          }))
-                        : profiles.map((p) => ({
-                            key: p.uid || p.name,
-                            uid: p.uid,
-                            name: p.name,
-                            sub: p.type || "file",
-                            size: p.size,
-                            enabled: p.enabled !== false,
-                            type: (p.type as ProfileRich["type"]) || "local",
-                          }))
-                      ).map((p) => (
-                        <div key={p.key} className="pf-item">
-                          <span className="pf-item-ico"><Layers3 size={15} /></span>
-                          <div className="pf-item-body">
-                            <div className="pf-item-name">{p.name}</div>
-                            <div className="pf-item-sub">{p.sub}</div>
-                          </div>
-                          <div className="pf-item-side" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                            {p.uid && (p.type === "remote" || p.type === "local") ? (
-                              <>
+                  {/* 配置列表区 */}
+                  <section className="pf-card">
+                    <div className="pf-card-hd">
+                      <h2>
+                        <Layers3 size={15} /> {t("profiles.configs", "配置文件")}
+                      </h2>
+                      <span className="hd-count">{richProfiles.length || profiles.length}</span>
+                    </div>
+                    {!(richProfiles.length || profiles.length) ? (
+                      <div className="empty slim">
+                        {t("profiles.noConfigs", "暂无配置文件 - 点击上方添加_merge/script/rules")}
+                      </div>
+                    ) : (
+                      <div className="pf-list">
+                        {(richProfiles.length
+                          ? richProfiles.map((p) => ({
+                              key: p.uid,
+                              uid: p.uid,
+                              name: p.name,
+                              sub: `${p.type}${p.global ? " · " + t("profiles.global", "全局") : ""}`,
+                              size: p.size,
+                              enabled: p.enabled,
+                              type: p.type,
+                            }))
+                          : profiles.map((p) => ({
+                              key: p.uid || p.name,
+                              uid: p.uid,
+                              name: p.name,
+                              sub: p.type || "file",
+                              size: p.size,
+                              enabled: p.enabled !== false,
+                              type: (p.type as ProfileRich["type"]) || "local",
+                            }))
+                        ).map((p) => (
+                          <div key={p.key} className="pf-item">
+                            <span className="pf-item-ico">
+                              <Layers3 size={15} />
+                            </span>
+                            <div className="pf-item-body">
+                              <div className="pf-item-name">{p.name}</div>
+                              <div className="pf-item-sub">{p.sub}</div>
+                            </div>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+                              {p.uid && (p.type === "remote" || p.type === "local") ? (
                                 <button
                                   type="button"
                                   className="btn ghost btn-sm"
                                   onClick={async () => {
                                     await window.veyra?.activateProfile?.(p.uid!);
                                     await applyEnhance();
-                                    showToast(`已激活 ${p.name}`);
+                                    showToast(t("profiles.activated", "已激活 ") + p.name);
                                   }}
                                 >
-                                  激活
+                                  {t("profiles.activate", "激活")}
                                 </button>
+                              ) : null}
+                              {p.uid ? (
                                 <button
                                   type="button"
-                                  className="btn ghost btn-sm"
-                                  onClick={() => setBindTarget(bindTarget === p.uid ? null : p.uid!)}
-                                >
-                                  绑定
-                                </button>
-                              </>
-                            ) : null}
-                            {p.uid &&
-                            (p.type === "merge" ||
-                              p.type === "script" ||
-                              p.type === "rules" ||
-                              p.type === "proxies" ||
-                              p.type === "groups") ? (
-                              <label className="switch compact" title="启用增强">
-                                <input
-                                  type="checkbox"
-                                  checked={!!p.enabled}
-                                  onChange={async (e) => {
-                                    await window.veyra?.setProfileEnabled?.(p.uid!, e.target.checked);
-                                    await reloadProfileLists();
+                                  className="btn btn-sm primary"
+                                  onClick={async () => {
+                                    const t2 = await window.veyra?.readProfile?.(p.uid!);
+                                    if (t2 != null) {
+                                      setEditUid(p.uid!);
+                                      setProfileName(p.name);
+                                      setProfileText(t2);
+                                      setEditorMode("profile");
+                                    }
                                   }}
-                                />
-                              </label>
-                            ) : null}
-                            {p.uid ? (
-                              <button
-                                type="button"
-                                className="btn ghost btn-sm"
-                                onClick={async () => {
-                                  const text = await window.veyra?.readProfile?.(p.uid!);
-                                  if (text != null) {
-                                    setEditUid(p.uid!);
-                                    setProfileName(p.name);
-                                    setProfileText(text);
-                                    setEditorMode("profile");
-                                  }
-                                }}
-                              >
-                                编辑
-                              </button>
-                            ) : null}
-                            <span className="pf-item-date">{formatBytes(p.size)}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                <section className="pf-card">
-                  <div className="pf-card-hd">
-                    <h2><Globe size={15} /> 订阅链接</h2>
-                    <span className="hd-count">{subs.length}</span>
-                  </div>
-                  {!subs.length ? (
-                    <div className="empty slim">导入过的链接会出现在这里，点击可重新拉取</div>
-                  ) : (
-                    <div className="pf-list">
-                      {subs.map((s) => (
-                        <div key={s.url} className="pf-item">
-                          <button
-                            type="button"
-                            className="pf-item"
-                            style={{ flex: 1, border: 0, background: "transparent", padding: 0 }}
-                            onClick={() => {
-                              setSubUrl(s.url);
-                              importFromUrl(s.url);
-                            }}
-                            title={s.url}
-                          >
-                            <span className="pf-item-ico"><Link2 size={15} /></span>
-                            <div className="pf-item-body">
-                              <div className="pf-item-name">{s.name}</div>
-                              <div className="pf-item-sub">
-                                {s.url}
-                                {s.nextUpdateAt
-                                  ? ` · 下次 ${new Date(s.nextUpdateAt).toLocaleString()}`
-                                  : ""}
-                              </div>
+                                >
+                                  {t("profiles.edit", "编辑")}
+                                </button>
+                              ) : null}
                             </div>
-                          </button>
-                          <button
-                            type="button"
-                            className="btn ghost btn-sm"
-                            title="推迟 1 小时更新"
-                            onClick={async () => {
-                              const next = Date.now() + 3600000;
-                              await window.veyra?.setNextUpdate?.(s.url, next);
-                              await reloadProfileLists();
-                              showToast("下次更新已改为 1 小时后");
-                            }}
-                          >
-                            改期
-                          </button>
-                          <span className="pf-item-date">
-                            {s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : "—"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
 
-              {bindTarget ? (
-                <section className="block pf-enhance" style={{ marginTop: 12 }}>
-                  <div className="block-hd">
-                    <h2>订阅绑定扩展</h2>
-                    <span className="pill dim">{bindTarget.slice(0, 8)}</span>
-                  </div>
-                  <p className="s-muted">为该 Remote/Local 指定专用 Merge / Script / Rules / Proxies / Groups</p>
-                  <div className="s-fields">
-                    {(["merge", "script", "rules", "proxies", "groups"] as const).map((k) => (
-                      <label key={k}>
-                        {k}
-                        <select
-                          className="s-input"
-                          defaultValue={richProfiles.find((x) => x.uid === bindTarget)?.binds?.[k] || ""}
-                          onChange={async (e) => {
-                            const cur = richProfiles.find((x) => x.uid === bindTarget);
-                            const binds = { ...(cur?.binds || {}), [k]: e.target.value || null };
-                            await window.veyra?.setProfileBinds?.(bindTarget, binds);
-                            await reloadProfileLists();
-                            showToast(`已绑定 ${k}`);
-                          }}
-                        >
-                          <option value="">（无）</option>
-                          {richProfiles
-                            .filter((x) => x.type === k || (k === "merge" && x.type === "merge"))
-                            .map((x) => (
-                              <option key={x.uid} value={x.uid}>
-                                {x.name}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
+                  {bindTarget ? (
+                    <section className="block pf-enhance" style={{ marginTop: 12 }}>
+                      <div className="block-hd">
+                        <h2>订阅绑定扩展</h2>
+                        <span className="pill dim">{bindTarget.slice(0, 8)}</span>
+                      </div>
+                      <p className="s-muted">
+                        为该 Remote/Local 指定专用 Merge / Script / Rules / Proxies / Groups
+                      </p>
+                      <div className="s-fields">
+                        {(["merge", "script", "rules", "proxies", "groups"] as const).map((k) => (
+                          <label key={k}>
+                            {k}
+                            <select
+                              className="s-input"
+                              defaultValue={richProfiles.find((x) => x.uid === bindTarget)?.binds?.[k] || ""}
+                              onChange={async (e) => {
+                                const cur = richProfiles.find((x) => x.uid === bindTarget);
+                                const binds = { ...(cur?.binds || {}), [k]: e.target.value || null };
+                                await window.veyra?.setProfileBinds?.(bindTarget, binds);
+                                await reloadProfileLists();
+                                showToast(`已绑定 ${k}`);
+                              }}
+                            >
+                              <option value="">（无）</option>
+                              {richProfiles
+                                .filter((x) => x.type === k || (k === "merge" && x.type === "merge"))
+                                .map((x) => (
+                                  <option key={x.uid} value={x.uid}>
+                                    {x.name}
+                                  </option>
+                                ))}
+                            </select>
+                          </label>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
 
-              {(providers.proxies.length || providers.rules.length) ? (
-                <section className="block pf-enhance" style={{ marginTop: 12 }}>
-                  <div className="block-hd"><h2>远程配置</h2></div>
-                  <div className="pf-list">
-                    {providers.proxies.map((n) => (
-                      <div key={`pp-${n}`} className="pf-item">
-                        <div className="pf-item-body">
-                          <div className="pf-item-name">{n}</div>
-                          <div className="pf-item-sub">proxy-provider</div>
-                        </div>
+                  {providers.proxies.length || providers.rules.length ? (
+                    <section className="block pf-enhance" style={{ marginTop: 12 }}>
+                      <div className="block-hd">
+                        <h2>远程配置</h2>
+                      </div>
+                      <div className="pf-list">
+                        {providers.proxies.map((n) => (
+                          <div key={`pp-${n}`} className="pf-item">
+                            <div className="pf-item-body">
+                              <div className="pf-item-name">{n}</div>
+                              <div className="pf-item-sub">proxy-provider</div>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn ghost btn-sm"
+                              onClick={async () => {
+                                await window.veyra?.updateProvider?.("proxies", n);
+                                showToast(`已更新 ${n}`);
+                              }}
+                            >
+                              更新
+                            </button>
+                          </div>
+                        ))}
+                        {providers.rules.map((n) => (
+                          <div key={`rp-${n}`} className="pf-item">
+                            <div className="pf-item-body">
+                              <div className="pf-item-name">{n}</div>
+                              <div className="pf-item-sub">rule-provider</div>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn ghost btn-sm"
+                              onClick={async () => {
+                                await window.veyra?.updateProvider?.("rules", n);
+                                showToast(`已更新 ${n}`);
+                              }}
+                            >
+                              更新
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {enhanceLog.length ? (
+                    <section className="block pf-enhance" style={{ marginTop: 12 }}>
+                      <div className="block-hd">
+                        <h2>增强日志</h2>
+                      </div>
+                      <pre className="term-body" style={{ maxHeight: 120 }}>
+                        {enhanceLog.join("\n")}
+                      </pre>
+                    </section>
+                  ) : null}
+
+                  {pfSeen.nodes ? (
+                    <>
+                      <section className="block pf-nodes" style={{ marginTop: 12 }}>
+                        <ProxiesVisualEditor onToast={showToast} onBusy={setBusy} />
+                      </section>
+                      <section className="block pf-nodes" style={{ marginTop: 12 }}>
+                        <GroupsVisualEditor onToast={showToast} onBusy={setBusy} />
+                      </section>
+                    </>
+                  ) : null}
+
+                  {pfSeen.yaml ? (
+                    <section className="editor-card pf-yaml">
+                      <div className="editor-bar">
+                        <input
+                          value={profileName}
+                          onChange={(e) => setProfileName(e.target.value)}
+                          placeholder={
+                            editorMode === "runtime"
+                              ? "runtime.yaml"
+                              : editUid
+                                ? "正在编辑已有配置"
+                                : "文件名"
+                          }
+                        />
                         <button
                           type="button"
-                          className="btn ghost btn-sm"
+                          className="btn ghost"
+                          disabled={busy}
                           onClick={async () => {
-                            await window.veyra?.updateProvider?.("proxies", n);
-                            showToast(`已更新 ${n}`);
+                            if (editorMode === "runtime") {
+                              setBusy(true);
+                              try {
+                                await window.veyra?.writeRuntime?.(profileText);
+                                showToast("运行时配置已写入并重载");
+                                await refresh();
+                              } catch (e) {
+                                showToast(String((e as Error).message || e));
+                              } finally {
+                                setBusy(false);
+                              }
+                            } else {
+                              await saveProfile();
+                            }
                           }}
                         >
-                          更新
+                          {editorMode === "runtime" ? "保存运行时" : editUid ? "保存并增强" : "保存 YAML"}
                         </button>
                       </div>
-                    ))}
-                    {providers.rules.map((n) => (
-                      <div key={`rp-${n}`} className="pf-item">
-                        <div className="pf-item-body">
-                          <div className="pf-item-name">{n}</div>
-                          <div className="pf-item-sub">rule-provider</div>
-                        </div>
-                        <button
-                          type="button"
-                          className="btn ghost btn-sm"
-                          onClick={async () => {
-                            await window.veyra?.updateProvider?.("rules", n);
-                            showToast(`已更新 ${n}`);
-                          }}
-                        >
-                          更新
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-
-              {enhanceLog.length ? (
-                <section className="block pf-enhance" style={{ marginTop: 12 }}>
-                  <div className="block-hd"><h2>增强日志</h2></div>
-                  <pre className="term-body" style={{ maxHeight: 120 }}>{enhanceLog.join("\n")}</pre>
-                </section>
-              ) : null}
-
-              {pfSeen.nodes ? (
-                <>
-                  <section className="block pf-nodes" style={{ marginTop: 12 }}>
-                    <ProxiesVisualEditor onToast={showToast} onBusy={setBusy} />
-                  </section>
-                  <section className="block pf-nodes" style={{ marginTop: 12 }}>
-                    <GroupsVisualEditor onToast={showToast} onBusy={setBusy} />
-                  </section>
-                </>
-              ) : null}
-
-              {pfSeen.yaml ? (
-              <section className="editor-card pf-yaml">
-                <div className="editor-bar">
-                  <input
-                    value={profileName}
-                    onChange={(e) => setProfileName(e.target.value)}
-                    placeholder={editorMode === "runtime" ? "runtime.yaml" : editUid ? "正在编辑已有配置" : "文件名"}
-                  />
-                  <button
-                    type="button"
-                    className="btn ghost"
-                    disabled={busy}
-                    onClick={async () => {
-                      if (editorMode === "runtime") {
-                        setBusy(true);
-                        try {
-                          await window.veyra?.writeRuntime?.(profileText);
-                          showToast("运行时配置已写入并重载");
-                          await refresh();
-                        } catch (e) {
-                          showToast(String((e as Error).message || e));
-                        } finally {
-                          setBusy(false);
+                      <Suspense
+                        fallback={
+                          <div className="yaml-editor monaco">
+                            <div
+                              style={{
+                                height: 320,
+                                display: "grid",
+                                placeItems: "center",
+                                color: "var(--text-400)",
+                                fontSize: 12,
+                              }}
+                            >
+                              编辑器加载中…
+                            </div>
+                          </div>
                         }
-                      } else {
-                        await saveProfile();
-                      }
-                    }}
-                  >
-                    {editorMode === "runtime" ? "保存运行时" : editUid ? "保存并增强" : "保存 YAML"}
-                  </button>
+                      >
+                        <YamlEditor
+                          value={profileText}
+                          onChange={setProfileText}
+                          placeholder="粘贴 YAML / Merge / Script…"
+                          hint={
+                            editorMode === "runtime"
+                              ? "运行时配置（增强产物，可直接改）· schema: Clash Meta"
+                              : "YAML 编辑器 · 支持 Merge delete-rules 等"
+                          }
+                        />
+                      </Suspense>
+                    </section>
+                  ) : null}
                 </div>
-                <Suspense
-                  fallback={
-                    <div className="yaml-editor monaco">
-                      <div style={{ height: 320, display: "grid", placeItems: "center", color: "var(--text-400)", fontSize: 12 }}>
-                        编辑器加载中…
-                      </div>
+              )}
+
+              {tab === "rules" && (
+                <div className="pane" hidden={tab !== "rules"}>
+                  <RulesPage onToast={showToast} onBusy={setBusy} />
+                </div>
+              )}
+
+              {tab === "connections" && (
+                <div className="pane" hidden={tab !== "connections"}>
+                  <ConnectionsPage onToast={showToast} />
+                </div>
+              )}
+
+              {tab === "logs" && (
+                <div className="pane term" hidden={tab !== "logs"}>
+                  <div className="term-bar">
+                    <div className="term-title">
+                      <span className="term-dots">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                      <h1>内核日志</h1>
+                      <span className="pill dim">{logs.length} 行</span>
                     </div>
-                  }
-                >
-                  <YamlEditor
-                    value={profileText}
-                    onChange={setProfileText}
-                    placeholder="粘贴 YAML / Merge / Script…"
-                    hint={editorMode === "runtime" ? "运行时配置（增强产物，可直接改）· schema: Clash Meta" : "YAML 编辑器 · 支持 Merge delete-rules 等"}
+                    <div className="s-actions">
+                      <button
+                        type="button"
+                        className="btn ghost btn-sm"
+                        onClick={async () => {
+                          const r = await window.veyra?.clearLogFiles?.();
+                          showToast(`已清理文件 ${r?.removed || 0} 个`);
+                        }}
+                      >
+                        清理日志文件
+                      </button>
+                      <button type="button" className="btn ghost btn-sm" onClick={() => setLogs([])}>
+                        清空屏幕
+                      </button>
+                    </div>
+                  </div>
+                  <pre className="term-body">
+                    {logs.join("") || "等待代理服务输出…\n启动内核后，这里会实时显示 mihomo 日志。"}
+                  </pre>
+                </div>
+              )}
+
+              {tab === "tests" && (
+                <div className="pane" hidden={tab !== "tests"}>
+                  <TestsPage running={running} onToast={showToast} />
+                </div>
+              )}
+
+              {tab === "settings" && (
+                <div className="pane" hidden={tab !== "settings"}>
+                  <SettingsPanel
+                    running={running}
+                    mixedPort={mixedPort}
+                    controller={controller}
+                    version={version}
+                    autoPick={autoPick}
+                    themeMode={themeMode}
+                    onThemeChange={changeTheme}
+                    onToast={showToast}
+                    onBusy={setBusy}
+                    onPorts={handlePorts}
+                    onPrefs={handlePrefs}
+                    onRefresh={refresh}
+                    onCoreChange={setActiveCore}
                   />
-                </Suspense>
-              </section>
-              ) : null}
-            </div>
-          )}
-
-          {tab === "rules" && (
-            <div className="pane" hidden={tab !== "rules"}>
-              <RulesPage onToast={showToast} onBusy={setBusy} />
-            </div>
-          )}
-
-          {tab === "connections" && (
-            <div className="pane" hidden={tab !== "connections"}>
-              <ConnectionsPage onToast={showToast} />
-            </div>
-          )}
-
-          {tab === "logs" && (
-            <div className="pane term" hidden={tab !== "logs"}>
-              <div className="term-bar">
-                <div className="term-title">
-                  <span className="term-dots"><i /><i /><i /></span>
-                  <h1>内核日志</h1>
-                  <span className="pill dim">{logs.length} 行</span>
                 </div>
-                <div className="s-actions">
-                  <button
-                    type="button"
-                    className="btn ghost btn-sm"
-                    onClick={async () => {
-                      const r = await window.veyra?.clearLogFiles?.();
-                      showToast(`已清理文件 ${r?.removed || 0} 个`);
-                    }}
-                  >
-                    清理日志文件
-                  </button>
-                  <button type="button" className="btn ghost btn-sm" onClick={() => setLogs([])}>
-                    清空屏幕
-                  </button>
-                </div>
-              </div>
-              <pre className="term-body">{logs.join("") || "等待代理服务输出…\n启动内核后，这里会实时显示 mihomo 日志。"}</pre>
-            </div>
-          )}
-
-          {tab === "tests" && (
-            <div className="pane" hidden={tab !== "tests"}>
-              <TestsPage running={running} onToast={showToast} />
-            </div>
-          )}
-
-          {tab === "settings" && (
-            <div className="pane" hidden={tab !== "settings"}>
-              <SettingsPanel
-                running={running}
-                mixedPort={mixedPort}
-                controller={controller}
-                version={version}
-                autoTest={autoTest}
-                autoPick={autoPick}
-                themeMode={themeMode}
-                onThemeChange={changeTheme}
-                onToast={showToast}
-                onBusy={setBusy}
-                onPorts={handlePorts}
-                onPrefs={handlePrefs}
-                onRefresh={refresh}
-                onCoreChange={setActiveCore}
-              />
-            </div>
-          )}
-        </main>
+              )}
+            </main>
           </div>
 
           {/* Right Sidebar */}
@@ -2350,42 +2858,168 @@ export default function App() {
               <div className="card">
                 <LiveClock />
                 <div className="card-body tight">
-                  <div className="grid-2" style={{gap:12}}>
-                    <div style={{background:'transparent',border:'1px solid rgba(51,65,85,0.50)',borderRadius:'var(--radius-md)',padding:12}}>
+                  <div className="grid-2" style={{ gap: 8 }}>
+                    <div
+                      style={{
+                        background: "transparent",
+                        border: "1px solid rgba(51,65,85,0.50)",
+                        borderRadius: "var(--radius-md)",
+                        padding: 12,
+                      }}
+                    >
                       <div className="text-xs text-muted mb-1">运行时间</div>
                       <LiveUptime since={appStartTime.current} />
                     </div>
-                    <div style={{background:'transparent',border:'1px solid rgba(51,65,85,0.50)',borderRadius:'var(--radius-md)',padding:12}}>
+                    <div
+                      style={{
+                        background: "transparent",
+                        border: "1px solid rgba(51,65,85,0.50)",
+                        borderRadius: "var(--radius-md)",
+                        padding: 12,
+                      }}
+                    >
                       <div className="text-xs text-muted mb-1">内核</div>
-                      <div className="text-sm font-mono">{activeCore === "singbox" ? "sing-box" : "mihomo"}</div>
+                      <div className="text-sm font-mono">
+                        {activeCore === "singbox" ? "sing-box" : "mihomo"}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
+              {/* 出口 IP 卡：消费此前「只检测不显示」的 exitIp 数据（见 useEffect @ running）。
+                  原「快捷操作」4 个按钮的跳转目标在左侧导航中均已一键可达，属纯重复，故移除。 */}
               <div className="card">
                 <div className="card-header no-border">
-                  <div className="card-title text-base">快捷操作</div>
+                  <div className="card-title text-base">出口 IP</div>
+                  <button
+                    type="button"
+                    className="btn ghost btn-xs"
+                    onClick={refreshExitIp}
+                    disabled={!running || exitIpLoading}
+                    title="重新检测出口 IP"
+                  >
+                    {exitIpLoading ? "检测中…" : "刷新"}
+                  </button>
                 </div>
                 <div className="card-body tight">
-                  <div className="action-grid">
-                    <button type="button" className="action-btn" onClick={() => goTab("tests")}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                      <span>测速</span>
-                    </button>
-                    <button type="button" className="action-btn" onClick={() => goTab("profiles")}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                      <span>导入订阅</span>
-                    </button>
-                    <button type="button" className="action-btn" onClick={() => goTab("connections")}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                      <span>连接</span>
-                    </button>
-                    <button type="button" className="action-btn" onClick={() => goTab("settings")}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-                      <span>设置</span>
-                    </button>
-                  </div>
+                  {!running ? (
+                    <div className="text-xs text-muted">内核未运行</div>
+                  ) : exitIpLoading && !exitIp ? (
+                    <div className="text-xs text-muted">正在检测…</div>
+                  ) : exitIp?.ip ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div>
+                        <div className="text-xs text-muted mb-1">当前出口</div>
+                        <button
+                          type="button"
+                          className="exit-ip-value"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(exitIp.ip || "");
+                            showToast("已复制出口 IP");
+                          }}
+                          title="点击复制"
+                        >
+                          {exitIp.ip}
+                        </button>
+                      </div>
+                      <div className="grid-2" style={{ gap: 8 }}>
+                        <div>
+                          <div className="text-xs text-muted mb-1">归属</div>
+                          <div className="text-sm">
+                            {[exitIp.country, exitIp.city].filter(Boolean).join(" · ") || "—"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted mb-1">运营商</div>
+                          <div
+                            className="text-sm"
+                            style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+                            title={exitIp.isp || exitIp.org || ""}
+                          >
+                            {exitIp.isp || exitIp.org || "—"}
+                          </div>
+                        </div>
+                      </div>
+                      {exitIp.as && (
+                        <div className="text-xs text-muted" style={{ fontFamily: "var(--font-mono)" }}>
+                          {exitIp.as}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div className="text-xs text-muted">检测失败，请检查网络后重试</div>
+                      <button type="button" className="btn ghost btn-xs" onClick={refreshExitIp}>
+                        重试
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 解锁状态：AI + 流媒体各 3 项。点击单项重测，标题栏按钮跑全量。
+                  全量检测是串行外网探测，故不自动执行；结果随内核切换失效需手动重跑。 */}
+              <div className="card">
+                <div className="card-header no-border">
+                  <div className="card-title text-base">解锁状态</div>
+                  <button
+                    type="button"
+                    className="btn ghost btn-xs"
+                    onClick={testAllUnlock}
+                    disabled={!running || !!unlockBusy}
+                    title="测试全部 12 项（串行，耗时较长）"
+                  >
+                    {unlockBusy === "__all__" ? "测试中…" : "全部测试"}
+                  </button>
+                </div>
+                <div className="card-body tight">
+                  {!running ? (
+                    <div className="text-xs text-muted">内核未运行</div>
+                  ) : (
+                    <div className="rail-unlock">
+                      {RAIL_UNLOCK_GROUPS.map((g) => (
+                        <div key={g.key} className="rail-unlock-group">
+                          <div className="rail-unlock-label">{g.label}</div>
+                          {g.ids.map(([id, name]) => {
+                            const st = unlockMap[id];
+                            const busy = unlockBusy === id || unlockBusy === "__all__";
+                            const tested = !!(st && st.testedAt);
+                            const ok = tested && st.ok;
+                            const fail = tested && !st.ok && !!st.fail;
+                            // 三态：已解锁 / 不支持 / 检测失败；未测为中性灰点
+                            const cls = busy ? "busy" : ok ? "ok" : fail ? "fail" : tested ? "no" : "idle";
+                            const note = busy
+                              ? "检测中"
+                              : !tested
+                                ? "未测试"
+                                : ok
+                                  ? st.region || st.note || "支持"
+                                  : fail
+                                    ? "检测失败"
+                                    : st.note || "不支持";
+                            return (
+                              <button
+                                key={id}
+                                type="button"
+                                className="rail-unlock-item"
+                                onClick={() => testOneUnlock(id)}
+                                disabled={busy}
+                                title={`${name} · ${note}（点击重新检测）`}
+                              >
+                                <i className={`rail-unlock-dot ${cls}`} />
+                                <span className="rail-unlock-name">{name}</span>
+                                <span className={`rail-unlock-note${ok ? " ok" : ""}`}>{note}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ))}
+                      <div className="text-xs text-muted" style={{ marginTop: 2 }}>
+                        完整 12 项见「测试」页
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2395,18 +3029,40 @@ export default function App() {
                 </div>
                 <div className="card-body tight">
                   <div className="status-item">
-                    <div className="status-item-hd"><span>下载</span><span className="text-cyan">{formatRate(downRate)}</span></div>
-                    <div className="status-bar"><i className="cyan" style={{width:`${Math.min(100,(downRate/1000000)*100)}%`}}/></div>
+                    <div className="status-item-hd">
+                      <span>下载</span>
+                      <span className="text-cyan">{formatRate(downRate)}</span>
+                    </div>
+                    <div className="status-bar">
+                      <i
+                        className="cyan"
+                        style={{ width: `${Math.min(100, (downRate / 1000000) * 100)}%` }}
+                      />
+                    </div>
                   </div>
                   <div className="status-item">
-                    <div className="status-item-hd"><span>上传</span><span className="text-purple">{formatRate(upRate)}</span></div>
-                    <div className="status-bar"><i className="purple" style={{width:`${Math.min(100,(upRate/1000000)*100)}%`}}/></div>
+                    <div className="status-item-hd">
+                      <span>上传</span>
+                      <span className="text-purple">{formatRate(upRate)}</span>
+                    </div>
+                    <div className="status-bar">
+                      <i
+                        className="purple"
+                        style={{ width: `${Math.min(100, (upRate / 1000000) * 100)}%` }}
+                      />
+                    </div>
                   </div>
                   <div className="status-item">
-                    <div className="status-item-hd"><span>总下行</span><span>{formatBytes(upload)}</span></div>
+                    <div className="status-item-hd">
+                      <span>总下行</span>
+                      <span>{formatBytes(download)}</span>
+                    </div>
                   </div>
                   <div className="status-item">
-                    <div className="status-item-hd"><span>总上行</span><span>{formatBytes(download)}</span></div>
+                    <div className="status-item-hd">
+                      <span>总上行</span>
+                      <span>{formatBytes(upload)}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2415,17 +3071,26 @@ export default function App() {
         </div>
       </div>
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
 
       {homeCfgOpen && (
-        <div className="modal-mask" onClick={() => setHomeCfgOpen(false)}>
-          <div className="modal-box home-cfg" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-mask" onClick={closeHomeCfg}>
+          <div className="modal-box home-cfg" ref={homeCfgBoxRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t("home.configureCards", "自定义首页卡片")} onClick={(e) => e.stopPropagation()}>
             <div className="home-cfg-hd">
               <div>
                 <div className="home-cfg-title">首页设置</div>
                 <div className="home-cfg-sub">选择要在首页显示的卡片</div>
               </div>
-              <button type="button" className="home-cfg-close" onClick={() => setHomeCfgOpen(false)} aria-label="关闭">
+              <button
+                type="button"
+                className="home-cfg-close"
+                onClick={closeHomeCfg}
+                aria-label="关闭"
+              >
                 <X size={16} />
               </button>
             </div>
@@ -2435,9 +3100,7 @@ export default function App() {
                 ["node", "当前节点卡", "显示当前使用的节点"],
                 ["network", "网络设置卡", "系统代理与端口"],
                 ["mode", "代理模式卡", "规则/全局/直连切换"],
-                ["traffic", "流量统计卡", "实时上下行速率"],
-                ["webtest", "网站测试卡", "一键测网站连通性"],
-                ["ip", "IP 信息卡", "检测出口 IP 归属地"],
+                ["traffic", "流量统计卡", "累计上下行流量"],
                 ["core", "内核信息卡", "内核版本与运行状态"],
                 ["system", "系统信息卡", "操作系统与运行模式"],
               ].map(([key, label, desc]) => {
@@ -2460,7 +3123,7 @@ export default function App() {
               })}
             </div>
             <div className="home-cfg-ft">
-              <button type="button" className="btn ghost" onClick={() => setHomeCfgOpen(false)}>
+              <button type="button" className="btn ghost" onClick={closeHomeCfg}>
                 取消
               </button>
               <button
@@ -2470,7 +3133,7 @@ export default function App() {
                   const next = { ...homeCfgDraft };
                   setHomeCards(next);
                   await window.veyra?.setSettings({ homeCards: next });
-                  setHomeCfgOpen(false);
+                  closeHomeCfg();
                 }}
               >
                 保存
@@ -2494,7 +3157,9 @@ function LiveClock() {
     <div className="time-display">
       <div className="time-label">系统时间</div>
       <div className="time-value">{now.toLocaleTimeString("en-US", { hour12: false })}</div>
-      <div className="time-date">{now.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}</div>
+      <div className="time-date">
+        {now.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
+      </div>
     </div>
   );
 }

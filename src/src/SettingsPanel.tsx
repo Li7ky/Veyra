@@ -143,7 +143,6 @@ type Props = {
   mixedPort: number;
   controller: string;
   version: string;
-  autoTest: boolean;
   autoPick: boolean;
   themeMode: ThemeMode;
   onThemeChange: (mode: ThemeMode) => void;
@@ -211,7 +210,6 @@ function SettingsPanel(props: Props) {
     mixedPort,
     controller,
     version,
-    autoTest,
     autoPick,
     themeMode,
     onThemeChange,
@@ -238,7 +236,6 @@ function SettingsPanel(props: Props) {
   const [draftCtrl, setDraftCtrl] = useState(String(DEFAULTS.controllerPort));
   const [draftSecret, setDraftSecret] = useState(DEFAULTS.secret);
   const [draftBypass, setDraftBypass] = useState(DEFAULTS.proxyBypass);
-  const [draftInterval, setDraftInterval] = useState(String(DEFAULTS.autoTestIntervalSec));
   const [draftSubMin, setDraftSubMin] = useState(String(DEFAULTS.subAutoUpdateMin));
   const [draftNs, setDraftNs] = useState("");
   const [draftHosts, setDraftHosts] = useState("");
@@ -270,7 +267,6 @@ function SettingsPanel(props: Props) {
     setDraftCtrl(String(full.controllerPort));
     setDraftSecret(full.secret || DEFAULTS.secret);
     setDraftBypass(full.proxyBypass || DEFAULTS.proxyBypass);
-    setDraftInterval(String(full.autoTestIntervalSec));
     setDraftSubMin(String(full.subAutoUpdateMin));
     setDraftNs((full.dnsNameserver || []).join(", "));
     setDraftHosts(
@@ -450,7 +446,7 @@ function SettingsPanel(props: Props) {
                 ⚠️ 当前内核未安装，无法启动代理服务。请点击下方"安装内核"按钮下载安装。
               </div>
             )}
-            <div className="s-actions wrap">
+            <div className="s-actions">
               <button
                 type="button"
                 className="btn btn-sm"
@@ -671,7 +667,7 @@ function SettingsPanel(props: Props) {
                 <Copy size={13} /> 复制
               </button>
             </Row>
-            <div className="s-actions wrap">
+            <div className="s-actions">
               <button type="button" className="btn primary btn-sm" onClick={applyNetwork}>
                 应用网络
               </button>
@@ -736,7 +732,7 @@ function SettingsPanel(props: Props) {
               />
             </Row>
             <Row label="服务模式" desc={`计划任务提权运行内核 · ${svc.installed ? "已安装" : "未安装"}`}>
-              <div className="s-actions wrap">
+              <div className="s-actions">
                 <button
                   type="button"
                   className="btn btn-sm"
@@ -797,7 +793,7 @@ function SettingsPanel(props: Props) {
               Nameserver（逗号分隔）
               <input className="s-input full" value={draftNs} onChange={(e) => setDraftNs(e.target.value)} />
             </label>
-            <div className="s-actions wrap">
+            <div className="s-actions">
               <button
                 type="button"
                 className="btn primary btn-sm"
@@ -951,25 +947,14 @@ function SettingsPanel(props: Props) {
               <span className="s-muted">{s.portableMode ? "已启用" : "未启用（放置 portable.txt）"}</span>
             </Row>
             <Row label="自动测速" desc="后台静默保持最优节点，不弹提示；每 20 秒只快检当前节点">
-              <input type="checkbox" checked={autoTest} onChange={(e) => patchSettings({ autoTest: e.target.checked })} />
+              {/* 该功能已下线（App.tsx 不再消费 autoTest），开关保留会变成一个
+                  写进去却没有任何效果的假设置，因此连同下方「全量测速间隔」一并移除。 */}
+              <span className="s-muted">已下线，测速为手动触发</span>
             </Row>
             <Row label="选用最低延迟" desc="自动切到延迟最低的节点；新节点需快 25% 以上才切换，避免来回跳">
               <input type="checkbox" checked={autoPick} onChange={(e) => patchSettings({ autoPick: e.target.checked })} />
             </Row>
             <div className="s-fields">
-              <label>
-                全量测速间隔（秒，最低 120）
-                <input
-                  className="s-input"
-                  value={draftInterval}
-                  onChange={(e) => setDraftInterval(e.target.value)}
-                  onBlur={async () => {
-                    const n = Math.max(120, Number(draftInterval) || 300);
-                    setDraftInterval(String(n));
-                    await patchSettings({ autoTestIntervalSec: n });
-                  }}
-                />
-              </label>
               <label>
                 订阅更新（分钟，0=关）
                 <input
@@ -1044,7 +1029,7 @@ function SettingsPanel(props: Props) {
               </div>
             </Row>
             <Row label="主题色">
-              <div className="s-actions wrap" style={{ gap: 8 }}>
+              <div className="s-actions" style={{ gap: 8 }}>
                 {[
                   ["#2c71e8", "品牌蓝"],
                   ["#0ea5e9", "天蓝"],
@@ -1093,7 +1078,7 @@ function SettingsPanel(props: Props) {
         {sec === "backup" && (
           <Card title="备份与同步" icon={<Cloud size={15} />}>
             <Row label="本地 ZIP 备份">
-              <div className="s-actions wrap">
+              <div className="s-actions">
                 <button
                   type="button"
                   className="btn primary btn-sm"
@@ -1179,7 +1164,7 @@ function SettingsPanel(props: Props) {
                 />
               </label>
             </div>
-            <div className="s-actions wrap">
+            <div className="s-actions">
               <button
                 type="button"
                 className="btn primary btn-sm"

@@ -7,7 +7,9 @@ export function cachedTheme(): ThemeMode {
   try {
     const v = localStorage.getItem(THEME_CACHE_KEY);
     if (v === "light" || v === "dark" || v === "system") return v;
-  } catch {}
+  } catch {
+    /* localStorage 不可用时回退到系统主题，不影响渲染 */
+  }
   return "system";
 }
 
@@ -25,6 +27,8 @@ export function applyTheme(mode: ThemeMode) {
   document.documentElement.style.colorScheme = resolved;
   try {
     localStorage.setItem(THEME_CACHE_KEY, mode);
-  } catch {}
+  } catch {
+    /* 写入失败只影响下次启动的首帧主题，主题本身已应用到 DOM */
+  }
   return resolved;
 }

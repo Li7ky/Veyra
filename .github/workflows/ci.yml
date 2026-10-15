@@ -1,0 +1,51 @@
+name: CI
+
+# 质量门禁：与本地 pre-commit 钩子保持同一套检查，
+# 确保即使有人用了 --no-verify 也不会把问题合进主干。
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+defaults:
+  run:
+    working-directory: src
+
+jobs:
+  quality:
+    name: 类型检查 / 规范 / 测试 / 契约 / 构建
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: src/package-lock.json
+
+      - name: 安装依赖
+        # 跳过 postinstall 的内核下载：CI 只做静态校验与测试，不需要内核二进制
+        run: npm ci --ignore-scripts
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 代码规范
+        # 存量告警不阻断，但新增 error 必须清零（阈值为当前基线，逐步下调）
+        run: npx eslint . --max-warnings=200
+
+      - name: 格式检查
+        run: npm run format:check
+        continue-on-error: true
+
+      - name: 单元测试
+        run: npm run test
+
+      - name: IPC 契约一致性
+        run: npm run check:ipc
+
+      - name: 构建
+        run: npx vite build

@@ -3,6 +3,32 @@ import { Plus, Save, Trash2, RefreshCw } from "lucide-react";
 
 type RuleRow = { payload: string; type?: string };
 
+/**
+ * 规则归一化纯函数：任何上游形状都收敛为 { payload, type }，绝不产出 "[object Object]"。
+ * - 字符串 → { payload: trim, type: "Rule" }；空/纯空白 → null
+ * - 对象 → 依次取 payload/rule/raw/value 字段当 payload，仅接受 string；缺 type 或空白 → "Rule"
+ * - 其它（number/boolean/数组/null）→ null
+ */
+export function normalizeRule(input: unknown): { payload: string; type: string } | null {
+  if (input == null) return null;
+  let payload: unknown;
+  let type: unknown;
+  if (typeof input === "string") {
+    payload = input;
+  } else if (typeof input === "object" && !Array.isArray(input)) {
+    const obj = input as Record<string, unknown>;
+    payload = obj.payload ?? obj.rule ?? obj.raw ?? obj.value;
+    type = obj.type;
+  } else {
+    return null;
+  }
+  if (typeof payload !== "string") return null;
+  const trimmed = payload.trim();
+  if (!trimmed) return null;
+  const t = typeof type === "string" ? type.trim() : "";
+  return { payload: trimmed, type: t || "Rule" };
+}
+
 // 虚拟滚动参数：列表容器仅 280px 高，只渲染可视区 + 上下缓冲
 const ROW_FALLBACK = 56;
 const ROW_GAP = 4;
@@ -57,9 +83,9 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
       return;
     }
     const data = await window.veyra.listRules();
-    const list = (data.rules || []).map((r: RuleRow | string) =>
-      typeof r === "string" ? { payload: r } : { payload: r.payload || String(r), type: r.type }
-    );
+    const list = (data.rules || [])
+      .map((r) => normalizeRule(r))
+      .filter((r): r is NonNullable<ReturnType<typeof normalizeRule>> => r !== null);
     // 无自定义规则时显示内置规则
     setRows(list.length ? list : BUILTIN_RULES.map((payload) => ({ payload })));
   }

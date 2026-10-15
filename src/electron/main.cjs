@@ -33,6 +33,7 @@ let SECRET = "veyra-secret";
 let mainWindow = null;
 let tray = null;
 let coreProc = null;
+let stoppingCore = null;
 let coreMemCache = { mb: 0, t: 0 };
 // 内核进程内存占用（MB），带 5s 缓存避免频繁起子进程
 function coreMemoryMB() {
@@ -349,9 +350,10 @@ async function pickPorts() {
 }
 
 function patchYamlKey(yaml, key, value) {
+  const safeVal = /[:#\[\]{}|>&*!?,@`]/.test(value) ? JSON.stringify(value) : value;
   const re = new RegExp(`^${key}:\\s*.+$`, "m");
-  if (re.test(yaml)) return yaml.replace(re, `${key}: ${value}`);
-  return `${key}: ${value}\n` + yaml;
+  if (re.test(yaml)) return yaml.replace(re, `${key}: ${safeVal}`);
+  return `${key}: ${safeVal}\n` + yaml;
 }
 
 function patchRuntimePorts() {
@@ -913,6 +915,12 @@ async function startCore() {
 }
 
 async function stopCore(opts = {}) {
+  if (stoppingCore) return stoppingCore;
+  stoppingCore = _doStopCore(opts).finally(() => { stoppingCore = null; });
+  return stoppingCore;
+}
+
+async function _doStopCore(opts = {}) {
   const clearProxy = opts.clearProxy !== false;
   if (clearProxy) {
     await clearOurSystemProxy();
@@ -1441,19 +1449,33 @@ function appIconPath() {
 
 function createWindow() {
   const icon = appIconPath();
-  // 窗口尺寸按屏幕工作区自适应，保证完整落在桌面内（不被任务栏 / 屏幕边缘裁切）；高度锁定，宽度可左右拖动
+  // 窗口尺寸按屏幕工作区自适应，保证完整落在桌面内（不被任务栏 / 屏幕边缘裁切）
+  // v1.1.4：默认档位对齐 Clash Verge 的窗口观感（Clash Verge 默认内容区约 1142×822、含边框约 1144×854），
+  // 取 1200×860 作为启动默认——与 Clash Verge 同一观感档位、略舒展一档；
+  // 宽高均不锁死，可自由缩放；历史过小的 windowBounds 存档会被抬升到新目标，避免启动即小窗。
   const wa = screen.getPrimaryDisplay().workAreaSize;
   const saved = appSettings && appSettings.windowBounds;
-  const winW = saved?.width || Math.min(1200, Math.max(1100, wa.width - 60));
-  const winH = saved?.height || Math.min(820, Math.max(660, wa.height - 60));
+  const TARGET_W = Math.min(1200, Math.max(1144, wa.width - 60));
+  const TARGET_H = Math.min(860, Math.max(800, wa.height - 60));
+  let winW = TARGET_W;
+  let winH = TARGET_H;
+  if (saved && Number.isFinite(saved.width) && Number.isFinite(saved.height)) {
+    winW = Math.max(saved.width, TARGET_W);
+    winH = Math.max(saved.height, TARGET_H);
+  }
+  // 兜底：确保窗口不超出工作区
+  winW = Math.min(winW, wa.width - 40);
+  winH = Math.min(winH, wa.height - 40);
   mainWindow = new BrowserWindow({
     width: winW,
     height: winH,
+    minWidth: 980,
+    minHeight: 640,
     x: typeof saved?.x === "number" ? saved.x : undefined,
     y: typeof saved?.y === "number" ? saved.y : undefined,
     useContentSize: false,
     resizable: true,
-    maximizable: false,
+    maximizable: true,
     fullscreenable: false,
     frame: false,
     titleBarStyle: "hidden",
@@ -1470,9 +1492,9 @@ function createWindow() {
     },
   });
 
-  // 高度锁定在 winH（最大 = 最小），只允许左右拖动改宽度：既满足"左右拖动"，又保证内容不被裁切
-  mainWindow.setMinimumSize(960, Math.min(winH, 640));
-  mainWindow.setMaximumSize(1600, Math.max(winH, 900));
+  // 宽高均可自由缩放：最小 980×640（渲染层 .app 最小 880×560 之上留足裕量），最大不超过屏幕工作区
+  mainWindow.setMinimumSize(980, 640);
+  mainWindow.setMaximumSize(Math.max(1500, wa.width), Math.max(900, wa.height - 40));
 
   if (icon) {
     try {
@@ -1532,12 +1554,14 @@ function loadTrayImage(connected) {
     const dpi = screen.getPrimaryDisplay().scaleFactor || 1;
     const candidates = [
       dpi >= 2 ? `tray-win-${style}@2x.png` : null,
+      dpi >= 1.75 ? `tray-win-${style}-128.png` : null,
       dpi >= 1.5 ? `tray-win-${style}-24.png` : null,
       dpi >= 1.25 ? `tray-win-${style}-20.png` : null,
       `tray-win-${style}.png`,
       // 兼容旧版资源包：缺少小尺寸文件时再回退到大图。
       `tray-win-${style}-48.png`,
       `tray-win-${style}-64.png`,
+      `tray-win-${style}-128.png`,
     ].filter(Boolean);
     for (const f of candidates) {
       const p = path.join(dir, f);
@@ -1600,10 +1624,37 @@ function loadTrayImage(connected) {
 
 function updateTray() {
   if (!tray) return;
-  // 托盘语义：只有「内核在线 && 系统代理开」才算绿（代理生效中）。
-  // 内核跑但系统代理关 → 灰点，避免和窗口内「系统代理关」打架。
+  // 托盘三态（每种视觉独立，不再混淆）：
+  //   1) proxyActive = 内核在线 && 系统代理开 → 纯彩（蓝底白立方，代理生效）
+  //   2) coreOnline  = 内核在线 && 系统代理关 → 灰底 + 小蓝点（内核跑、代理未开）
+  //   3) 否则        = 内核未连接             → 纯灰
   const proxyActive = !!(coreOnline && sysProxyOn);
-  const img = loadTrayImage(proxyActive);
+  let img;
+  if (coreOnline && !sysProxyOn) {
+    const base = loadTrayImage(false);
+    if (base.isEmpty()) {
+      img = base;
+    } else {
+      try {
+        const mark = nativeImage.createFromPath(path.join(iconsDir(), "tray-on-16.png"));
+        if (!mark.isEmpty()) {
+          const size = base.getSize();
+          const dotW = Math.max(5, Math.round(size.width * 0.32));
+          const dotH = Math.max(5, Math.round(size.height * 0.32));
+          const dot = mark.resize({ width: dotW, height: dotH, quality: "best" });
+          img = base.composite([{ input: dot, gravity: "southeast" }]);
+          dot.destroy();
+          try { mark.destroy(); } catch {}
+        } else {
+          img = base;
+        }
+      } catch {
+        img = base;
+      }
+    }
+  } else {
+    img = loadTrayImage(proxyActive);
+  }
   if (!img.isEmpty()) tray.setImage(img);
   const coreLabel = activeCore === "singbox" ? "sing-box" : "mihomo";
   let tip;

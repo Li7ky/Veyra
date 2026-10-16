@@ -32,6 +32,8 @@ let MIXED_PORT = DEFAULT_MIXED;
 let CONTROLLER = `127.0.0.1:${DEFAULT_CTRL}`;
 let SECRET = "veyra-secret";
 let mainWindow = null;
+// 页面尚未完成加载时缓存启动冲突，避免 IPC 事件早于 React 监听器而丢失。
+let pendingStartupConflict = null;
 let tray = null;
 let coreProc = null;
 let stoppingCore = null;
@@ -245,6 +247,15 @@ function toastNotice(message) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("veyra:notice", { message, at: new Date().toISOString() });
     }
+  } catch {}
+}
+
+function sendStartupConflict(data) {
+  pendingStartupConflict = data;
+  try {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoadingMainFrame()) return;
+    mainWindow.webContents.send("conflict:blockStartup", data);
+    pendingStartupConflict = null;
   } catch {}
 }
 
@@ -1061,7 +1072,7 @@ function startCore() {
     if (conflicts.length > 0) {
       const msg = `检测到其他代理软件正在运行：${conflicts.join("、")}。已阻止启动以避免冲突，请先关闭其他代理软件后重试。`;
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("conflict:blockStartup", {
+        sendStartupConflict({
           conflicts,
           severity,
           rawConflicts: rawConflicts || [],
@@ -1989,6 +2000,12 @@ function createWindow() {
   const pushStateNow = () => {
     sendStatus();
     syncSystemProxyState().catch(() => {});
+    if (pendingStartupConflict && mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.webContents.send("conflict:blockStartup", pendingStartupConflict);
+        pendingStartupConflict = null;
+      } catch {}
+    }
   };
   mainWindow.webContents.on("did-finish-load", pushStateNow);
   mainWindow.on("show", pushStateNow);
@@ -2360,7 +2377,7 @@ function registerIpc() {
     if (conflicts.length > 0) {
       const msg = `检测到其他代理软件正在运行：${conflicts.join("、")}。已阻止启动以避免冲突，请先关闭其他代理软件后重试。`;
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("conflict:blockStartup", {
+        sendStartupConflict({
           conflicts,
           severity,
           rawConflicts: rawConflicts || [],
@@ -3190,7 +3207,7 @@ app.whenReady().then(async () => {
     if (conflicts.length > 0) {
       // 发送冲突事件给渲染层，显示模态对话框阻止启动
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("conflict:blockStartup", {
+        sendStartupConflict({
           conflicts,
           severity,
           rawConflicts: rawConflicts || [],

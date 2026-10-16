@@ -4,6 +4,10 @@
 - Electron + React 19 + Vite，源码在 `src/`（渲染层 `src/src/`，主进程 `src/electron/`）。
 - 启动 GUI（沙箱内 bash 直启会被杀）：PowerShell 工具 `Start-Process`，
   `$env:ELECTRON_RUN_AS_NODE=$null`，参数 `. --disable-gpu --disable-gpu-compositing --no-sandbox --remote-debugging-port=9223`，cwd=`src`。
+  - **必须先起 vite dev server**：开发模式下主进程加载 `http://127.0.0.1:5173`，
+    没起的话窗口会打开但白屏（`ERR_CONNECTION_REFUSED`）。顺序固定：vite → 等 5173 返回 200 → electron。
+  - CDP 连接需追加 `--remote-allow-origins=*`，否则 `/json` 能读但 WebSocket 握手 403。
+  - 截图用 `Page.captureScreenshot` + `fromSurface:false`（Electron）；headless chromium 相反，需 `true`。
 - 运行中应用可用 Playwright 连 CDP 调试；截图必须用 CDP 原生 `Page.captureScreenshot` + `fromSurface:false`
   （Playwright 的 page.screenshot 会卡在 "waiting fonts"）。
 - 主进程改动（electron/*.cjs、preload）需重启应用生效；渲染层走 HMR。

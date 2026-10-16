@@ -645,10 +645,13 @@ code, pre { font-family: var(--font-mono); }
 }
 
 /* ── Navigation (Sidebar) ────────────────────────────────── */
+/* 间距 4 → 10px（v15）：左栏是「导航 + 贴底状态卡」结构，状态卡贴底后
+   中间会空出 300px。适度加大导航项间距让导航区视觉重量上移、留白被摊薄，
+   比往中间硬塞内容更稳（拉伸面板是历史八轮「丑」的根源，不能再犯）。 */
 .nav-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
 }
 .nav-item {
   position: relative;
@@ -2684,6 +2687,26 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   height: 1px;
   margin: 12px 0;
   background: var(--line);
+}
+
+/* ── 解锁状态 · 空态（v15）─────────────────────────────────────
+   未测试时不再罗列 6 行「未测试」（等于 6 行无信息），
+   收敛成一句说明 + 唯一动作，卡片高度随之减半。 */
+.unlock-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.unlock-empty p {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-300);
+}
+.unlock-empty small {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-500);
 }
 
 /* ── 顶栏时钟（v13：从右栏「系统时间」卡收进顶栏）────────────

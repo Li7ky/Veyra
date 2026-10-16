@@ -1365,6 +1365,14 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   }, [running, refreshExitIp]);
 
   // 右栏解锁状态：全量测试（串行，耗时长）。切换内核后结果即失效，由调用方决定何时重跑。
+  // 是否有任一测试结果：全未测试时整卡收敛为引导态
+  // （6 行「未测试」= 6 行无信息，还占掉一整张卡的高度）
+  const hasUnlockResult = RAIL_UNLOCK_GROUPS.some((g) =>
+    g.ids.some(([id]) => {
+      const st = unlockMap[id];
+      return !!(st && st.testedAt);
+    })
+  );
   const testAllUnlock = useCallback(async () => {
     const api = window.veyra?.streamingUnlock;
     if (!api) {
@@ -1828,6 +1836,12 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     <div className="rail-fact">
                       <span>{t("nav.memory", "内存")}</span>
                       <strong>{memText}</strong>
+                    </div>
+                    {/* 内核名此前只出现在 hero 的一行小字里；状态卡补上它，
+                        让左栏这张卡的信息自成一体（代理/连接/内存/内核） */}
+                    <div className="rail-fact">
+                      <span>{t("nav.core", "内核")}</span>
+                      <strong>{activeCore === "singbox" ? "sing-box" : "Mihomo"}</strong>
                     </div>
                   </div>
                 </section>
@@ -3053,7 +3067,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 <div className="card-body tight">
                   {!running ? (
                     <div className="text-xs text-muted">内核未运行</div>
-                  ) : (
+                  ) : hasUnlockResult ? (
                     <div className="rail-unlock">
                       {RAIL_UNLOCK_GROUPS.map((g) => (
                         <div key={g.key} className="rail-unlock-group">
@@ -3095,6 +3109,27 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       <div className="text-xs text-muted" style={{ marginTop: 2 }}>
                         完整 12 项见「测试」页
                       </div>
+                    </div>
+                  ) : (
+                    /* 空态：不说六遍「未测试」，直接给唯一的动作 */
+                    <div className="unlock-empty">
+                      <p>{t("unlock.notTestedYet", "尚未测试任何服务")}</p>
+                      <small>
+                        {t(
+                          "unlock.emptyHint",
+                          "测试后可查看 ChatGPT、Netflix 等 12 项在当前节点下的可达性"
+                        )}
+                      </small>
+                      <button
+                        type="button"
+                        className="btn primary btn-xs"
+                        onClick={testAllUnlock}
+                        disabled={!!unlockBusy}
+                      >
+                        {unlockBusy === "__all__"
+                          ? t("unlock.testing", "测试中…")
+                          : t("unlock.startTest", "开始测试")}
+                      </button>
                     </div>
                   )}
                 </div>

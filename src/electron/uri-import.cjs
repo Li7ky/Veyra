@@ -57,7 +57,23 @@ function parseSs(uri) {
   }
   const [method, ...pwParts] = userinfo.split(":");
   const password = pwParts.join(":");
-  const [server, port] = hostport.split(":");
+  // IPv6：[2001:db8::1]:8388 或裸 2001:db8::1:8388——按最后一个冒号分割 host/port
+  let server = hostport;
+  let port = "";
+  const bracket = hostport.match(/^\[([^\]]+)\]:(\d+)$/);
+  if (bracket) {
+    server = bracket[1];
+    port = bracket[2];
+  } else {
+    const ci = hostport.lastIndexOf(":");
+    if (ci >= 0) {
+      server = hostport.slice(0, ci);
+      port = hostport.slice(ci + 1);
+    }
+  }
+  if (!server || !/^\d+$/.test(port)) {
+    throw new Error(`ss 节点解析失败：无法识别 server/port（${hostport}）`);
+  }
   return {
     name: safeName(name, "ss"),
     type: "ss",

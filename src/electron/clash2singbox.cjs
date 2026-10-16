@@ -194,7 +194,12 @@ function convertProxy(p, warnings) {
     }
     case "hysteria": {
       const o = { ...base, type: "hysteria" };
-      if (p.ports) o.server_ports = [String(p.ports)];
+      if (p.ports) {
+        // Clash "1000-2000,3000" → sing-box ["1000:2000","3000"]（原样写入会导致 sing-box 启动报错）
+        const pp = parsePorts(p.ports);
+        const sp = [...pp.ranges, ...pp.ports.map(String)];
+        if (sp.length) o.server_ports = sp;
+      }
       const up = pick(p, "up", "upmbps");
       const down = pick(p, "down", "downmbps");
       if (up !== undefined) o.up_mbps = num(up, 0);

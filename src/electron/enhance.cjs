@@ -128,11 +128,21 @@ function applyScript(config, script, profileName) {
   }
   // 传入纯 JSON 可克隆对象，切断原型污染面
   const input = JSON.parse(JSON.stringify(config));
+  // main() 也必须在 vm context 内执行并带 timeout：
+  // timeout 只作用于 runInContext 那一次执行，若在 sandbox 外直接调用 mainFn，
+  // 用户脚本里 while(true){} 会永久阻塞 Electron 主进程（界面假死）。
+  sandbox.__veyraInput = input;
+  sandbox.__veyraProfileName = profileName;
   let out;
   try {
-    out = mainFn(input, profileName);
+    out = vm.runInContext(
+      `JSON.stringify(main(__veyraInput, __veyraProfileName))`,
+      sandbox,
+      { timeout: 3000 }
+    );
+    out = JSON.parse(out);
   } catch (e) {
-    throw new Error(`Script main() 抛错: ${e.message}`);
+    throw new Error(`Script main() 执行失败: ${e.message}`);
   }
   if (!out || typeof out !== "object") {
     throw new Error("Script 必须返回配置对象");
@@ -229,7 +239,13 @@ function enhance(profilesDir, runtimePath, opts) {
   const enhanceTypes = new Set(["merge", "script", "rules", "proxies", "groups"]);
 
   for (const item of idx.items.filter((x) => x.enabled && x.global && enhanceTypes.has(x.type))) {
-    const text = fs.readFileSync(path.join(profilesDir, item.file), "utf8");
+    // index 与磁盘可能不同步（文件被手动删除）：缺文件只告警并跳过，不拖垮整个 enhance
+    const fp = path.join(profilesDir, item.file);
+    if (!fs.existsSync(fp)) {
+      warnings.push(`global ${item.type} ${item.name}: 文件缺失(${item.file})，已跳过`);
+      continue;
+    }
+    const text = fs.readFileSync(fp, "utf8");
     config = applyEnhanceItem(config, item, text, profileName, warnings, scriptLogs, "global") || config;
   }
 
@@ -240,7 +256,12 @@ function enhance(profilesDir, runtimePath, opts) {
       if (!bindUid) continue;
       const item = idx.items.find((x) => x.uid === bindUid);
       if (!item || !item.enabled) continue;
-      const text = fs.readFileSync(path.join(profilesDir, item.file), "utf8");
+      const fp = path.join(profilesDir, item.file);
+      if (!fs.existsSync(fp)) {
+        warnings.push(`bound ${item.type} ${item.name}: 文件缺失(${item.file})，已跳过`);
+        continue;
+      }
+      const text = fs.readFileSync(fp, "utf8");
       config = applyEnhanceItem(config, item, text, profileName, warnings, scriptLogs, "bound") || config;
     }
   }
@@ -251,7 +272,12 @@ function enhance(profilesDir, runtimePath, opts) {
     // 已被订阅绑定占用的条目跳过，避免重复应用
     const binds = (mainItem && mainItem.binds) || {};
     if (Object.values(binds).includes(item.uid)) continue;
-    const text = fs.readFileSync(path.join(profilesDir, item.file), "utf8");
+    const fp = path.join(profilesDir, item.file);
+    if (!fs.existsSync(fp)) {
+      warnings.push(`profile ${item.type} ${item.name}: 文件缺失(${item.file})，已跳过`);
+      continue;
+    }
+    const text = fs.readFileSync(fp, "utf8");
     config = applyEnhanceItem(config, item, text, profileName, warnings, scriptLogs, "profile") || config;
   }
 

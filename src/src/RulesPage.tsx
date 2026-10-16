@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { Plus, Save, Trash2, RefreshCw } from "lucide-react";
 import { t } from "./i18n";
 
-type RuleRow = { payload: string; type?: string };
+type RuleRow = { payload: string; type?: string; isBuiltin?: boolean };
 
 /**
  * 规则归一化纯函数：任何上游形状都收敛为 { payload, type }，绝不产出 "[object Object]"。
@@ -80,15 +80,16 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
   async function reload() {
     if (!window.veyra?.listRules) {
       // 预览版：直接用内置规则
-      setRows(BUILTIN_RULES.map((payload) => ({ payload })));
+      setRows(BUILTIN_RULES.map((payload) => ({ payload, isBuiltin: true })));
       return;
     }
     const data = await window.veyra.listRules();
     const list = (data.rules || [])
       .map((r) => normalizeRule(r))
       .filter((r): r is NonNullable<ReturnType<typeof normalizeRule>> => r !== null);
-    // 无自定义规则时显示内置规则
-    setRows(list.length ? list : BUILTIN_RULES.map((payload) => ({ payload })));
+    // 无自定义规则时仅用内置规则做预览：标记 isBuiltin，
+    // 保存时跳过（避免把演示规则静默持久化进用户配置）
+    setRows(list.length ? list : BUILTIN_RULES.map((payload) => ({ payload, isBuiltin: true })));
   }
 
   useEffect(() => {
@@ -121,16 +122,21 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
         <h2>{t("rule.title")}</h2>
         <span className="pill dim">{rows.length} 条</span>
         <div className="s-actions" style={{ marginLeft: "auto" }}>
-          <button type="button" className="btn ghost btn-sm" onClick={() => reload()}>
+          <button type="button" className="btn ghost btn-sm" onClick={() => reload().catch(() => {})}>
             <RefreshCw size={13} /> {t("rule.refresh")}
           </button>
           <button
             type="button"
             className="btn primary btn-sm"
             onClick={async () => {
+              const userRows = rows.filter((r) => !r.isBuiltin);
+              if (!userRows.length) {
+                onToast(t("rule.nothingToSave", "暂无自定义规则可保存"));
+                return;
+              }
               onBusy(true);
               try {
-                await window.veyra?.saveVisualRules?.(rows.map((r) => r.payload));
+                await window.veyra?.saveVisualRules?.(userRows.map((r) => r.payload));
                 onToast(t("rule.saved"));
                 await reload();
               } catch (e) {

@@ -35,6 +35,7 @@ let mainWindow = null;
 let tray = null;
 let coreProc = null;
 let stoppingCore = null;
+let startingCore = null;
 let coreMemCache = { mb: 0, t: 0 };
 // 内核进程内存占用（MB），带 5s 缓存避免频繁起子进程
 function coreMemoryMB() {
@@ -346,8 +347,16 @@ function portFree(port) {
 async function pickPorts() {
   const preferMixed = Number(appSettings?.mixedPort) || DEFAULT_MIXED;
   const preferCtrl = Number(appSettings?.controllerPort) || DEFAULT_CTRL;
-  MIXED_PORT = (await portFree(preferMixed)) ? preferMixed : preferMixed + 10003;
-  const ctrlPort = (await portFree(preferCtrl)) ? preferCtrl : preferCtrl + 10003;
+  const pick = async (prefer) => {
+    if (await portFree(prefer)) return prefer;
+    const alt = prefer + 10003;
+    // 回退端口也必须验证空闲；两者都被占时保持首选端口，
+    // 让启动失败报错指向用户实际配置的端口而不是一个莫名的 +10003。
+    if (await portFree(alt)) return alt;
+    return prefer;
+  };
+  MIXED_PORT = await pick(preferMixed);
+  const ctrlPort = await pick(preferCtrl);
   CONTROLLER = `127.0.0.1:${ctrlPort}`;
   return { mixed: MIXED_PORT, controller: CONTROLLER };
 }
@@ -938,7 +947,15 @@ async function adoptOwnCorePid() {
   } catch {}
 }
 
-async function startCore() {
+function startCore() {
+  // 并发互斥：快速连点/重启叠加时只允许一次真正的启动流程，
+  // 否则两次调用都会走到 spawn，拉起两个内核进程互相抢端口。
+  if (startingCore) return startingCore;
+  startingCore = _doStartCore().finally(() => { startingCore = null; });
+  return startingCore;
+}
+
+async function _doStartCore() {
   const bin = coreBinPath(activeCore);
   const coreLabel = activeCore === "singbox" ? "sing-box" : "Mihomo";
   if (!fs.existsSync(bin)) {
@@ -1076,14 +1093,34 @@ async function _doStopCore(opts = {}) {
       alive = ver.status === 200;
     } catch {}
     if (alive) {
-      const img = coreKillName(activeCore) || "mihomo.exe";
-      await new Promise((r) => {
-        try {
-          execFile("taskkill", ["/IM", img, "/F", "/T"], () => r());
-        } catch {
-          r();
+      // 按端口定位占用者 PID，并确认可执行文件确在本应用 bin 目录下才按 PID 结束。
+      // 不能用 taskkill /IM 按镜像名全杀——那会误杀用户另行安装的其它 Clash/mihomo 内核。
+      let killed = false;
+      try {
+        const port = Number(String(CONTROLLER).split(":")[1]) || 0;
+        const pid = await findPidListeningOn(port);
+        const exe = pid ? await findProcessExePath(pid) : null;
+        const binDir = path.dirname(coreBinPath(activeCore));
+        if (
+          pid && exe &&
+          path.resolve(exe).toLowerCase().startsWith(path.resolve(binDir).toLowerCase())
+        ) {
+          await new Promise((r) => {
+            try {
+              execFile("taskkill", ["/PID", String(pid), "/F", "/T"], () => r());
+            } catch {
+              r();
+            }
+          });
+          killed = true;
         }
-      });
+      } catch {}
+      if (!killed && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(
+          "core:log",
+          `[veyra] controller 端口仍被占用，但无法确认是本应用的内核，已跳过结束（避免误杀其它代理软件）。\n`
+        );
+      }
       // 留一点时间让端口释放，避免下一次 startCore 误判成「已被占用」
       await new Promise((r) => setTimeout(r, 300));
     }
@@ -1823,6 +1860,15 @@ function loadTrayImage(connected) {
 
 function updateTray() {
   if (!tray) return;
+  // 托盘菜单/图标/提示全部由这组状态推导：无变化时跳过重建。
+  // 否则 sysProxyTimer 每 3s 全量 setContextMenu，会冲掉用户正打开的
+  // 「快速选节点」临时菜单（3 秒内点不完就被覆盖）。
+  const sig = JSON.stringify([
+    coreOnline, sysProxyOn, appSettings?.proxyMode, appSettings?.lightweightMode,
+    appSettings?.coreMode, appSettings?.tunEnable, activeCore, MIXED_PORT, CONTROLLER,
+  ]);
+  if (updateTray._sig === sig) return;
+  updateTray._sig = sig;
   // 托盘三态（每种视觉独立，不再混淆）：
   //   1) proxyActive = 内核在线 && 系统代理开 → 纯彩（蓝底白立方，代理生效）
   //   2) coreOnline  = 内核在线 && 系统代理关 → 灰底 + 小蓝点（内核跑、代理未开）
@@ -1915,11 +1961,16 @@ function updateTray() {
         checked: !!sysProxyOn && appSettings?.proxyMode !== "pac",
         enabled: !!coreOnline,
         click: async (item) => {
-          if (item.checked) {
-            saveSettings({ proxyMode: "system" });
-            await setSystemProxy(true);
-          } else await setSystemProxy(false);
-          updateTray();
+          try {
+            if (item.checked) {
+              saveSettings({ proxyMode: "system" });
+              await setSystemProxy(true);
+            } else await setSystemProxy(false);
+            updateTray();
+          } catch (e) {
+            console.error(e);
+            trayBalloon("Veyra-omini", "系统代理设置失败： " + (e.message || e));
+          }
         },
       },
       {
@@ -1928,9 +1979,14 @@ function updateTray() {
         checked: !!sysProxyOn && appSettings?.proxyMode === "pac",
         enabled: !!coreOnline,
         click: async (item) => {
-          if (item.checked) await applyProxyMode("pac");
-          else await applyProxyMode("off");
-          updateTray();
+          try {
+            if (item.checked) await applyProxyMode("pac");
+            else await applyProxyMode("off");
+            updateTray();
+          } catch (e) {
+            console.error(e);
+            trayBalloon("Veyra-omini", "代理模式切换失败： " + (e.message || e));
+          }
         },
       },
       {
@@ -2216,7 +2272,10 @@ function registerIpc() {
   ipcMain.handle("settings:applyNetwork", async (_e, patch) => {
     const next = saveSettings(patch || {});
     ensureDirs();
-    await pickPorts();
+    // 内核运行中不做全量 pickPorts：preferred 端口正被自身占用，会被误判为
+    // 「被占用」而漂移到 +10003 并写进 runtime 配置。仅内核未运行时重新挑选，
+    // 运行中只处理本次显式传入的端口。
+    if (!coreProc && !coreOnline) await pickPorts();
     // 强制使用用户设置的端口（若空闲）
     if (patch?.mixedPort) {
       const want = Number(patch.mixedPort);

@@ -51,12 +51,23 @@ if ($svc) {
   Start-Sleep -Seconds 1
 }
 New-Item -ItemType Directory -Force -Path '${wd.replace(/'/g, "''")}' | Out-Null
-sc.exe create ${SERVICE_NAME} binPath= "${binPathArg}" start= auto DisplayName= "Veyra Core Service" | Out-Null
+sc.exe create ${SERVICE_NAME} binPath= "${binPathArg}" start= auto DisplayName= "Veyra Core Service"
+if ($LASTEXITCODE -ne 0) { throw "sc.exe create 失败（退出码 $LASTEXITCODE），常见原因：权限不足或路径含特殊字符" }
 sc.exe description ${SERVICE_NAME} "Veyra mihomo/sing-box elevated service for TUN" | Out-Null
-Start-Service ${SERVICE_NAME} -ErrorAction SilentlyContinue
+Start-Service ${SERVICE_NAME} -ErrorAction Stop
+Start-Sleep -Milliseconds 500
+if ((Get-Service -Name '${SERVICE_NAME}').Status -ne 'Running') { throw "服务已创建但未进入 Running 状态" }
 'OK'
 `;
-  await elevatedPowershell(script);
+  try {
+    await elevatedPowershell(script);
+  } catch (e) {
+    // Start-Process 拒绝 UAC / 脚本 throw 时 launcher 以非零码退出：如实向调用方报错
+    throw new Error(
+      `服务安装失败：${(e && e.message) || e}` +
+        (e && e.stderr ? `\n${e.stderr}` : "")
+    );
+  }
   return { ok: true, name: SERVICE_NAME };
 }
 

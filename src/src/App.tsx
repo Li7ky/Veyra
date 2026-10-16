@@ -411,11 +411,16 @@ async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T, i: n
   return results;
 }
 
-const MODE_LABEL: Record<string, string> = {
-  rule: t("home.modeRule", "Rule"),
-  global: t("home.modeGlobal", "Global"),
-  direct: t("home.modeDirect", "Direct"),
-};
+// 模式标签在调用时求值（而非模块加载时固化）：i18n 的 locale 是启动后
+// 异步从设置回填的，模块级常量会在默认语言下被永久固化。
+const MODE_LABEL = (m: string) =>
+  m === "rule"
+    ? t("home.modeRule", "Rule")
+    : m === "global"
+      ? t("home.modeGlobal", "Global")
+      : m === "direct"
+        ? t("home.modeDirect", "Direct")
+        : m;
 
 // 首页信息小卡（区段 5-7 共用）。抽成常量避免三处重复内联样式，
 // 也便于统一调整内边距/圆角。
@@ -1254,6 +1259,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
       if (isAborted()) {
         testingRef.current = false;
+        testAbortRef.current = null;
+        setTesting(false);
+        setTestingNode(null);
+        setTestProgress(0);
         return;
       }
 
@@ -1519,7 +1528,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     if (!window.veyra || !running) return;
     await window.veyra.setMode(m);
     setMode(m);
-    showToast(`模式：${MODE_LABEL[m] || m}`);
+    showToast(`模式：${MODE_LABEL(m)}`);
   }
 
   async function selectNode(name: string) {
@@ -1896,7 +1905,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         <>
                           <span>{activeCore === "singbox" ? "sing-box" : "Mihomo"}</span>
                           <span className="hero-run-sep">·</span>
-                          <LiveUptime since={appStartTime.current} />
+                          <LiveUptime since={coreStartTime ?? appStartTime.current} />
                         </>
                       ) : null
                     }
@@ -1911,7 +1920,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       <div className="tf-head-l">
                         <span className="tf-title">{t("home.realtimeTraffic", "实时流量")}</span>
                         <span className="tf-sub">
-                          {MODE_LABEL[mode] || mode} · {nodes.length}{" "}
+                          {MODE_LABEL(mode)} · {nodes.length}{" "}
                           {t("home.nodesAvailable", "节点可用")}
                         </span>
                       </div>
@@ -2209,7 +2218,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       {homeCards.mode && (
                         <div style={{ ...HOME_TILE, flex: 1 }}>
                           <div style={HOME_TILE_LABEL}>{t("home.mode", "代理模式")}</div>
-                          <div style={HOME_TILE_VALUE}>{MODE_LABEL[mode] || mode}</div>
+                          <div style={HOME_TILE_VALUE}>{MODE_LABEL(mode)}</div>
                           <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
                             {(["rule", "global", "direct"] as const).map((m) => (
                               <button
@@ -2219,7 +2228,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                                 onClick={() => changeMode(m)}
                                 disabled={!running}
                               >
-                                {MODE_LABEL[m] || m}
+                                {MODE_LABEL(m)}
                               </button>
                             ))}
                           </div>

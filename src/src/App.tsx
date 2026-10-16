@@ -1701,6 +1701,9 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
             <span className="brand-ver">{appVersion ? `v${appVersion.replace(/^v/, "")}` : "—"}</span>
           </div>
           <div className="header-actions">
+            {/* v13：系统时间从右栏卡片收进顶栏——时间属窗口级信息，
+                不值得在右栏独占一张卡（那会让右栏超出一屏）。 */}
+            <LiveClock compact />
             <div className="header-search">
               <svg
                 viewBox="0 0 24 24"
@@ -1850,10 +1853,19 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       const g = groups.find((x) => x.all?.includes(currentNode));
                       if (g?.name) setSelectedGroup(g.name);
                     }}
+                    meta={
+                      running ? (
+                        <>
+                          <span>{activeCore === "singbox" ? "sing-box" : "Mihomo"}</span>
+                          <span className="hero-run-sep">·</span>
+                          <LiveUptime since={appStartTime.current} />
+                        </>
+                      ) : null
+                    }
                   />
 
                   {/* 区段 1: KPI — 降级为次要信息 */}
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 14 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div
                         style={{ fontSize: 13, color: "var(--text-400)", marginBottom: 6 }}
@@ -1863,13 +1875,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       </div>
                       <div style={{ display: "flex", gap: 10 }}>
                         <div
+                          className="glass-tile"
                           style={{
                             flex: 1,
                             padding: "10px 14px",
-                            background: "var(--card-solid)",
-                            borderRadius: 11,
-                            border: "0.5px solid var(--card-border)",
-                            boxShadow: "var(--shadow-sm)",
                           }}
                         >
                           <div
@@ -1884,7 +1893,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           </div>
                           <div
                             style={{
-                              fontSize: 16,
+                              fontSize: 18,
                               fontWeight: 600,
                               /* 0 值用彩色会暗示「有数据」——无流量时降为中性灰 */
                               color: upRate > 0 ? "var(--green-500)" : "var(--text-500)",
@@ -1895,13 +1904,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           </div>
                         </div>
                         <div
+                          className="glass-tile"
                           style={{
                             flex: 1,
                             padding: "10px 14px",
-                            background: "var(--card-solid)",
-                            borderRadius: 11,
-                            border: "0.5px solid var(--card-border)",
-                            boxShadow: "var(--shadow-sm)",
                           }}
                         >
                           <div
@@ -1916,7 +1922,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           </div>
                           <div
                             style={{
-                              fontSize: 16,
+                              fontSize: 18,
                               fontWeight: 600,
                               color: downRate > 0 ? "var(--blue-500)" : "var(--text-500)",
                               fontFamily: "var(--font-mono)",
@@ -1926,13 +1932,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           </div>
                         </div>
                         <div
+                          className="glass-tile"
                           style={{
                             flex: 1,
                             padding: "10px 14px",
-                            background: "var(--card-solid)",
-                            borderRadius: 11,
-                            border: "0.5px solid var(--card-border)",
-                            boxShadow: "var(--shadow-sm)",
                           }}
                         >
                           <div
@@ -1947,7 +1950,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           </div>
                           <div
                             style={{
-                              fontSize: 16,
+                              fontSize: 18,
                               fontWeight: 600,
                               color: connCount > 0 ? "var(--text-100)" : "var(--text-500)",
                               fontFamily: "var(--font-mono)",
@@ -1980,15 +1983,15 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       原实现为 3 条硬编码 path 的静态装饰图，不随时间/流量变化，具有欺骗性。
                       改用项目已有的 WaveChart 组件消费真实累积的 rateHistory（见 setRateHistory）。 */}
                   <div
-                    style={{
-                      background: "var(--card-solid)",
-                      borderRadius: 12,
-                      border: "0.5px solid var(--card-border)",
-                      padding: "10px 12px",
-                      boxShadow: "var(--shadow-sm)",
-                      marginBottom: 8,
-                    }}
+                    className="glass-tile"
+                    style={{ padding: "12px 14px", marginBottom: 14 }}
                   >
+                    {/* 加标题行 + 时间窗口：这块是中栏最大的格子，之前只有一片空白，
+                        看起来像「没画完」而不是「暂时没数据」 */}
+                    <div className="tf-head">
+                      <span className="tf-title">{t("home.realtimeTraffic", "实时流量")}</span>
+                      <span className="tf-window">{t("home.window60s", "最近 60 秒")}</span>
+                    </div>
                     <div className="home-chart-wrap">
                       {hasTraffic ? (
                         <WaveChart up={rateHistory.up} down={rateHistory.down} />
@@ -1997,6 +2000,20 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           {/* 零流量：只留网格底，不画数据线；给明确引导而非留一片空白 */}
                           <WaveChart up={[]} down={[]} empty />
                           <div className="home-chart-empty">
+                            {/* 空态给一个图标：只有两行字的话，这块区域看起来像「没画完」 */}
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="20"
+                              height="20"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M3 12h4l2.5-6 4 12L16 12h5" />
+                            </svg>
                             <p>
                               {running
                                 ? t("home.noTraffic", "暂无流量数据")
@@ -2028,14 +2045,12 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         {subs.slice(0, 3).map((sub, i) => (
                           <div
                             key={i}
+                            className="glass-tile"
                             style={{
                               display: "flex",
                               alignItems: "center",
                               gap: 10,
                               padding: "8px 12px",
-                              background: "var(--card-solid)",
-                              borderRadius: 9,
-                              border: "0.5px solid var(--card-border)",
                             }}
                           >
                             <div
@@ -2104,13 +2119,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                   {homeCards.core && (
                     <div style={{ display: "flex", gap: 10 }}>
                       <div
+                        className="glass-tile"
                         style={{
                           flex: 1,
                           padding: "12px 14px",
-                          background: "var(--card-solid)",
-                          borderRadius: 11,
-                          border: "0.5px solid var(--card-border)",
-                          boxShadow: "var(--shadow-sm)",
                         }}
                       >
                         <div
@@ -2992,43 +3004,14 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
           {/* Right Sidebar */}
           <div className="col-right">
             <div className="grid-stack">
-              <div className="card">
-                <LiveClock />
-                <div className="card-body tight">
-                  <div className="grid-2" style={{ gap: 8 }}>
-                    <div
-                      style={{
-                        background: "transparent",
-                        border: "1px solid var(--card-border)",
-                        borderRadius: "var(--radius-md)",
-                        padding: 12,
-                      }}
-                    >
-                      <div className="text-xs text-muted mb-1">运行时间</div>
-                      <LiveUptime since={appStartTime.current} />
-                    </div>
-                    <div
-                      style={{
-                        background: "transparent",
-                        border: "1px solid var(--card-border)",
-                        borderRadius: "var(--radius-md)",
-                        padding: 12,
-                      }}
-                    >
-                      <div className="text-xs text-muted mb-1">内核</div>
-                      <div className="text-sm font-mono">
-                        {activeCore === "singbox" ? "sing-box" : "Mihomo"}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
+              {/* v13：右栏原先四张卡（系统时间 / 出口 IP / 解锁状态 / 流量）在 860 高度下装不下，
+                  滚动后连卡片标题都会被切掉。现收敛为两张：系统时间移到顶栏，
+                  运行时长与内核移到 hero，流量并入出口 IP。 */}
               {/* 出口 IP 卡：消费此前「只检测不显示」的 exitIp 数据（见 useEffect @ running）。
                   原「快捷操作」4 个按钮的跳转目标在左侧导航中均已一键可达，属纯重复，故移除。 */}
               <div className="card">
                 <div className="card-header no-border">
-                  <div className="card-title text-base">出口 IP</div>
+                  <div className="card-title text-base">网络状态</div>
                   <button
                     type="button"
                     className="btn ghost btn-xs"
@@ -3094,6 +3077,29 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       </button>
                     </div>
                   )}
+
+                  {/* 实时 + 累计流量：原为独立一张卡，并入后右栏少一张卡的高度 */}
+                  <div className="rail-sep" />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div className="exit-ip-row">
+                      <span className="exit-ip-k">下载</span>
+                      <span className={`exit-ip-v${downRate > 0 ? " down" : ""}`}>
+                        {formatRate(downRate)}
+                      </span>
+                    </div>
+                    <div className="exit-ip-row">
+                      <span className="exit-ip-k">上传</span>
+                      <span className={`exit-ip-v${upRate > 0 ? " up" : ""}`}>
+                        {formatRate(upRate)}
+                      </span>
+                    </div>
+                    <div className="exit-ip-row">
+                      <span className="exit-ip-k">累计</span>
+                      <span className="exit-ip-v is-total">
+                        ↓ {formatBytes(download)} · ↑ {formatBytes(upload)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -3162,49 +3168,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 </div>
               </div>
 
-              <div className="card">
-                <div className="card-header no-border">
-                  <div className="card-title text-base">流量</div>
-                </div>
-                <div className="card-body tight">
-                  <div className="status-item">
-                    <div className="status-item-hd">
-                      <span>下载</span>
-                      <span className="text-cyan">{formatRate(downRate)}</span>
-                    </div>
-                    <div className="status-bar">
-                      <i
-                        className="cyan"
-                        style={{ width: `${Math.min(100, (downRate / 1000000) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="status-item">
-                    <div className="status-item-hd">
-                      <span>上传</span>
-                      <span className="text-purple">{formatRate(upRate)}</span>
-                    </div>
-                    <div className="status-bar">
-                      <i
-                        className="purple"
-                        style={{ width: `${Math.min(100, (upRate / 1000000) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="status-item">
-                    <div className="status-item-hd">
-                      <span>总下行</span>
-                      <span>{formatBytes(download)}</span>
-                    </div>
-                  </div>
-                  <div className="status-item">
-                    <div className="status-item-hd">
-                      <span>总上行</span>
-                      <span>{formatBytes(upload)}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -3288,20 +3251,32 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 }
 
 /** 实时时钟：独立组件每秒 tick，避免整棵应用树跟着时间刷新重渲染 */
-function LiveClock() {
+function LiveClock({ compact = false }: { compact?: boolean }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+  const time = now.toLocaleTimeString(getLocale(), { hour12: false });
+  // 日期跟随应用语言（此前固定 en-US，中文界面里显示 "Oct 15, 2026" 混排）
+  const date = now.toLocaleDateString(getLocale(), {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  // v13 紧凑版：右栏不再单开一张「系统时间」卡，时钟收进顶栏（时间本就属窗口级信息）
+  if (compact) {
+    return (
+      <div className="header-clock" title={date}>
+        {time}
+      </div>
+    );
+  }
   return (
     <div className="time-display">
       <div className="time-label">系统时间</div>
-      <div className="time-value">{now.toLocaleTimeString(getLocale(), { hour12: false })}</div>
-      <div className="time-date">
-        {/* 日期跟随应用语言（此前固定 en-US，中文界面里显示 "Oct 15, 2026" 混排） */}
-        {now.toLocaleDateString(getLocale(), { year: "numeric", month: "long", day: "numeric" })}
-      </div>
+      <div className="time-value">{time}</div>
+      <div className="time-date">{date}</div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { memo } from "react";
+import type { ReactNode } from "react";
 import { ChevronDown, Power, ShieldCheck, ShieldOff } from "lucide-react";
 import { t } from "./i18n";
 
@@ -11,6 +12,9 @@ type Props = {
   onToggleProxy: () => void;
   onToggleCore?: () => void;
   onNodeClick?: () => void;
+  /** 运行态附加信息（内核名 · 运行时长）。原属右栏「系统时间」卡，
+      v13 右栏精简后移到这里，避免单独占一张卡的高度。 */
+  meta?: ReactNode;
 };
 
 function ConnectOrb({
@@ -22,6 +26,7 @@ function ConnectOrb({
   onToggleProxy,
   onToggleCore,
   onNodeClick,
+  meta,
 }: Props) {
   // 与托盘同语义：只有「内核在线 && 系统代理开」才算生效。
   const active = running && sysProxy;
@@ -117,6 +122,7 @@ function ConnectOrb({
             {running ? "停止内核服务" : "启动内核服务"}
           </button>
         ) : null}
+        {meta ? <div className="hero-run">{meta}</div> : null}
       </div>
     </section>
   );

@@ -114,6 +114,13 @@
   --shadow-md: 0 8px 24px -8px rgba(0, 0, 0, 0.45);
   --shadow-card: 0 2px 4px rgba(0, 0, 0, 0.30), 0 12px 32px -12px rgba(0, 0, 0, 0.55);
 
+  /* 玻璃质感层（v13 · 精密玻璃）
+     纵向渐变叠在 --card 之上：暗色下「上亮下暗」，浅色下「上白下淡」，
+     再加一条 1px 的顶部内高光模拟玻璃受光边。所有卡片语言共用这三个令牌。 */
+  --glass-top: rgba(255, 255, 255, 0.05);
+  --glass-bottom: rgba(255, 255, 255, 0.012);
+  --glass-hilite: rgba(255, 255, 255, 0.07);
+
   /* 字体 — 品牌展示字体 Geist（标题）+ 系统字体（正文），加入变量 */
   --font-display: "Geist", "Veyra-omini Emoji", sans-serif;
   --font-sans: "Geist", "Veyra-omini Emoji", "Inter", "Noto Sans SC", "Microsoft YaHei UI", "PingFang SC", sans-serif;
@@ -302,9 +309,12 @@ code, pre { font-family: var(--font-mono); }
   font-size: 20px;
   font-weight: 700;
   font-family: var(--font-display);
-  /* 单色：小字号渐变文字在截图/缩放后发虚，且与扁平化的卡片语言冲突。
-     品牌感由左侧 logo 图形承担。 */
-  color: var(--text-100);
+  /* 品牌渐变（logo 蓝 → 靛紫）是产品识别的一部分，v13 恢复。
+     两主题各有一套 --grad-text，无需单独覆盖。 */
+  background: var(--grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
   letter-spacing: -0.02em;
 }
 .header-actions {
@@ -474,13 +484,30 @@ code, pre { font-family: var(--font-mono); }
 .col-right { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-top: 22px; }
 
 /* ── Card ────────────────────────────────────────────────── */
+/* v13 精密玻璃：卡片 = 玻璃渐变 + 1px 顶部内高光 + 柔和投影。
+   渐变叠在 --card 之上（顶部更实、底部略透），比通体一色更有层次；
+   注意这里只会让卡片「更白/更亮」，不会变透，吸顶工具栏的遮挡语义不受影响。 */
 .card {
-  background: var(--card);
+  background:
+    linear-gradient(to bottom, var(--glass-top), var(--glass-bottom)),
+    var(--card);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
   backdrop-filter: var(--blur-sm);
   -webkit-backdrop-filter: var(--blur-sm);
+  box-shadow: inset 0 1px 0 var(--glass-hilite), var(--shadow-card);
   overflow: hidden;
+}
+
+/* v13 玻璃瓦片：主区里那些原先是内联样式的卡片（KPI / 流量图 / 规则数量 …）
+   统一到这一条，质感和 .card 保持一致但更轻（radius-md + shadow-sm）。 */
+.glass-tile {
+  background:
+    linear-gradient(to bottom, var(--glass-top), var(--glass-bottom)),
+    var(--card-solid);
+  border: 0.5px solid var(--card-border);
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 1px 0 var(--glass-hilite), var(--shadow-sm);
 }
 .card-header {
   display: flex;
@@ -574,6 +601,7 @@ code, pre { font-family: var(--font-mono); }
   gap: 4px;
 }
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -584,6 +612,18 @@ code, pre { font-family: var(--font-mono); }
   color: var(--text-400);
   transition: all 0.2s var(--ease);
   text-align: left;
+}
+/* 激活项加一条左侧强调竖条：图标中性化之后，光靠一层浅底色不足以表达「你在这里」 */
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 17px;
+  transform: translateY(-50%);
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
 }
 .nav-item:hover { color: var(--text-100); background: var(--input-bg); }
 .nav-item.active {
@@ -2408,9 +2448,25 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
 /* ── Home · 实时流量图 ───────────────────────────────────────
    图高由容器固定：.wave-chart 此前没有任何尺寸规则，高度交给 SVG 的默认
    行为，不同窗口下不稳定。空态叠在网格底之上，不拦截指针事件。 */
+.tf-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.tf-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-300);
+}
+.tf-window {
+  font-size: 11px;
+  color: var(--text-500);
+}
 .home-chart-wrap {
   position: relative;
-  height: 128px;
+  height: 104px;
 }
 .home-chart-wrap .wave-chart {
   display: block;
@@ -2427,6 +2483,11 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   gap: 3px;
   pointer-events: none;
   text-align: center;
+}
+.home-chart-empty svg {
+  color: var(--text-500);
+  opacity: 0.75;
+  margin-bottom: 2px;
 }
 .home-chart-empty p {
   font-size: 12px;
@@ -2462,6 +2523,52 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 流量值：只在真有流量时着色（0 值保持中性，否则会暗示「有数据」） */
+.exit-ip-v.down {
+  color: var(--cyan-500);
+  font-weight: 500;
+}
+.exit-ip-v.up {
+  color: var(--purple-500);
+  font-weight: 500;
+}
+.exit-ip-v.is-total {
+  font-size: 11px;
+  color: var(--text-500);
+  font-family: var(--font-mono);
+}
+
+/* 卡内分段线：出口信息 / 流量数据之间 */
+.rail-sep {
+  flex-shrink: 0;
+  height: 1px;
+  margin: 12px 0;
+  background: var(--line);
+}
+
+/* ── 顶栏时钟（v13：从右栏「系统时间」卡收进顶栏）────────────
+   时间属窗口级信息，不值得在右栏独占一张卡。 */
+.header-clock {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-300);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  -webkit-app-region: no-drag;
+}
+
+/* ── hero 运行态附加信息（内核 · 运行时长）─────────────────── */
+.hero-run {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-500);
+  white-space: nowrap;
+}
+.hero-run-sep { opacity: 0.5; }
 
 
 /* ── Window Drag Regions ────────────────────────────────── */
@@ -2540,17 +2647,29 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   --grad-text: linear-gradient(to right, #2c71e8, #7c3aed);
 
   /* 阴影：浅色下用低透明度大扩散，避免灰扑扑的硬边 */
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05), 0 3px 8px -3px rgba(15, 23, 42, 0.09);
   --shadow-md: 0 10px 30px -10px rgba(15, 23, 42, 0.16);
-  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05), 0 16px 36px -16px rgba(15, 23, 42, 0.22);
+  /* v13：三层投影（接触 + 扩散 + 远柔光）。单层投影在浅色底上几乎看不见，
+     卡片「浮」不起来——这是之前整体显平的主因之一。 */
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06), 0 4px 10px -2px rgba(15, 23, 42, 0.07),
+    0 20px 44px -18px rgba(15, 23, 42, 0.28);
+
+  /* 玻璃质感层（v13）——浅色下是「顶部近纯白 → 底部回到卡色」，
+     视觉上卡片像一块被顶光照到的玻璃，比通体一个白更有层次。 */
+  --glass-top: rgba(255, 255, 255, 0.78);
+  --glass-bottom: rgba(255, 255, 255, 0.34);
+  --glass-hilite: rgba(255, 255, 255, 0.95);
 }
 
 /* ── Light Theme Component Overrides ───────────────────────── */
 [data-theme="light"] .particle-canvas { opacity: 0.15; }
 [data-theme="light"] .app::before {
+  /* v13：背景从「一条线性渐变」升级为「三处光晕」——左上品牌蓝、右上靛紫、
+     底部一层冷光。浅色下才有纵深，否则整块背景是一张平纸。 */
   background:
-    radial-gradient(ellipse at 20% 50%, color-mix(in srgb, var(--accent) 8%, transparent) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 20%, color-mix(in srgb, var(--blue-500) 7%, transparent) 0%, transparent 50%);
+    radial-gradient(ellipse 62% 52% at 6% -4%, color-mix(in srgb, var(--accent) 15%, transparent) 0%, transparent 62%),
+    radial-gradient(ellipse 52% 42% at 96% 6%, color-mix(in srgb, var(--purple-500) 11%, transparent) 0%, transparent 62%),
+    radial-gradient(ellipse 74% 50% at 50% 108%, color-mix(in srgb, var(--blue-500) 10%, transparent) 0%, transparent 66%);
 }
 [data-theme="light"] .card { background: var(--card); }
 [data-theme="light"] .nav-item.active {

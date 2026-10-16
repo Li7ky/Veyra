@@ -819,13 +819,6 @@ async function scanConflict() {
                 onChange={(e) => patchSettings({ disconnectOnProxyOff: e.target.checked })}
               />
             </Row>
-            <Row label={t("conflict.blockLabel")} desc={t("conflict.blockDesc")}>
-              <input
-                type="checkbox"
-                checked={s.blockConflict !== false}
-                onChange={(e) => patchSettings({ blockConflict: e.target.checked })}
-              />
-            </Row>
             <Row label={t("conflict.scanLabel")} desc={t("conflict.scanDesc")}>
               <div style={{ display: "flex", gap: 6 }}>
                 <button

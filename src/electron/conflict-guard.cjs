@@ -168,11 +168,28 @@ async function scanPorts(myPorts = []) {
   const results = await Promise.all(
     targets.map(async ([port, label, family]) => {
       const hit = await probePort(port, "127.0.0.1", 1200);
-      if (hit) return { type: "port", port, label, family };
+      if (hit) return { type: "port", port, label, family, severity: "high" };
       // 同时扫 0.0.0.0 有可能占用在 "Any" 地址上
       const hitAny = await probePort(port, "0.0.0.0", 800);
-      if (hitAny) return { type: "port", port, label: `${label} (全局)`, family };
+      if (hitAny) return { type: "port", port, label: `${label} (全局)`, family, severity: "high" };
       return null;
+    })
+  );
+  return results.filter(Boolean);
+}
+
+/** 自定义端口扫描：主动传入要探测的端口列表（用于检测用户配置的端口被占用情况）
+ *  返回命中列表，每个元素含 port 和 severity */
+async function scanCustomPorts(ports, host = "127.0.0.1") {
+  if (!Array.isArray(ports) || ports.length === 0) return [];
+  const results = await Promise.all(
+    ports.map(async (port) => {
+      const hit = await probePort(port, host, 1200);
+      if (!hit) return null;
+      // 查一下这个端口对应哪个已知代理软件
+      const known = KNOWN_PROXY_PORTS.find((kp) => kp[0] === port);
+      if (known) return { type: "port", port, label: known[1], family: known[2], severity: "critical" };
+      return { type: "port", port, label: `端口 ${port} 被占用`, severity: "critical" };
     })
   );
   return results.filter(Boolean);
@@ -208,7 +225,9 @@ function detectProcsWindows() {
           // 该名字的所有实例都是自家内核才算「不是冲突」；
           // 只要还存在一个非自家实例，就保留命中（真外部软件不能被放过）。
           if (matched.every((r) => isOwnCorePid(r.pid))) continue;
-          hits.push({ type: "process", proc: baseName, label });
+          // 收集非自家内核的 PID，供一键关闭使用
+          const externalPids = matched.filter((r) => !isOwnCorePid(r.pid)).map((r) => r.pid);
+          hits.push({ type: "process", proc: baseName, label, pids: externalPids });
           continue;
         }
         // 兜底：CSV 结构意外变化时退回纯文本匹配（无法做 PID 排除）
@@ -252,7 +271,9 @@ function detectProcsUnix() {
         // 所有实例都是自家内核才跳过（真外部实例继续报）
         if (matched.every((r) => isOwnCorePid(r.pid))) continue;
         seen.add(base);
-        hits.push({ type: "process", proc: base, label });
+        // 收集非自家内核的 PID，供一键关闭使用
+        const externalPids = matched.filter((r) => !isOwnCorePid(r.pid)).map((r) => r.pid);
+        hits.push({ type: "process", proc: base, label, pids: externalPids });
       }
       resolve(hits);
     });
@@ -498,12 +519,17 @@ function detectSelfConflict() {
  * @param {object} opts
  * @param {number[]} opts.myPorts  — 自身不使用这些端口（跳过检测）
  * @param {boolean} opts.includeSystem  — 是否包含系统级检测（注册表/DNS/路由）
+ * @param {boolean} opts.includeSystemProxy — 是否仅包含系统代理检测
  * @returns {Promise<{ conflicts: Array, summary: string }>}
  */
 async function fullScan(opts = {}) {
-  const { myPorts = [], includeSystem = true } = opts;
+  const { myPorts = [], myCustomPorts = [], includeSystem = true, includeSystemProxy = false } = opts;
   const all = [];
   const seen = new Set();
+  // 记录严重与中等冲突的数量
+  let criticalCount = 0;
+  let highCount = 0;
+  let mediumCount = 0;
 
   const push = (item) => {
     if (!item) return;
@@ -513,28 +539,41 @@ async function fullScan(opts = {}) {
     if (seen.has(key) || seen.has(altKey)) return;
     seen.add(key);
     seen.add(altKey);
+    // 默认严重度为 medium（纯进程检测）
+    if (!item.severity) item.severity = "medium";
+    if (item.severity === "critical") criticalCount++;
+    else if (item.severity === "high") highCount++;
+    else mediumCount++;
     all.push(item);
   };
 
-  // 1. 自身互斥检测
+  // 1. 自身互斥检测（最高优先级）
   const selfHit = await detectSelfConflict();
-  push(selfHit);
+  if (selfHit) {
+    selfHit.severity = "critical";
+    push(selfHit);
+  }
 
-  // 2. 并发：端口扫描 + 进程扫描
-  const [portHits, procHits] = await Promise.all([
+  // 2. 并发：已知端口扫描 + 进程扫描 + 自定义端口扫描
+  const [portHits, procHits, customHits] = await Promise.all([
     scanPorts(myPorts),
     detectProxyProcesses(),
+    scanCustomPorts(myCustomPorts),
   ]);
   portHits.forEach(push);
-  procHits.forEach(push);
+  procHits.forEach((h) => { h.severity = "medium"; push(h); });
+  customHits.forEach((h) => { h.severity = "critical"; push(h); });
 
   // 3. 系统级检测
-  if (includeSystem) {
+  if (includeSystem || includeSystemProxy) {
     const [sysProxy, dns, route] = await Promise.all([
       detectSystemProxyConflict(),
-      detectDnsConflict(),
-      detectRouteConflict(),
+      includeSystem ? detectDnsConflict() : Promise.resolve(null),
+      includeSystem ? detectRouteConflict() : Promise.resolve(null),
     ]);
+    if (sysProxy) sysProxy.severity = "high";
+    if (dns) dns.severity = "high";
+    if (route) route.severity = "medium";
     push(sysProxy);
     push(dns);
     push(route);
@@ -545,7 +584,12 @@ async function fullScan(opts = {}) {
     ? "✓ 未检测到其他代理软件"
     : `检测到 ${all.length} 个可能的冲突：${all.map((a) => a.label).join("、")}`;
 
-  return { conflicts: all, summary };
+  return {
+    conflicts: all,
+    summary,
+    severity: criticalCount > 0 ? "critical" : highCount > 0 ? "high" : mediumCount > 0 ? "medium" : "none",
+    counts: { critical: criticalCount, high: highCount, medium: mediumCount },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -556,8 +600,12 @@ async function fullScan(opts = {}) {
  * 启动轮询监控，每 intervalMs 检测一次。
  * 当发现新冲突且之前的检测为空时，调用 onConflict(items)。
  * 当冲突消失时，调用 onResolved()。
+ * @param {function} onConflict — 发现新冲突时回调
+ * @param {function} onResolved — 冲突消失时回调
+ * @param {number} intervalMs — 轮询间隔毫秒
+ * @param {number[]} myCustomPorts — 自身端口（这些端口被占升级为 critical）
  */
-function startMonitor(onConflict, onResolved, intervalMs = 5000) {
+function startMonitor(onConflict, onResolved, intervalMs = 5000, myCustomPorts = []) {
   stopMonitor();
   let lastHits = [];
   let firstScanDone = false;
@@ -568,7 +616,7 @@ function startMonitor(onConflict, onResolved, intervalMs = 5000) {
     // 否则会以空的 lastHits 为基准，把启动前就已存在的冲突全部当「新出现」误报
     if (!firstScanDone) return;
     try {
-      const { conflicts } = await fullScan({ includeSystem: false });
+      const { conflicts } = await fullScan({ includeSystem: false, myCustomPorts });
       const curKeys = new Set(conflicts.map((c) => `${c.type}:${c.proc || c.port}`));
       const prevKeys = new Set(lastHits.map((c) => `${c.type}:${c.proc || c.port}`));
 
@@ -589,7 +637,7 @@ function startMonitor(onConflict, onResolved, intervalMs = 5000) {
   // 首次立即执行；完成后才允许 interval 做 diff
   (async () => {
     try {
-      const { conflicts } = await fullScan({ includeSystem: false });
+      const { conflicts } = await fullScan({ includeSystem: false, myCustomPorts });
       lastHits = conflicts;
     } catch {} finally {
       firstScanDone = true;
@@ -611,6 +659,7 @@ function stopMonitor() {
 module.exports = {
   fullScan,
   scanPorts,
+  scanCustomPorts,
   detectProxyProcesses,
   detectSystemProxyConflict,
   detectDnsConflict,

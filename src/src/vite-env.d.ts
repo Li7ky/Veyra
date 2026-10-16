@@ -277,13 +277,17 @@ export interface VeyraAPI {
   webdavDownload?: () => Promise<unknown>;
   exitIp?: () => Promise<{ ip: string | null; country?: string; city?: string; isp?: string }>;
   detectProxyConflict?: () => Promise<string[]>;
-  fullConflictScan?: () => Promise<{ conflicts: Array<{ type: string; label: string; port?: number; proc?: string; family?: string }>; summary: string }>;
+  fullConflictScan?: () => Promise<{ conflicts: Array<{ type: string; label: string; severity?: string; port?: number; proc?: string; family?: string }>; summary: string; severity?: string; counts?: { critical: number; high: number; medium: number } }>;
   /** 端口可用性自检：直接尝试绑定本机配置的端口 */
   checkPorts?: () => Promise<{ mixedPort: number; controllerPort: number; mixedFree: boolean; ctrlFree: boolean }>;
   startConflictMonitor?: (on: boolean) => Promise<{ ok: boolean }>;
   getSelfIdentity?: () => Promise<{ app: string; version: string; pid: number; mixedPort: number | null; controllerPort: string | null; coreMode: string; startedAt: string; session: string } | null>;
-  onConflictDetected?: (cb: (data: { items: string[]; at: string }) => void) => () => void;
-  onConflictResolved?: (cb: (data: { at: string }) => void) => () => void;
+  onConflictDetected?: (cb: (data: { items: string[]; severity: "critical" | "high" | "medium"; at: string }) => void) => () => void;
+  onConflictResolved?: (cb: (data: { at: string; autoRecover?: boolean }) => void) => () => void;
+  onConflictBlockStartup?: (cb: (data: { conflicts: string[]; severity: string; rawConflicts: Array<{ type: string; proc?: string; label: string; pids?: number[]; port?: number }>; at: string }) => void) => () => void;
+  killProxyProcesses?: (pids: number[]) => Promise<{ killed: number[]; failed: number[] }>;
+  retryStartAfterConflict?: () => Promise<{ ok: boolean; conflicts?: string[]; severity?: string; error?: string }>;
+  onNotice?: (cb: (data: { message: string; at: string }) => void) => () => void;
   streamingUnlock?: () => Promise<
     { id: string; title?: string; ok: boolean; fail?: boolean; region?: string | null; status: number; note: string; testedAt?: number }[]
   >;

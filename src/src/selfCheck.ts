@@ -26,7 +26,7 @@ export type SelfCheckResult = {
   warn: number;
 };
 
-type Conflict = { type: string; label: string; port?: number; proc?: string };
+type Conflict = { type: string; label: string; severity?: string; port?: number; proc?: string };
 
 /** 把可选 / 可能抛错的 IPC 统一收敛成「成功返回值 或 null」 */
 function safe<T>(p: Promise<T> | undefined | null): Promise<T | null> {
@@ -136,13 +136,23 @@ export async function runSelfCheck(running: boolean): Promise<SelfCheckResult> {
   });
 
   const procs = of("process");
+  // 仅当严重度为 critical/high 或存在 port 级别冲突时才算 warn，medium 级别（仅进程存在、无端口冲突）为 ok
+  const hasProcWithConflict = procs.length > 0 && procs.some((c) => c.severity === "critical" || c.severity === "high");
+  const hasPort = of("port").length > 0;
+  const procState: SelfCheckState = hasProcWithConflict || (procs.length > 0 && hasPort) ? "warn" : "ok";
   push({
     id: "process",
     label: "其它代理软件",
-    value: procs.length ? procs.map((c) => c.label).join("、") : "未检测到",
-    state: procs.length ? "warn" : "ok",
-    hint: procs.length ? "建议一次只运行一个代理软件，避免端口与系统代理互相抢" : undefined,
-    go: procs.length ? { section: "system", label: "去「系统」设置互斥" } : undefined,
+    value: procs.length
+      ? (procState === "warn"
+          ? procs.map((c) => c.label).join("、") + "（有端口冲突风险）"
+          : procs.map((c) => c.label).join("、") + "（进程存在，端口未冲突）")
+      : "未检测到",
+    state: procState,
+    hint: procState === "warn"
+      ? "其它代理软件正在占用端口，请关闭避免冲突"
+      : (procs.length ? "检测到其它代理软件但端口未冲突，可和平共处" : undefined),
+    go: procState === "warn" ? { section: "system", label: "去「系统」设置互斥" } : undefined,
   });
 
   const dns = of("dns");

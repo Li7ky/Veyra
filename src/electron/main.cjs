@@ -92,6 +92,8 @@ let isQuitting = false;
 let apiFailStreak = 0;
 // 内核异常退出后的自动重启计数（有限次数，成功启动后清零）
 let coreAutoRestarts = 0;
+// 冲突检测器检测到严重冲突（端口/系统代理被抢占）时把内核关掉，以便冲突解除后自动恢复。
+let conflictStoppedCore = false;
 
 const userData = () => app.getPath("userData");
 const configDir = () => path.join(userData(), "config");
@@ -119,7 +121,7 @@ const DEFAULT_SETTINGS = {
   proxyMode: "system", // system | pac | off
   proxyGuard: false,
   disconnectOnProxyOff: true,
-  blockConflict: true, // 禁止与其他主流代理工具同时运行（启动内核前检测并拦截）
+  blockConflict: true, // 兼容旧设置字段；启动前互斥检测始终强制执行
   registerIdentity: true, // 注册自身标识，让外部代理软件能检测到 Veyra-omini
   bindAddress: "127.0.0.1",
   // TUN
@@ -232,6 +234,16 @@ function toastNotify(title, body) {
       const n = new Notification({ title: title || "Veyra-omini", body: body || "", silent: false });
       n.on("click", () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
       n.show();
+    }
+  } catch {}
+}
+
+// 轻量提示：不弹系统通知，只在前端 showToast（右下角 pop），不打断用户操作。
+// 用于非关键信息（检测到其他代理但不影响运行时、订阅更新提示等）
+function toastNotice(message) {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("veyra:notice", { message, at: new Date().toISOString() });
     }
   } catch {}
 }
@@ -909,24 +921,87 @@ async function syncCoreModeFromApi() {
 // 冲突检测 — 委托给 conflict-guard.cjs（全面双向互斥）
 // ---------------------------------------------------------------------------
 
-/** 启动前冲突检测（快速版：进程+端口，排除系统级以保启动速度） */
+/** 代理冲突检测（进程+端口，不含系统代理） */
 async function detectOtherProxy() {
-  const { conflicts } = await conflictGuard.fullScan({
-    myPorts: [MIXED_PORT, Number(CONTROLLER.split(":")[1]) || 0],
+  const ctrlPort = Number(CONTROLLER.split(":")[1]) || 0;
+  const result = await conflictGuard.fullScan({
+    myPorts: [MIXED_PORT, ctrlPort],
+    myCustomPorts: [MIXED_PORT, ctrlPort],
     includeSystem: false,
   });
-  return conflicts.map((c) => c.label);
+  return result.conflicts.map((c) => c.label);
 }
 
-/** 启动前冲突拦截：开启 blockConflict 且检测到其他代理工具时返回冲突列表 */
+/** 启动前冲突检测（返回详细结果含严重度） */
+async function detectOtherProxyDetailed() {
+  const ctrlPort = Number(CONTROLLER.split(":")[1]) || 0;
+  const result = await conflictGuard.fullScan({
+    myPorts: [MIXED_PORT, ctrlPort],
+    myCustomPorts: [MIXED_PORT, ctrlPort],
+    includeSystem: false,
+    includeSystemProxy: true,
+  });
+  // 系统代理指向 Veyra 自己时是正常状态，不能在启动/重启时把自己拦截。
+  result.conflicts = result.conflicts.filter((c) =>
+    c.type !== "system-proxy" || !isOurProxyServer(c.server)
+  );
+  if (result.conflicts.length === 0) {
+    result.severity = "none";
+    result.counts = { critical: 0, high: 0, medium: 0 };
+  }
+  return result;
+}
+
+/** 启动前冲突检测：任何检测到的外部代理进程或代理端口占用都会阻止启动。
+ *  只有扫描结果为空时才允许启动。 */
 async function checkConflictForStart() {
-  if (!(appSettings && appSettings.blockConflict)) return [];
-  return await detectOtherProxy();
+  const result = await detectOtherProxyDetailed();
+  return {
+    conflicts: result.conflicts.map((c) => c.label),
+    severity: result.severity,
+    rawConflicts: result.conflicts,
+  };
 }
 
 /** 运行时监控：检测到 Veyra-omini 已在运行（自身互斥） */
 async function detectSelfConflict() {
   return await conflictGuard.detectSelfConflict();
+}
+
+/** 一键关闭其他代理软件：按 PID 终止进程 */
+function killProxyProcesses(pids) {
+  return new Promise((resolve) => {
+    const list = Array.isArray(pids) ? pids : [];
+    if (!list.length) return resolve({ killed: [], failed: [] });
+    const killed = [];
+    const failed = [];
+    let remaining = list.length;
+    const done = () => {
+      if (--remaining <= 0) resolve({ killed, failed });
+    };
+    for (const pid of list) {
+      if (process.platform === "win32") {
+        execFile("taskkill", ["/pid", String(pid), "/f", "/t"], { windowsHide: true, timeout: 5000 }, (err) => {
+          if (err) failed.push(pid);
+          else killed.push(pid);
+          done();
+        });
+      } else {
+        try {
+          process.kill(pid, "SIGTERM");
+          killed.push(pid);
+        } catch {
+          try {
+            process.kill(pid, "SIGKILL");
+            killed.push(pid);
+          } catch {
+            failed.push(pid);
+          }
+        }
+        done();
+      }
+    }
+  });
 }
 
 /** Windows：找出监听指定端口的进程 PID（失败返回 null，不抛错） */
@@ -981,7 +1056,23 @@ function startCore() {
   // 并发互斥：快速连点/重启叠加时只允许一次真正的启动流程，
   // 否则两次调用都会走到 spawn，拉起两个内核进程互相抢端口。
   if (startingCore) return startingCore;
-  startingCore = _doStartCore().finally(() => { startingCore = null; });
+  startingCore = (async () => {
+    const { conflicts, severity, rawConflicts } = await checkConflictForStart();
+    if (conflicts.length > 0) {
+      const msg = `检测到其他代理软件正在运行：${conflicts.join("、")}。已阻止启动以避免冲突，请先关闭其他代理软件后重试。`;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("conflict:blockStartup", {
+          conflicts,
+          severity,
+          rawConflicts: rawConflicts || [],
+          at: new Date().toISOString(),
+        });
+      }
+      toastNotify("启动被拦截", msg);
+      throw new Error(msg);
+    }
+    return _doStartCore();
+  })().finally(() => { startingCore = null; });
   return startingCore;
 }
 
@@ -1253,21 +1344,66 @@ function _startRuntimeConflictMonitor() {
   conflictGuard.startMonitor(
     // 发现新冲突
     (items) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("conflict:detected", {
-          items: items.map((c) => c.label),
-          at: new Date().toISOString(),
-        });
+      if (!items || items.length === 0) return;
+      // 分级处理：
+      //   critical — 自身端口被占（内核可能已挂），弹窗 + 主动关内核，冲突消失后自动恢复
+      //   high     — 已知代理端口/系统代理被占（影响连接质量），toast 提示即可
+      //   medium   — 仅检测到其他进程但端口不冲突（和平共处），不弹窗，仅日志记录
+      const criticals = items.filter((c) => c.severity === "critical");
+      const highs = items.filter((c) => c.severity === "high");
+      const mediums = items.filter((c) => c.severity === "medium");
+
+      if (criticals.length > 0) {
+        // 严重冲突（端口被抢占）：弹窗通知 + 自动关闭内核避免代理链断裂
+        const label = criticals.map((c) => c.label).join("、");
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("conflict:detected", {
+            items: criticals.map((c) => c.label),
+            severity: "critical",
+            at: new Date().toISOString(),
+          });
+        }
+        toastNotify("检测到严重端口冲突", `${label} — Veyra 已暂停代理服务，冲突解除后将自动恢复。`);
+        if (coreProc && !conflictStoppedCore) {
+          conflictStoppedCore = true;
+          stopCore({ clearProxy: false }).catch(() => {});
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("core:log", `[veyra] 检测到严重端口冲突，已暂停内核，冲突解除后将自动恢复。\n`);
+          }
+        }
+      } else if (highs.length > 0) {
+        const label = highs.map((c) => c.label).join("、");
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("conflict:detected", {
+            items: highs.map((c) => c.label),
+            severity: "high",
+            at: new Date().toISOString(),
+          });
+        }
+        toastNotice(`检测到代理冲突：${label}，可能影响连接质量，建议关闭其中一个`);
+      } else if (mediums.length > 0) {
+        // 仅进程检测到，不弹窗、不打扰——记录日志供查看即可
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("core:log",
+            `[veyra] 检测到其他代理软件运行（${mediums.map((c) => c.label).join("、")}），但未检测到端口冲突，和平共处。\n`);
+        }
       }
-      toastNotify(
-        "检测到其他代理软件启动",
-        `${items.map((c) => c.label).join("、")} 可能正在占用代理端口或系统代理。建议关闭避免冲突。`
-      );
     },
     // 冲突已消失
     () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("conflict:resolved", { at: new Date().toISOString() });
+        mainWindow.webContents.send("conflict:resolved", {
+          at: new Date().toISOString(),
+          autoRecover: conflictStoppedCore,
+        });
+      }
+      // 之前因为严重冲突被停掉的内核，现在冲突消失则自动恢复
+      if (conflictStoppedCore) {
+        conflictStoppedCore = false;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("core:log", `[veyra] 端口冲突已解除，自动恢复代理服务。\n`);
+        }
+        startCore().catch(() => {});
       }
     },
     5000
@@ -2220,14 +2356,42 @@ function registerIpc() {
   });
 
   ipcMain.handle("core:start", async () => {
-    // 禁止与其他主流代理同时运行：启动前检测，命中则拒绝启动并提示
-    const conflicts = await checkConflictForStart();
-    if (conflicts.length) {
-      const msg = `检测到其他代理软件正在运行：${conflicts.join("、")}。已阻止启动以避免冲突，请先退出它们，或到「设置 → 网络与系统代理」关闭「禁止与其他代理同时运行」。`;
+    const { conflicts, severity, rawConflicts } = await checkConflictForStart();
+    if (conflicts.length > 0) {
+      const msg = `检测到其他代理软件正在运行：${conflicts.join("、")}。已阻止启动以避免冲突，请先关闭其他代理软件后重试。`;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("conflict:blockStartup", {
+          conflicts,
+          severity,
+          rawConflicts: rawConflicts || [],
+          at: new Date().toISOString(),
+        });
+      }
       toastNotify("启动被拦截", msg);
       throw new Error(msg);
     }
     return startCore();
+  });
+
+  // 一键关闭其他代理软件
+  ipcMain.handle("conflict:killOthers", async (_event, pids) => {
+    const result = await killProxyProcesses(pids);
+    return result;
+  });
+
+  // 冲突解决后重试启动
+  ipcMain.handle("conflict:retryStart", async () => {
+    const { conflicts, severity } = await checkConflictForStart();
+    if (conflicts.length > 0) {
+      return { ok: false, conflicts, severity };
+    }
+    // 冲突已解决，启动内核
+    try {
+      await startCore();
+      return { ok: true, severity };
+    } catch (e) {
+      return { ok: false, error: String(e.message || e), severity: "none" };
+    }
   });
   ipcMain.handle("core:stop", async () => {
     await stopCore({ clearProxy: true });
@@ -2607,11 +2771,13 @@ function registerIpc() {
   ipcMain.handle("system:detectProxyConflict", async () => detectOtherProxy());
   // 完整冲突扫描（含系统代理 / DNS / 路由表）— 手动扫描用
   ipcMain.handle("system:fullConflictScan", async () => {
-    const { conflicts, summary } = await conflictGuard.fullScan({
-      myPorts: [MIXED_PORT, Number(CONTROLLER.split(":")[1]) || 0],
+    const ctrlPort = Number(CONTROLLER.split(":")[1]) || 0;
+    const { conflicts, summary, severity, counts } = await conflictGuard.fullScan({
+      myPorts: [MIXED_PORT, ctrlPort],
+      myCustomPorts: [MIXED_PORT, ctrlPort],
       includeSystem: true,
     });
-    return { conflicts, summary };
+    return { conflicts, summary, severity, counts };
   });
   // 端口可用性自检：直接尝试绑定，判断我们配置的端口能不能用。
   // fullConflictScan 只扫一份「已知代理端口」清单、并且会跳过自身端口，
@@ -3019,12 +3185,20 @@ app.whenReady().then(async () => {
   if (appSettings.lightweightMode || (appSettings.startMinimized && openedAtLogin)) mainWindow?.hide();
   // 内核随软件常驻：打开即运行；会话内显式停止后，更新订阅也不会再拉起（见 reloadRuntimeConfig）
   try {
-    // 开机自启同样受「禁止与其他代理同时运行」约束，命中则不自动拉起内核
-    const conflicts = await checkConflictForStart();
-    if (conflicts.length) {
-      const msg = `检测到其他代理软件正在运行：${conflicts.join("、")}。已跳过自动启动，请先退出它们，或到「设置」关闭「禁止与其他代理同时运行」。`;
-      if (mainWindow) mainWindow.webContents.send("core:error", msg);
-      toastNotify("已跳过自动启动", msg);
+    // 开机自启同样执行强制互斥，命中则不自动拉起内核
+    const { conflicts, severity, rawConflicts } = await checkConflictForStart();
+    if (conflicts.length > 0) {
+      // 发送冲突事件给渲染层，显示模态对话框阻止启动
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("conflict:blockStartup", {
+          conflicts,
+          severity,
+          rawConflicts: rawConflicts || [],
+          at: new Date().toISOString(),
+        });
+      }
+      toastNotify("启动被拦截", `检测到其他代理软件正在运行：${conflicts.join("、")}。请关闭后重试。`);
+      // 不自动启动内核，等待用户在对话框中操作后重试
     } else {
       await startCore();
     }

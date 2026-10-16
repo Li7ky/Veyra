@@ -101,6 +101,10 @@ contextBridge.exposeInMainWorld("veyra", {
   checkPorts: () => ipcRenderer.invoke("system:checkPorts"),
   startConflictMonitor: (on) => ipcRenderer.invoke("system:startConflictMonitor", on),
   getSelfIdentity: () => ipcRenderer.invoke("system:getSelfIdentity"),
+  // 一键关闭其他代理软件
+  killProxyProcesses: (pids) => ipcRenderer.invoke("conflict:killOthers", pids),
+  // 冲突解决后重试启动
+  retryStartAfterConflict: () => ipcRenderer.invoke("conflict:retryStart"),
   // 运行时冲突事件订阅（主进程主动推送到渲染进程）
   onConflictDetected: (cb) => {
     const listener = (_e, data) => cb(data);
@@ -111,6 +115,17 @@ contextBridge.exposeInMainWorld("veyra", {
     const listener = (_e, data) => cb(data);
     ipcRenderer.on("conflict:resolved", listener);
     return () => ipcRenderer.removeListener("conflict:resolved", listener);
+  },
+  // 启动冲突拦截事件（主进程主动推送到渲染进程）
+  onConflictBlockStartup: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on("conflict:blockStartup", listener);
+    return () => ipcRenderer.removeListener("conflict:blockStartup", listener);
+  },
+  onNotice: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on("veyra:notice", listener);
+    return () => ipcRenderer.removeListener("veyra:notice", listener);
   },
   streamingUnlock: () => ipcRenderer.invoke("verge:streaming"),
   streamingUnlockOne: (id) => ipcRenderer.invoke("verge:streamingOne", id),

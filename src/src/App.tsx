@@ -694,6 +694,15 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   const [isMaximized, setIsMaximized] = useState(false);
   const [homeCfgOpen, setHomeCfgOpen] = useState(false);
   const [homeCfgDraft, setHomeCfgDraft] = useState(homeCards);
+  // 启动冲突模态对话框
+  const [blockStartupOpen, setBlockStartupOpen] = useState(false);
+  const [blockStartupData, setBlockStartupData] = useState<{
+    conflicts: string[];
+    severity: string;
+    rawConflicts: Array<{ type: string; proc?: string; label: string; pids?: number[]; port?: number }>;
+  } | null>(null);
+  const [blockStartupKilling, setBlockStartupKilling] = useState(false);
+  const [blockStartupMessage, setBlockStartupMessage] = useState("");
   // 危险操作（清理日志等）统一走二次确认弹窗
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
   // 首页系统信息卡的真实数据（此前版本硬编码「未启用 / v1.1 / Windows 10/11」）
@@ -987,23 +996,52 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
   useEffect(() => {
     if (!window.veyra) return;
-    // 启动时检测其他代理软件冲突：静默扫描，不自动弹横幅——
-    // 检测到别的代理软件只是提示信息（关掉对方即可恢复），弹横幅反而打扰；
-    // 结果在 设置 → 自检页 有完整呈现，需要时用户自行查看。
     window.veyra.fullConflictScan?.().catch(() => {});
-    // 订阅运行时冲突事件：其他代理软件在 Veyra-omini 运行期间启动。
-    // 用自动消失的 toast 而非持久横幅：提示点到为止，不打断当前操作。
     let conflictToastTimer: ReturnType<typeof setTimeout> | null = null;
-    const offConflict = window.veyra.onConflictDetected?.(({ items }) => {
+    // 冲突状态跟踪：根据严重度分级处理
+    let lastSeverity: "none" | "medium" | "high" | "critical" = "none";
+    const offConflict = window.veyra.onConflictDetected?.(({ items, severity }) => {
+      if (severity === "medium") {
+        // 仅进程层面无端口冲突——轻量提示，不打扰
+        showToast(`检测到 ${items.join("、")} 正在运行，端口未冲突，可和平共处`, 4000);
+        lastSeverity = "medium";
+        return;
+      }
+      // high / critical —— toast 提示 + 横幅
       if (conflictToastTimer) return; // 节流避免重复通知
-      showToast(`检测到其他代理软件：${items.join("、")}，如遇连接异常建议只保留一个`, 6000);
-      conflictToastTimer = setTimeout(() => { conflictToastTimer = null; }, 12000);
+      const msg = severity === "critical"
+        ? `检测到端口冲突：${items.join("、")}。Veyra 已暂停代理，冲突解除后将自动恢复。`
+        : `检测到代理冲突：${items.join("、")}，建议只保留一个代理软件`;
+      showToast(msg, severity === "critical" ? 10000 : 7000);
+      lastSeverity = severity;
+      conflictToastTimer = setTimeout(() => { conflictToastTimer = null; }, 15000);
+      if (severity === "critical") {
+        setBanner(`检测到端口冲突：${items.join("、")}。Veyra 已暂停代理，冲突解除后将自动恢复。`);
+      }
     });
-    const offResolved = window.veyra.onConflictResolved?.(() => {
-      // 兜底：旧版本遗留的冲突类横幅在冲突解除时清掉（不影响其它类型横幅）
-      setBanner((prev) =>
-        prev.includes("检测到其他代理软件") || prev.includes("系统代理被占用") ? "" : prev
-      );
+    const offResolved = window.veyra.onConflictResolved?.(({ autoRecover }) => {
+      // 清理所有冲突类横幅
+      setBanner((prev) => {
+        if (prev.includes("检测到端口冲突") || prev.includes("检测到代理冲突") ||
+            prev.includes("检测到其他代理软件") || prev.includes("系统代理被占用")) return "";
+        return prev;
+      });
+      if (autoRecover && lastSeverity === "critical") {
+        showToast("冲突已解除，Veyra 正在恢复代理...", 4000);
+      } else if (lastSeverity !== "none") {
+        showToast("代理冲突已消失", 3000);
+      }
+      lastSeverity = "none";
+    });
+    // 启动冲突拦截：显示模态对话框阻止启动
+    const offBlockStartup = window.veyra.onConflictBlockStartup?.((data) => {
+      setBlockStartupData(data);
+      setBlockStartupOpen(true);
+      setBlockStartupMessage("");
+    });
+    // 轻量提示（medium 级别进程检测、其他非关键提醒）
+    const offNotice = window.veyra.onNotice?.(({ message }) => {
+      showToast(message, 5000);
     });
     const off1 = window.veyra.onCoreStatus((d) => {
       applyStatus(d as { running?: boolean; seq?: number; version?: { version?: string } });
@@ -1121,6 +1159,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       off5?.();
       offConflict?.();
       offResolved?.();
+      offBlockStartup?.();
+      offNotice?.();
       if (conflictToastTimer) window.clearTimeout(conflictToastTimer);
       window.clearInterval(t);
       window.removeEventListener("focus", onFocus);
@@ -3164,6 +3204,101 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       )}
 
       <ConfirmDialog req={confirmReq} onClose={() => setConfirmReq(null)} />
+
+      {blockStartupOpen && blockStartupData && (
+        <div className="modal-mask" onClick={() => {}}>
+          <div className="modal-box" role="dialog" aria-modal="true" aria-label={t("conflict.blockStartupTitle", "检测到其他代理软件正在运行")}>
+            <div className="home-cfg-hd">
+              <div>
+                <div className="home-cfg-title">{t("conflict.blockStartupTitle", "检测到其他代理软件正在运行")}</div>
+                <div className="home-cfg-sub">{t("conflict.blockStartupDesc", "以下代理软件可能与 Veyra 产生冲突，建议关闭后再启动：")}</div>
+              </div>
+              <button
+                type="button"
+                className="home-cfg-close"
+                onClick={() => setBlockStartupOpen(false)}
+                aria-label="关闭"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="conflict-block-list">
+              {blockStartupData.rawConflicts.map((c, i) => (
+                <div key={i} className="conflict-block-item">
+                  <span className="conflict-block-label">{c.label}</span>
+                  {c.type === "process" && c.pids && c.pids.length > 0 && (
+                    <span className="conflict-block-pids">PID: {c.pids.join(", ")}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+            {blockStartupMessage && (
+              <div className="conflict-block-message">{blockStartupMessage}</div>
+            )}
+            <div className="conflict-block-actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={blockStartupKilling}
+                onClick={async () => {
+                  setBlockStartupKilling(true);
+                  setBlockStartupMessage(t("conflict.blockStartupKilling", "正在关闭其他代理软件…"));
+                  try {
+                    // 收集所有进程类型冲突的 PID
+                    const allPids = blockStartupData.rawConflicts
+                      .filter((c) => c.type === "process" && c.pids && c.pids.length > 0)
+                      .flatMap((c) => c.pids)
+                      .filter((pid): pid is number => typeof pid === "number");
+                    if (allPids.length > 0 && window.veyra?.killProxyProcesses) {
+                      await window.veyra.killProxyProcesses(allPids);
+                    }
+                    // 等待一下让进程完全退出
+                    await new Promise((r) => setTimeout(r, 1500));
+                    // 重新检测
+                    const result = window.veyra?.retryStartAfterConflict ? await window.veyra.retryStartAfterConflict() : null;
+                    if (result?.ok) {
+                      setBlockStartupMessage(t("conflict.blockStartupSuccess", "冲突已解决，正在启动…"));
+                      setTimeout(() => setBlockStartupOpen(false), 1000);
+                    } else if (result && result.conflicts && result.conflicts.length > 0) {
+                      setBlockStartupMessage(t("conflict.blockStartupStillConflict", "仍有代理软件在运行，请全部关闭后再试"));
+                      setBlockStartupData((prev) => prev ? { ...prev, conflicts: result.conflicts!, rawConflicts: prev.rawConflicts } : prev);
+                    } else {
+                      setBlockStartupMessage(t("conflict.blockStartupKillFailed", "部分软件关闭失败，请手动关闭后重试"));
+                    }
+                  } catch {
+                    setBlockStartupMessage(t("conflict.blockStartupKillFailed", "部分软件关闭失败，请手动关闭后重试"));
+                  } finally {
+                    setBlockStartupKilling(false);
+                  }
+                }}
+              >
+                {t("conflict.blockStartupKill", "一键关闭其他代理软件")}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={blockStartupKilling}
+                onClick={async () => {
+                  setBlockStartupMessage("");
+                  try {
+                    const result = window.veyra?.retryStartAfterConflict ? await window.veyra.retryStartAfterConflict() : null;
+                    if (result?.ok) {
+                      setBlockStartupMessage(t("conflict.blockStartupSuccess", "冲突已解决，正在启动…"));
+                      setTimeout(() => setBlockStartupOpen(false), 1000);
+                    } else if (result && result.conflicts && result.conflicts.length > 0) {
+                      setBlockStartupData((prev) => prev ? { ...prev, conflicts: result.conflicts!, rawConflicts: prev.rawConflicts } : prev);
+                    }
+                  } catch {
+                    // 忽略
+                  }
+                }}
+              >
+                {t("conflict.blockStartupRetry", "重新检测")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {homeCfgOpen && (
         <div className="modal-mask" onClick={closeHomeCfg}>

@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, X, ArrowDownAZ, Filter } from "lucide-react";
 import type { ConnectionItem } from "./vite-env";
+import { t } from "./i18n";
 
 function formatBytes(n = 0) {
   if (n < 1024) return `${n} B`;
@@ -66,13 +67,13 @@ function ConnectionsPage({
   return (
     <div className="pane conn-page">
       <div className="block-hd" style={{ marginBottom: 12 }}>
-        <h2>连接</h2>
+        <h2>{t("conn.title")}</h2>
         <span className="pill dim">
           {filtered.length}/{items.length} · ↑{formatBytes(totals.up)} ↓{formatBytes(totals.down)}
         </span>
         <div className="s-actions" style={{ marginLeft: "auto" }}>
           <button type="button" className="btn ghost btn-sm" onClick={() => reload()}>
-            <RefreshCw size={13} /> 刷新
+            <RefreshCw size={13} /> {t("conn.refresh")}
           </button>
           <button
             type="button"
@@ -82,43 +83,43 @@ function ConnectionsPage({
               setBusy(true);
               try {
                 await window.veyra?.closeAllConnections();
-                onToast("已断开全部连接");
+                onToast(t("conn.closeAllDone"));
                 await reload();
               } finally {
                 setBusy(false);
               }
             }}
           >
-            全部断开
+            {t("conn.closeAll")}
           </button>
         </div>
       </div>
 
       <div className="import-bar" style={{ marginBottom: 12 }}>
         <Filter size={15} />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="筛选主机 / 进程 / 链路…" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("conn.filter")} />
         <select className="s-input" style={{ width: 140 }} value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
-          <option value="download">按下载</option>
-          <option value="upload">按上传</option>
-          <option value="host">按主机</option>
-          <option value="chain">按链路</option>
+          <option value="download">{t("conn.sortDownload")}</option>
+          <option value="upload">{t("conn.sortUpload")}</option>
+          <option value="host">{t("conn.sortHost")}</option>
+          <option value="chain">{t("conn.sortChain")}</option>
         </select>
         <ArrowDownAZ size={14} />
       </div>
 
       {!filtered.length ? (
-        <div className="empty">暂无连接</div>
+        <div className="empty center">{t("conn.empty")}</div>
       ) : (
         <div className="conn-table-wrap">
           <table className="conn-table">
             <thead>
               <tr>
-                <th>主机</th>
-                <th>进程</th>
-                <th>链路</th>
-                <th>规则</th>
-                <th>↑</th>
-                <th>↓</th>
+                <th>{t("conn.colHost")}</th>
+                <th>{t("conn.colProcess")}</th>
+                <th>{t("conn.colChain")}</th>
+                <th>{t("conn.colRule")}</th>
+                <th>{t("conn.colUp")}</th>
+                <th>{t("conn.colDown")}</th>
                 <th />
               </tr>
             </thead>
@@ -138,7 +139,7 @@ function ConnectionsPage({
                     <button
                       type="button"
                       className="btn ghost btn-sm"
-                      title="断开"
+                      title={t("conn.disconnect")}
                       onClick={async () => {
                         await window.veyra?.closeConnection?.(c.id);
                         await reload();

@@ -1,10 +1,10 @@
-appId: com.veyra.proxy
-productName: Veyra
-copyright: Copyright © Veyra
+appId: com.veyra.omini
+productName: Veyra-omini
+copyright: Copyright © Veyra-omini
 
 directories:
   # 输出到工作区之外：工作区内的构建产物会被文件监视占用，导致下次打包无法清理旧目录
-  output: D:/Veyra
+  output: D:/Veyra-omini
   buildResources: resources/icons
 
 files:
@@ -51,7 +51,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Veyra
+  shortcutName: Veyra-omini
   installerIcon: resources/icons/icon.ico
   uninstallerIcon: resources/icons/icon.ico
   installerHeaderIcon: resources/icons/icon.ico

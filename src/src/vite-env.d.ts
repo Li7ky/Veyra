@@ -51,6 +51,7 @@ export interface AppSettings {
   proxyGuard?: boolean;
   disconnectOnProxyOff?: boolean;
   blockConflict?: boolean;
+  registerIdentity?: boolean;
   bindAddress?: string;
   tunEnable?: boolean;
   tunStack?: string;
@@ -142,6 +143,8 @@ export interface ConnectionItem {
 export interface VeyraAPI {
   minimize: () => Promise<void>;
   maximize: () => Promise<void>;
+  isMaximized: () => Promise<boolean>;
+  onMaximizedChange: (cb: (maximized: boolean) => void) => () => void;
   close: () => Promise<void>;
   startCore: () => Promise<unknown>;
   stopCore: () => Promise<unknown>;
@@ -276,6 +279,13 @@ export interface VeyraAPI {
   webdavDownload?: () => Promise<unknown>;
   exitIp?: () => Promise<{ ip: string | null; country?: string; city?: string; isp?: string }>;
   detectProxyConflict?: () => Promise<string[]>;
+  fullConflictScan?: () => Promise<{ conflicts: Array<{ type: string; label: string; port?: number; proc?: string; family?: string }>; summary: string }>;
+  /** 端口可用性自检：直接尝试绑定本机配置的端口 */
+  checkPorts?: () => Promise<{ mixedPort: number; controllerPort: number; mixedFree: boolean; ctrlFree: boolean }>;
+  startConflictMonitor?: (on: boolean) => Promise<{ ok: boolean }>;
+  getSelfIdentity?: () => Promise<{ app: string; version: string; pid: number; mixedPort: number | null; controllerPort: string | null; coreMode: string; startedAt: string; session: string } | null>;
+  onConflictDetected?: (cb: (data: { items: string[]; at: string }) => void) => () => void;
+  onConflictResolved?: (cb: (data: { at: string }) => void) => () => void;
   streamingUnlock?: () => Promise<
     { id: string; title?: string; ok: boolean; fail?: boolean; region?: string | null; status: number; note: string; testedAt?: number }[]
   >;

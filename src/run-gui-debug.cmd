@@ -18,16 +18,28 @@ if not exist "node_modules\electron\dist\electron.exe" (
   exit /b 1
 )
 
-rem 检查 Vite 开发服务器
-netstat -ano | findstr /c:"127.0.0.1:5173" | findstr /i LISTENING >nul 2>&1
-if errorlevel 1 (
-  echo [Veyra] 5173 未监听，正在启动 Vite 开发服务器 ...
-  start "veyra-vite" /min cmd /c "npx vite"
-  echo [Veyra] 等待 Vite 就绪 ...
-  timeout /t 5 /nobreak >nul
-) else (
-  echo [Veyra] Vite 已在 5173 运行，跳过启动。
+rem 始终启动全新 Vite：复用旧服务器会带着被污染的依赖优化/转换缓存，
+rem 表现为「窗口能开但界面空白」（模块服务为空，默认导出丢失）。
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /c:"127.0.0.1:5173" ^| findstr /i LISTENING 2^>nul') do (
+  echo [Veyra] 关闭残留的 Vite 服务器 ^(PID %%p^) ...
+  taskkill /f /pid %%p >nul 2>&1
 )
+
+echo [Veyra] 正在启动 Vite 开发服务器 ...
+start "veyra-vite" /min cmd /c "npx vite"
+
+rem 等待 Vite 真正响应，而不是盲等固定秒数
+set /a _tries=0
+:waitvite
+curl -s -o nul http://127.0.0.1:5173/ >nul 2>&1
+if not errorlevel 1 goto viteok
+set /a _tries+=1
+if %_tries% geq 20 goto vitetimeout
+timeout /t 1 /nobreak >nul
+goto waitvite
+:vitetimeout
+echo [Veyra] 警告: Vite 未在 127.0.0.1:5173 响应，仍然尝试启动 ...
+:viteok
 
 echo.
 echo [Veyra] 前台启动 Electron，请留意下方输出 ...

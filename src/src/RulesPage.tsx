@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { Plus, Save, Trash2, RefreshCw } from "lucide-react";
+import { t } from "./i18n";
 
 type RuleRow = { payload: string; type?: string };
 
@@ -117,11 +118,11 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
   return (
     <div className="pane rules-page">
       <div className="block-hd" style={{ marginBottom: 12 }}>
-        <h2>规则</h2>
+        <h2>{t("rule.title")}</h2>
         <span className="pill dim">{rows.length} 条</span>
         <div className="s-actions" style={{ marginLeft: "auto" }}>
           <button type="button" className="btn ghost btn-sm" onClick={() => reload()}>
-            <RefreshCw size={13} /> 刷新
+            <RefreshCw size={13} /> {t("rule.refresh")}
           </button>
           <button
             type="button"
@@ -130,7 +131,7 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
               onBusy(true);
               try {
                 await window.veyra?.saveVisualRules?.(rows.map((r) => r.payload));
-                onToast("规则已保存并增强应用");
+                onToast(t("rule.saved"));
                 await reload();
               } catch (e) {
                 onToast(String((e as Error).message || e));
@@ -139,44 +140,44 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
               }
             }}
           >
-            <Save size={13} /> 保存并应用
+            <Save size={13} /> {t("rule.saveApply")}
           </button>
         </div>
       </div>
 
       <p className="s-muted" style={{ marginBottom: 12 }}>
-        可视化编辑规则列表（保存为全局规则增强）。格式：TYPE,payload,POLICY — 如 DOMAIN-SUFFIX,google.com,PROXY
+        {t("rule.desc")}
       </p>
 
       <div className="import-bar" style={{ marginBottom: 12 }}>
-        <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="DOMAIN-SUFFIX,example.com,DIRECT" />
+        <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={t("rule.placeholder")} />
         <button
           type="button"
           className="btn primary btn-sm"
           onClick={() => {
-            const t = draft.trim();
-            if (!t) return;
-            setRows((prev) => [{ payload: t }, ...prev]);
+            const tr = draft.trim();
+            if (!tr) return;
+            setRows((prev) => [{ payload: tr }, ...prev]);
             setDraft("");
           }}
         >
-          <Plus size={13} /> 添加
+          <Plus size={13} /> {t("rule.add")}
         </button>
       </div>
 
       <div className="import-bar" style={{ marginBottom: 12, background: "var(--hover)", padding: 10, borderRadius: 10 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>分应用：</span>
+        <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>{t("rule.processLabel")}</span>
         <input
           id="proc-name-input"
-          placeholder="进程名，如 chrome.exe"
+          placeholder={t("rule.processPlaceholder")}
           style={{ flex: 1 }}
           onKeyDown={(e) => {
             if (e.key === "Enter") (document.getElementById("proc-add-btn") as HTMLButtonElement)?.click();
           }}
         />
         <select id="proc-policy-select" className="s-input" style={{ width: 90 }}>
-          <option value="PROXY">走代理</option>
-          <option value="DIRECT">直连</option>
+          <option value="PROXY">{t("rule.processProxy")}</option>
+          <option value="DIRECT">{t("rule.processDirect")}</option>
         </select>
         <button
           id="proc-add-btn"
@@ -187,27 +188,27 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
             const policySelect = document.getElementById("proc-policy-select") as HTMLSelectElement;
             const name = nameInput?.value.trim();
             if (!name) {
-              onToast("请输入进程名");
+              onToast(t("rule.processNameRequired"));
               return;
             }
             const rule = `PROCESS-NAME,${name},${policySelect?.value || "PROXY"}`;
             setRows((prev) => {
               if (prev.some((r) => r.payload === rule)) {
-                onToast("该规则已存在");
+                onToast(t("rule.alreadyExists"));
                 return prev;
               }
               return [{ payload: rule }, ...prev];
             });
             nameInput.value = "";
-            onToast(`已添加：${rule}`);
+            onToast(t("rule.ruleAdded").replace("{rule}", rule));
           }}
         >
-          <Plus size={13} /> 添加应用规则
+          <Plus size={13} /> {t("rule.addAppRule")}
         </button>
       </div>
 
       {!rows.length ? (
-        <div className="empty">暂无规则 — 导入订阅后会出现，或手动添加</div>
+        <div className="empty">{t("rule.empty")}</div>
       ) : (
         <div
           className="pf-list"

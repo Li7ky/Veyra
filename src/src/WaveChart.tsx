@@ -45,17 +45,17 @@ function WaveChart({ up, down }: Props) {
     <svg className="wave-chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden>
       <defs>
         <linearGradient id={`${gid}-dn`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#2c71e8" stopOpacity="0.38" />
-          <stop offset="100%" stopColor="#2c71e8" stopOpacity="0.03" />
+          <stop offset="0%" stopColor="var(--blue-500)" stopOpacity="0.38" />
+          <stop offset="100%" stopColor="var(--blue-500)" stopOpacity="0.03" />
         </linearGradient>
         <linearGradient id={`${gid}-up`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#14b8a6" stopOpacity="0.32" />
-          <stop offset="100%" stopColor="#14b8a6" stopOpacity="0.03" />
+          <stop offset="0%" stopColor="var(--emerald-500)" stopOpacity="0.32" />
+          <stop offset="100%" stopColor="var(--emerald-500)" stopOpacity="0.03" />
         </linearGradient>
         <linearGradient id={`${gid}-dn-line`} x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor="#2c71e8" stopOpacity="0.55" />
-          <stop offset="60%" stopColor="#7c3aed" />
-          <stop offset="100%" stopColor="#0ea5e9" />
+          <stop offset="0%" stopColor="var(--blue-500)" stopOpacity="0.55" />
+          <stop offset="60%" stopColor="var(--purple-500)" />
+          <stop offset="100%" stopColor="var(--cyan-500)" />
         </linearGradient>
       </defs>
       {[0.25, 0.5, 0.75].map((f) => (
@@ -74,8 +74,8 @@ function WaveChart({ up, down }: Props) {
       <path d={dn.area} fill={`url(#${gid}-dn)`} />
       <path d={u.area} fill={`url(#${gid}-up)`} />
       <path d={dn.line} fill="none" stroke={`url(#${gid}-dn-line)`} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-      <path d={u.line} fill="none" stroke="#22c55e" strokeOpacity="0.85" strokeWidth="1.8" strokeDasharray="1 0" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-      <circle cx={dn.tip.x} cy={dn.tip.y} r="4.5" fill="#6366f1" stroke="#fff" strokeWidth="2" />
+      <path d={u.line} fill="none" stroke="var(--green-400)" strokeOpacity="0.85" strokeWidth="1.8" strokeDasharray="1 0" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      <circle cx={dn.tip.x} cy={dn.tip.y} r="4.5" fill="var(--indigo-500)" stroke="#fff" strokeWidth="2" />
     </svg>
   );
 }

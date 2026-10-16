@@ -17,6 +17,7 @@ import {
   CalendarClock,
   Check,
   Clock,
+  Copy,
   Cpu,
   Database,
   Globe,
@@ -37,6 +38,7 @@ import {
   Server,
   ShieldCheck,
   SlidersHorizontal,
+  Square,
   Terminal,
   X,
   Zap,
@@ -80,8 +82,10 @@ import Sparkline from "./Sparkline";
 // 只有用户首次切到「YAML」子标签时才加载编辑器 chunk。
 const YamlEditor = lazy(() => import("./YamlEditor"));
 import { ProxiesVisualEditor, GroupsVisualEditor } from "./VisualEditors";
+import ConnectOrb from "./ConnectOrb";
+import ConfirmDialog, { useFocusTrap, type ConfirmRequest } from "./ConfirmDialog";
 import { applyTheme, type ThemeMode } from "./theme";
-import { setLocale, t } from "./i18n";
+import { getLocale, setLocale, t } from "./i18n";
 
 type Tab = "home" | "proxies" | "profiles" | "connections" | "rules" | "logs" | "tests" | "settings";
 type EnhanceKind = "merge" | "script" | "rules" | "proxies" | "groups";
@@ -116,6 +120,23 @@ function formatRate(bps: number) {
   return `${(bps / 1024 ** 2).toFixed(2)} MB/s`;
 }
 
+// v12：侧栏窄轨道专用紧凑速率——3 位有效数字 + B/K/M/G 后缀，最长 5 字符
+// （"99.9K"/"1023B"），保证 46px 双列布局下永不截断；完整格式见 formatRate（title 提示）。
+function formatRateShort(bps: number) {
+  const v = Math.max(0, bps);
+  if (v < 1024) return `${Math.round(v)}B`;
+  if (v < 1024 ** 2) {
+    const k = v / 1024;
+    return k < 100 ? `${k.toFixed(1)}K` : `${Math.round(k)}K`;
+  }
+  if (v < 1024 ** 3) {
+    const m = v / 1024 ** 2;
+    return m < 100 ? `${m.toFixed(1)}M` : `${Math.round(m)}M`;
+  }
+  const g = v / 1024 ** 3;
+  return g < 100 ? `${g.toFixed(1)}G` : `${Math.round(g)}G`;
+}
+
 function formatUptime(ms: number) {
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
@@ -124,13 +145,24 @@ function formatUptime(ms: number) {
   return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
+// v12：侧栏窄轨道专用时长——把 8 字符「12:34:56」压到 ≤5 字符
+// （<1h 显示 m:ss，≥1h 显示 12h34），保证状态行 98px 内不换行、不截断
+function formatUptimeRail(ms: number) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h${String(m).padStart(2, "0")}`;
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
 function relativeTime(ts?: number) {
   if (!ts) return "—";
   const diff = Date.now() - ts;
-  if (diff < 60000) return "刚刚";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`;
-  return `${Math.floor(diff / 86400000)} 天前`;
+  if (diff < 60000) return t("time.justNow");
+  if (diff < 3600000) return t("time.minutesAgo", "{n} min ago").replace("{n}", String(Math.floor(diff / 60000)));
+  if (diff < 86400000) return t("time.hoursAgo", "{n} hr ago").replace("{n}", String(Math.floor(diff / 3600000)));
+  return t("time.daysAgo", "{n} days ago").replace("{n}", String(Math.floor(diff / 86400000)));
 }
 
 function expiryText(ts?: number) {
@@ -152,7 +184,7 @@ function delayClass(d?: number) {
 
 function delayText(d?: number) {
   if (d == null) return "—";
-  if (d <= 0) return "超时";
+  if (d <= 0) return t("delay.timeout", "Timeout");
   return `${d}`;
 }
 
@@ -379,9 +411,9 @@ async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T, i: n
 }
 
 const MODE_LABEL: Record<string, string> = {
-  rule: "规则",
-  global: "全局",
-  direct: "直连",
+  rule: t("home.modeRule", "Rule"),
+  global: t("home.modeGlobal", "Global"),
+  direct: t("home.modeDirect", "Direct"),
 };
 
 // 首页信息小卡（区段 5-7 共用）。抽成常量避免三处重复内联样式，
@@ -556,6 +588,9 @@ export default function App() {
     }[]
   >([]);
   const [nodeSortMode, setNodeSortMode] = useState<"delay" | "name" | "default">("delay");
+const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list">(
+  (localStorage.getItem("veyra-node-density") as "comfortable" | "compact" | "list") || "comfortable"
+);
   // 首屏只渲染前 30 个节点，挂载完成后再补全：消除首页→代理切换的卡顿
   const [pxNodeLimit, setPxNodeLimit] = useState(PX_NODE_FIRST);
   const [enhanceLog, setEnhanceLog] = useState<string[]>([]);
@@ -614,9 +649,15 @@ export default function App() {
   });
   // 内存显示文本：抽出来避免 JSX 表达式内嵌模板字面量导致解析歧义。
   const memText = typeof coreMemMB === "number" ? coreMemMB + " MB" : "—";
+  // v12：侧栏趋势图带只在「运行且有流量」时画火花线（零流量两条平线会叠成深色横线）
+  const railHasTraffic =
+    rateHistory.down.some((v) => v > 0) || rateHistory.up.some((v) => v > 0);
   const [banner, setBanner] = useState("");
+  const [isMaximized, setIsMaximized] = useState(false);
   const [homeCfgOpen, setHomeCfgOpen] = useState(false);
   const [homeCfgDraft, setHomeCfgDraft] = useState(homeCards);
+  // 危险操作（清理日志等）统一走二次确认弹窗
+  const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
   // 首页系统信息卡的真实数据（此前版本硬编码「未启用 / v1.1 / Windows 10/11」）
   const [appVersion, setAppVersion] = useState("");
   const [platformLabel, setPlatformLabel] = useState("Windows");
@@ -625,7 +666,8 @@ export default function App() {
 
   // 首页设置弹窗：关闭时统一走 closeHomeCfg，保证焦点一定回到入口按钮
   const homeCfgTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const homeCfgBoxRef = useRef<HTMLDivElement | null>(null);
+  // 焦点圈闭：Tab 不再逃到遮罩后的背景页面（Esc/关闭逻辑见下方 effect）
+  const homeCfgBoxRef = useFocusTrap<HTMLDivElement>(homeCfgOpen);
   const closeHomeCfg = useCallback(() => {
     setHomeCfgOpen(false);
     // 关闭后焦点回到入口按钮；延迟一帧，等遮罩真正卸载再 focus
@@ -686,6 +728,24 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [homeCfgOpen]);
+
+  // 窗口最大化状态：标题栏「最大化/还原」按钮的图标切换
+  useEffect(() => {
+    if (!window.veyra) return;
+    let alive = true;
+    void window.veyra
+      .isMaximized?.()
+      .then((v) => {
+        if (alive) setIsMaximized(!!v);
+      })
+      .catch(() => {});
+    const off = window.veyra.onMaximizedChange?.((v) => setIsMaximized(!!v));
+    return () => {
+      alive = false;
+      off?.();
+    };
+  }, []);
+
   useEffect(() => {
     const t = window.setTimeout(() => setBootReady(true), 1600);
     return () => window.clearTimeout(t);
@@ -886,17 +946,29 @@ export default function App() {
 
   useEffect(() => {
     if (!window.veyra) return;
-    // 启动时检测其他代理软件冲突
+    // 启动时检测其他代理软件冲突（完整扫描：含系统代理/DNS）
     window.veyra
-      .detectProxyConflict?.()
-      .then((conflicts) => {
-        if (conflicts?.length) {
+      .fullConflictScan?.()
+      .then((res) => {
+        if (res?.conflicts?.length) {
           setBanner(
-            `检测到其他代理软件可能正在运行：${conflicts.join("、")}。建议一次只运行一个代理软件，避免端口冲突。`
+            `检测到其他代理软件可能正在运行：${res.conflicts.map((c) => c.label).join("、")}。建议一次只运行一个代理软件，避免端口冲突。`
           );
         }
       })
       .catch(() => {});
+    // 订阅运行时冲突事件：其他代理软件在 Veyra-omini 运行期间启动
+    let conflictToastTimer: ReturnType<typeof setTimeout> | null = null;
+    const offConflict = window.veyra.onConflictDetected?.(({ items }) => {
+      if (conflictToastTimer) return; // 节流避免重复通知
+      setBanner(
+        `⚠ 检测到其他代理软件启动：${items.join("、")}。可能与 Veyra-omini 冲突，建议关闭其中一个。`
+      );
+      conflictToastTimer = setTimeout(() => { conflictToastTimer = null; }, 12000);
+    });
+    const offResolved = window.veyra.onConflictResolved?.(() => {
+      setBanner((prev) => (prev.includes("检测到其他代理软件启动") ? "" : prev));
+    });
     const off1 = window.veyra.onCoreStatus((d) => {
       applyStatus(d as { running?: boolean; seq?: number; version?: { version?: string } });
     });
@@ -1011,6 +1083,9 @@ export default function App() {
       off3();
       off4?.();
       off5?.();
+      offConflict?.();
+      offResolved?.();
+      if (conflictToastTimer) window.clearTimeout(conflictToastTimer);
       window.clearInterval(t);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVis);
@@ -1089,7 +1164,7 @@ export default function App() {
   const hasSubscription = groups.length > 0 || profiles.length > 0 || subs.length > 0;
   const totalTraffic = upload + download;
   const statusKey = !running ? "off" : running && sysProxy ? "on" : "idle";
-  const statusLabel = !running ? "已停止" : running && sysProxy ? "生效中" : "内核运行中";
+  const statusLabel = !running ? t("home.statusOff", "Stopped") : running && sysProxy ? t("home.statusOn", "Proxy active") : t("home.statusIdle", "Core running");
 
   const runSpeedTest = useCallback(
     async (opts?: { silent?: boolean; pickBest?: boolean; only?: string[] }) => {
@@ -1577,7 +1652,7 @@ export default function App() {
       <div className="app boot-splash">
         <div className="container">
           <header className="header">
-            <div className="logo">Veyra</div>
+            <div className="logo">Veyra-omini</div>
           </header>
           <div className="boot-skeleton">
             <div className="sk sk-bar w30" />
@@ -1619,7 +1694,7 @@ export default function App() {
               <polyline points="2 15.5 12 8.5 22 15.5" />
               <line x1="12" y1="2" x2="12" y2="8.5" />
             </svg>
-            <span className="brand-text">VEYRA PROXY</span>
+            <span className="brand-text">Veyra-omini</span>
             {/* 用真实应用版本；之前硬编码 v1.1.2，升级后会与设置页显示的版本矛盾 */}
             <span className="brand-ver">{appVersion ? `v${appVersion.replace(/^v/, "")}` : "—"}</span>
           </div>
@@ -1638,7 +1713,7 @@ export default function App() {
               </svg>
               <input
                 type="text"
-                placeholder="搜索节点..."
+                placeholder={t("nav.searchPlaceholder", "Search nodes...")}
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value);
@@ -1653,16 +1728,25 @@ export default function App() {
               <button
                 type="button"
                 className={`icon-btn${showRail ? " on" : ""}`}
-                title={showRail ? "收起右侧信息栏" : "展开右侧信息栏"}
+                title={showRail ? t("nav.collapseRail", "Collapse sidebar") : t("nav.expandRail", "Expand sidebar")}
                 aria-pressed={showRail}
                 onClick={() => setRailOverride(!showRail)}
               >
                 <PanelRight size={18} />
               </button>
-              <button type="button" className="icon-btn" onClick={() => window.veyra?.minimize()} aria-label="最小化" title="最小化">
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => window.veyra?.maximize()}
+                aria-label={isMaximized ? "还原窗口" : "最大化"}
+                title={isMaximized ? "还原窗口" : "最大化"}
+              >
+                {isMaximized ? <Copy size={17} /> : <Square size={16} />}
+              </button>
+              <button type="button" className="icon-btn" onClick={() => window.veyra?.minimize()} aria-label={t("nav.minimize", "Minimize")} title={t("nav.minimize", "Minimize")}>
                 <Minus size={18} />
               </button>
-              <button type="button" className="icon-btn" onClick={() => window.veyra?.close()} aria-label="关闭窗口" title="关闭窗口">
+              <button type="button" className="icon-btn" onClick={() => window.veyra?.close()} aria-label={t("nav.close", "Close")} title={t("nav.close", "Close")}>
                 <X size={18} />
               </button>
             </div>
@@ -1670,28 +1754,23 @@ export default function App() {
         </header>
 
         {banner ? (
-          <div
-            className="card"
-            style={{
-              marginBottom: 8,
-              borderColor: "color-mix(in srgb, var(--bad) 50%, transparent)",
-              background: "color-mix(in srgb, var(--bad) 10%, transparent)",
-              padding: "10px 16px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <span style={{ color: "var(--red-400)", fontSize: 13 }}>{banner}</span>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBanner("")}>
-              关闭
+          <div className="app-banner" role="alert">
+            <span className="app-banner-msg">{banner}</span>
+            <button
+              type="button"
+              className="app-banner-close"
+              onClick={() => setBanner("")}
+              aria-label={t("common.close", "关闭")}
+            >
+              <X size={13} />
+              {t("common.close", "关闭")}
             </button>
           </div>
         ) : null}
 
         {/* 三栏骨架：侧栏 + 主区 + 右栏（可收起） */}
-        {/* rail-compact：仅首页使用。首页无宽内容（全是自适应卡片），
-            允许在 1320px 以下的窄窗口仍保留右栏；连接/规则等宽表格页不受此影响。 */}
+        {/* rail-compact：仅首页使用，调整栅格宽度（156px 侧栏 + 右栏可见）。
+            状态面板（rail-status-panel）在所有 Tab 统一为横向单行布局，不依赖此 class。 */}
         <div
           className={`grid-12${showRail ? "" : " no-rail"}${
             showRail && tab === "home" ? " rail-compact" : ""
@@ -1707,6 +1786,7 @@ export default function App() {
                       key={id}
                       type="button"
                       className={`nav-item ${tab === id ? "active" : ""}`}
+                      aria-current={tab === id ? "page" : undefined}
                       onClick={() => goTab(id)}
                     >
                       <Icon />
@@ -1719,69 +1799,33 @@ export default function App() {
                     </button>
                   ))}
                 </nav>
-                <section className="rail-status-panel" aria-label="系统状态">
-                  <div className="rail-status-head">
-                    <div>
-                      <div className="nav-section-title">系统状态</div>
-                      <div className="rail-status-summary">{running ? "代理服务在线" : "代理服务已停止"}</div>
-                    </div>
-                    <span className={`rail-status-mark${running ? " on" : ""}`} aria-hidden="true">
-                      <i />
-                    </span>
+                <section className="rail-status-panel" aria-label={t("nav.sysStatus", "System status")}>
+                  <div className="nav-section-title">{t("nav.sysStatus", "System status")}</div>
+                  {/* v8：状态行——绿点 + 状态粗字 + 时长右对齐 */}
+                  <div className="rail-state">
+                    <span className={`rail-status-dot${running ? " on" : ""}`} aria-hidden="true" />
+                    <b>{running ? t("status.heroRunning", "运行中") : t("status.heroStopped", "已停止")}</b>
+                    <small>{running && coreStartTime ? formatUptimeRail(Date.now() - coreStartTime) : "—"}</small>
                   </div>
-                  <div className="rail-status-grid">
-                    <div className={`rail-status-item${running ? " on" : ""}`}>
-                      <Cpu size={14} />
-                      <span className="rail-status-label">内核</span>
-                      <strong>{running ? "运行" : "停止"}</strong>
+                  {/* P1 去重：速率双卡与趋势图带删除（主区 KPI 卡已有更大更全的速率+曲线），
+                      左栏回归「导航附属」——只保留运行状态 + 代理/连接/内存 */}
+                  <div className="rail-facts">
+                    <div className="rail-fact">
+                      <span>{t("nav.proxy", "代理")}</span>
+                      <strong className={sysProxy ? "on" : ""}>
+                        {sysProxy ? t("nav.on", "开启") : t("nav.off", "关闭")}
+                      </strong>
                     </div>
-                    <div className={`rail-status-item${sysProxy ? " on" : ""}`}>
-                      <Network size={14} />
-                      <span className="rail-status-label">代理</span>
-                      <strong>{sysProxy ? "开启" : "关闭"}</strong>
+                    <div className="rail-fact">
+                      <span>{t("nav.connections", "连接")}</span>
+                      <strong className={connCount > 0 ? "on" : ""}>{connCount}</strong>
                     </div>
-                    <div className={`rail-status-item${connCount > 0 ? " on" : ""}`}>
-                      <Cable size={14} />
-                      <span className="rail-status-label">连接</span>
-                      <strong>{connCount}</strong>
+                    <div className="rail-fact">
+                      <span>{t("nav.memory", "内存")}</span>
+                      <strong>{memText}</strong>
                     </div>
                   </div>
                 </section>
-
-                {/* 底部实时监控：填掉原先的空白区。所有值均为真实数据——
-                     速率曲线取自全局累积的 rateHistory，内存来自 core:status 的 coreMemoryMB。
-                     运行时始终显示速率条（含 0 B/s 基线），停止时显示「服务未运行」。 */}
-                <div className="rail-monitor">
-                  <div className="rail-monitor-title">实时速率</div>
-                  {running ? (
-                    <div className="rail-monitor-bands">
-                      <div className="rail-monitor-band">
-                        <span className="rail-monitor-band-label">↓</span>
-                        <span className="rail-monitor-band-val down">{formatRate(downRate)}</span>
-                        <Sparkline data={rateHistory.down} color="var(--accent)" width={120} height={18} />
-                      </div>
-                      <div className="rail-monitor-band">
-                        <span className="rail-monitor-band-label">↑</span>
-                        <span className="rail-monitor-band-val up">{formatRate(upRate)}</span>
-                        <Sparkline data={rateHistory.up} color="#f59e0b" width={120} height={18} />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rail-monitor-idle">服务未运行</div>
-                  )}
-                  <div className="rail-monitor-meta">
-                    <div className="rail-monitor-cell">
-                      <div className="rail-monitor-label">内存</div>
-                      <div className="rail-monitor-num">{memText}</div>
-                    </div>
-                    <div className="rail-monitor-cell">
-                      <div className="rail-monitor-label">运行</div>
-                      <div className="rail-monitor-num">
-                        {running && coreStartTime ? formatUptime(Date.now() - coreStartTime) : "—"}
-                      </div>
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
           </div>
@@ -1789,18 +1833,29 @@ export default function App() {
           {/* Main Content */}
           <div className="col-main">
             <main className="stage">
-              {tab === "home" && (
-                <div className="pane home" hidden={tab !== "home"}>
-                  {/* 区段 1: KPI + 核心状态 */}
+              <div className="pane home" hidden={tab !== "home"}>
+                  {/* HERO · 核心连接球 — 视觉锚点 */}
+                  <ConnectOrb
+                    running={running}
+                    sysProxy={sysProxy}
+                    busy={busy}
+                    mixedPort={mixedPort}
+                    nodeName={currentNode}
+                    onToggleProxy={toggleSysProxy}
+                    onNodeClick={() => {
+                      // P2：一键去代理页切节点，并选中当前节点所在分组
+                      setTab("proxies");
+                      const g = groups.find((x) => x.all?.includes(currentNode));
+                      if (g?.name) setSelectedGroup(g.name);
+                    }}
+                  />
+
+                  {/* 区段 1: KPI — 降级为次要信息 */}
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div
-                        style={{ fontSize: 18, fontWeight: 600, color: "var(--text-100)", marginBottom: 4 }}
+                        style={{ fontSize: 13, color: "var(--text-400)", marginBottom: 6 }}
                       >
-                        Veyra ·{" "}
-                        {running ? t("home.connected", "网络畅通") : t("home.disconnected", "服务已停止")}
-                      </div>
-                      <div style={{ fontSize: 13, color: "var(--text-400)", marginBottom: 6 }}>
                         {MODE_LABEL[mode] || mode} · {nodes.length} {t("home.nodesAvailable", "节点可用")} ·{" "}
                         {formatRate(downRate)} ↓
                       </div>
@@ -1829,7 +1884,7 @@ export default function App() {
                             style={{
                               fontSize: 16,
                               fontWeight: 600,
-                              color: "#10b981",
+                              color: "var(--green-500)",
                               fontFamily: "var(--font-mono)",
                             }}
                           >
@@ -1860,7 +1915,7 @@ export default function App() {
                             style={{
                               fontSize: 16,
                               fontWeight: 600,
-                              color: "#2c71e8",
+                              color: "var(--blue-500)",
                               fontFamily: "var(--font-mono)",
                             }}
                           >
@@ -1944,7 +1999,7 @@ export default function App() {
                           color: "var(--text-500)",
                         }}
                       >
-                        {running ? "正在采集流量数据…" : "服务未运行"}
+                        {running ? t("home.collectingTraffic", "Collecting traffic data…") : t("nav.serviceNotRunning", "Service not running")}
                       </div>
                     )}
                   </div>
@@ -2030,76 +2085,10 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* 区段 4: 内核信息 */}
+                  {/* 区段 4: 内核信息——「内核 / 运行时长」两块与右栏 mini 卡完全重复
+                     （还差 1 秒显得像 bug），P1 去重后只保留右栏没有的「规则数量」 */}
                   {homeCards.core && (
                     <div style={{ display: "flex", gap: 10 }}>
-                      <div
-                        style={{
-                          flex: 1,
-                          padding: "12px 14px",
-                          background: "var(--card-solid)",
-                          borderRadius: 11,
-                          border: "0.5px solid var(--card-border)",
-                          boxShadow: "var(--shadow-sm)",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 10,
-                            color: "var(--text-500)",
-                            fontWeight: 500,
-                            letterSpacing: "0.04em",
-                            marginBottom: 4,
-                          }}
-                        >
-                          {t("home.kernel", "内核")}
-                        </div>
-                        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-100)" }}>
-                          {activeCore === "singbox" ? "sing-box" : "mihomo"}
-                        </div>
-                        <div style={{ fontSize: 11, color: "var(--ok)", marginTop: 3 }}>
-                          {/* 没有做版本检查，就不要断言「已是最新」——之前无条件显示，
-                              与旁边读到的版本号自相矛盾。改为显示真实内核版本（version 由 applyStatus 写入）。 */}
-                          {version && version !== "-"
-                            ? `v${version.replace(/^v/, "")}`
-                            : t("home.versionUnknown", "版本未知")}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          flex: 1,
-                          padding: "12px 14px",
-                          background: "var(--card-solid)",
-                          borderRadius: 11,
-                          border: "0.5px solid var(--card-border)",
-                          boxShadow: "var(--shadow-sm)",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 10,
-                            color: "var(--text-500)",
-                            fontWeight: 500,
-                            letterSpacing: "0.04em",
-                            marginBottom: 4,
-                          }}
-                        >
-                          {t("home.uptime", "运行时长")}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 14,
-                            fontWeight: 600,
-                            color: "var(--text-100)",
-                            fontFamily: "var(--font-mono)",
-                          }}
-                        >
-                          {running && coreStartTime ? formatUptime(Date.now() - coreStartTime) : "—"}
-                        </div>
-                        <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
-                          {t("home.stable", "无重启 · 稳定")}
-                        </div>
-                      </div>
                       <div
                         style={{
                           flex: 1,
@@ -2174,7 +2163,7 @@ export default function App() {
                             {currentNodeInfo.delay != null ? `${currentNodeInfo.delay} ms` : "—"}
                           </div>
                           <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
-                            {t("home.nodesAvailable", "可用节点")} {nodes.length}
+                            {t("home.availableNodes")} {nodes.length}
                           </div>
                         </div>
                       </div>
@@ -2265,10 +2254,8 @@ export default function App() {
                     </div>
                   )}
                 </div>
-              )}
 
-              {tab === "proxies" && (
-                <div className="pane px" hidden={tab !== "proxies"}>
+              <div className="pane px" hidden={tab !== "proxies"}>
                   <div className="px-header-card">
                     <div className="px-tabs">
                       {groups.length ? (
@@ -2290,21 +2277,23 @@ export default function App() {
                           </button>
                         ))
                       ) : (
-                        <div className="empty slim">暂无代理组 — 请先到订阅页导入配置</div>
+                        <div className="empty slim">{t("proxies.noGroups", "No proxy groups — import a profile in the Profiles tab")}</div>
                       )}
                     </div>
 
                     <div className="px-toolbar">
                       <div className="px-meta">
                         <span className="meta-dot" />
-                        {nodes.length} 个节点
-                        {lastTestAt > 0 ? ` · 上次测速 ${new Date(lastTestAt).toLocaleTimeString()}` : " · 手动测速"}
+                        {t("proxies.nodeCount", "{n} nodes").replace("{n}", String(nodes.length))}
+                        {lastTestAt > 0
+                          ? ` · ${t("proxies.lastTest", "Last test")} ${new Date(lastTestAt).toLocaleTimeString()}`
+                          : ` · ${t("proxies.manualTest", "Manual test")}`}
                       </div>
                       <div className="px-tools">
                         <label className="proxies-search">
                           <Search size={15} />
                           <input
-                            placeholder="搜索节点"
+                            placeholder={t("proxies.searchNode", "Search node")}
                             value={query}
                             onChange={(e) => setQuery(e.target.value)}
                           />
@@ -2321,7 +2310,7 @@ export default function App() {
                               if (v) void runSpeedTest({ silent: false, pickBest: true });
                             }}
                           />
-                          选用最低
+                          {t("proxies.pickLowest", "Pick lowest")}
                         </label>
                         <button
                           type="button"
@@ -2330,8 +2319,43 @@ export default function App() {
                           disabled={!running || testing || !nodes.length}
                         >
                           <Zap size={15} />
-                          {testing ? `${testProgress}%` : "一键测速"}
+                          {testing ? `${testProgress}%` : t("proxies.testAll", "Test all")}
                         </button>
+
+                        {/* 节点密度切换：舒适/紧凑/列表 */}
+                        <div
+                          className="seg node-density"
+                          role="group"
+                          aria-label="Node density"
+                        >
+                          <button
+                            type="button"
+                            className={nodeDensity === "comfortable" ? "active" : ""}
+                            onClick={() => { setNodeDensity("comfortable"); localStorage.setItem("veyra-node-density", "comfortable"); }}
+                            title="舒适布局"
+                          >
+                            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="0.5" y="0.5" width="5" height="5" rx="1" stroke="currentColor"/><rect x="7.5" y="0.5" width="5" height="5" rx="1" stroke="currentColor"/><rect x="0.5" y="7.5" width="5" height="5" rx="1" stroke="currentColor"/><rect x="7.5" y="7.5" width="5" height="5" rx="1" stroke="currentColor"/></svg>
+                            舒适
+                          </button>
+                          <button
+                            type="button"
+                            className={nodeDensity === "compact" ? "active" : ""}
+                            onClick={() => { setNodeDensity("compact"); localStorage.setItem("veyra-node-density", "compact"); }}
+                            title="紧凑布局"
+                          >
+                            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="0.5" y="0.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="5" y="0.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="9.5" y="0.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="5" y="5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="9.5" y="5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="9.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="5" y="9.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="9.5" y="9.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/></svg>
+                            紧凑
+                          </button>
+                          <button
+                            type="button"
+                            className={nodeDensity === "list" ? "active" : ""}
+                            onClick={() => { setNodeDensity("list"); localStorage.setItem("veyra-node-density", "list"); }}
+                            title="列表布局"
+                          >
+                            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="0.5" y="1" width="12" height="2.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="5.25" width="12" height="2.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="9.5" width="12" height="2.5" rx="0.8" stroke="currentColor"/></svg>
+                            列表
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -2343,9 +2367,9 @@ export default function App() {
                   </div>
 
                   {!sortedNodes.length ? (
-                    <div className="empty">没有可显示的节点</div>
+                    <div className="empty">{t("proxies.noNodes", "No nodes to display")}</div>
                   ) : (
-                    <div className="px-grid">
+                    <div className={`px-grid density-${nodeDensity}`}>
                       {sortedNodes.slice(0, pxNodeLimit).map((n) => {
                         const d = delays[n];
                         const cls = delayClass(d);
@@ -2371,7 +2395,7 @@ export default function App() {
                               .filter(Boolean)
                               .join(" ")}
                             onClick={() => selectNode(n)}
-                            title={testingNode === n ? "正在测速…" : `切换到 ${n}`}
+                            title={testingNode === n ? t("proxies.testingNode", "Testing…") : `${t("proxies.switchTo", "Switch to")} ${n}`}
                           >
                             <span className="px-flag">
                               {flagSvg ? (
@@ -2399,8 +2423,8 @@ export default function App() {
                                 {ptype ? <em>{ptype}</em> : null}
                                 {info?.udp ? <i>UDP</i> : null}
                                 {info?.xudp ? <i>XUDP</i> : null}
-                                {isGroup ? <i>组</i> : null}
-                                {isSystemOutbound(n) ? <i>系统</i> : null}
+                                {isGroup ? <i>{t("proxies.groupTag", "Group")}</i> : null}
+                                {isSystemOutbound(n) ? <i>{t("proxies.systemTag", "System")}</i> : null}
                               </span>
                               {hist.length > 1 && (
                                 <span className="px-sparkline" aria-hidden="true">
@@ -2424,13 +2448,13 @@ export default function App() {
                               className={`px-card-delay ${cls}`}
                               title={(() => {
                                 const h = delayHistory[n];
-                                if (!h?.length) return "暂无历史延迟数据";
+                                if (!h?.length) return t("proxies.noDelayHistory", "No delay history");
                                 return h
                                   .slice(-5)
                                   .reverse()
                                   .map(
                                     (r) =>
-                                      `${new Date(r.t).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}: ${r.ms}ms`
+                                      `${new Date(r.t).toLocaleString(getLocale(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}: ${r.ms}ms`
                                   )
                                   .join("\n");
                               })()}
@@ -2443,15 +2467,13 @@ export default function App() {
                     </div>
                   )}
                 </div>
-              )}
 
-              {tab === "profiles" && (
-                <div className="pane pf" hidden={tab !== "profiles"} data-pf={pfTab}>
-                  <div className="pf-tabs" role="tablist" aria-label="订阅功能">
+              <div className="pane pf" hidden={tab !== "profiles"} data-pf={pfTab}>
+                  <div className="pf-tabs" role="tablist" aria-label={t("profiles.tabLabel", "Profile functions")}>
                     {([
-                      ["sub", "订阅"],
-                      ["enhance", "增强"],
-                      ["nodes", "节点编辑"],
+                      ["sub", t("profiles.tabSub", "Subscriptions")],
+                      ["enhance", t("profiles.tabEnhance", "Enhance")],
+                      ["nodes", t("profiles.tabNodes", "Node editor")],
                       ["yaml", "YAML"],
                     ] as const).map(([id, label]) => (
                       <button
@@ -2467,11 +2489,11 @@ export default function App() {
                     ))}
                   </div>
 
-                  {pfTab === "sub" ? (
-                    <>
+                  {(pfSeen.sub || pfTab === "sub") ? (
+                    <div className="pf-pane" hidden={pfTab !== "sub"}>
                       <section className="import-hero">
-                        <h3><Globe size={15} /> 导入订阅</h3>
-                        <p>粘贴 Clash / Meta 订阅链接，导入后自动增强并应用。</p>
+                        <h3><Globe size={15} /> {t("profiles.importSub", "Import subscription")}</h3>
+                        <p>{t("profiles.importDesc", "Paste a Clash/Meta subscription URL, import will auto-enhance and apply.")}</p>
                         <div className="import-bar">
                           <input
                             value={subUrl}
@@ -2480,7 +2502,7 @@ export default function App() {
                               if (e.key === "Enter") void importFromUrl();
                             }}
                             placeholder="https://example.com/clash subscription"
-                            aria-label="订阅链接"
+                            aria-label={t("profiles.subUrlLabel", "Subscription URL")}
                           />
                           <button
                             type="button"
@@ -2488,7 +2510,7 @@ export default function App() {
                             disabled={busy}
                             onClick={() => void importFromUrl()}
                           >
-                            导入
+                            {t("profiles.importBtn", "Import")}
                           </button>
                         </div>
                       </section>
@@ -2634,11 +2656,11 @@ export default function App() {
                       </div>
                     )}
                   </section>
-                    </>
+                    </div>
                   ) : null}
 
-                  {pfTab === "enhance" ? (
-                    <>
+                  {(pfSeen.enhance || pfTab === "enhance") ? (
+                    <div className="pf-pane" hidden={pfTab !== "enhance"}>
                       <section className="pf-card pf-enhance-tools">
                         <div className="pf-card-hd">
                           <h2><Layers3 size={15} /> 增强配置</h2>
@@ -2762,22 +2784,22 @@ export default function App() {
                       </pre>
                     </section>
                   ) : null}
-                    </>
+                    </div>
                   ) : null}
 
-                  {pfTab === "nodes" && pfSeen.nodes ? (
-                    <>
+                  {pfSeen.nodes ? (
+                    <div className="pf-pane" hidden={pfTab !== "nodes"}>
                       <section className="block pf-nodes" style={{ marginTop: 12 }}>
                         <ProxiesVisualEditor onToast={showToast} onBusy={setBusy} />
                       </section>
                       <section className="block pf-nodes" style={{ marginTop: 12 }}>
                         <GroupsVisualEditor onToast={showToast} onBusy={setBusy} />
                       </section>
-                    </>
+                    </div>
                   ) : null}
 
-                  {pfTab === "yaml" && pfSeen.yaml ? (
-                    <section className="editor-card pf-yaml">
+                  {pfSeen.yaml ? (
+                    <section className="editor-card pf-yaml" hidden={pfTab !== "yaml"}>
                       <div className="editor-bar">
                         <input
                           value={profileName}
@@ -2845,22 +2867,17 @@ export default function App() {
                     </section>
                   ) : null}
                 </div>
-              )}
 
-              {tab === "rules" && (
-                <div className="pane" hidden={tab !== "rules"}>
-                  <RulesPage onToast={showToast} onBusy={setBusy} />
-                </div>
-              )}
+              {/* 保留挂载（hidden 切换）：切页不卸载组件，编辑中的规则草稿/滚动位置不丢 */}
+              <div className="pane" hidden={tab !== "rules"}>
+                <RulesPage onToast={showToast} onBusy={setBusy} />
+              </div>
 
-              {tab === "connections" && (
-                <div className="pane" hidden={tab !== "connections"}>
-                  <ConnectionsPage onToast={showToast} />
-                </div>
-              )}
+              <div className="pane conn-wrap" hidden={tab !== "connections"}>
+                <ConnectionsPage onToast={showToast} />
+              </div>
 
-              {tab === "logs" && (
-                <div className="pane term" hidden={tab !== "logs"}>
+              <div className="pane term" hidden={tab !== "logs"}>
                   <div className="term-bar">
                     <div className="term-title">
                       <span className="term-dots">
@@ -2875,10 +2892,19 @@ export default function App() {
                       <button
                         type="button"
                         className="btn ghost btn-sm"
-                        onClick={async () => {
-                          const r = await window.veyra?.clearLogFiles?.();
-                          showToast(`已清理文件 ${r?.removed || 0} 个`);
-                        }}
+                        onClick={() =>
+                          setConfirmReq({
+                            title: "清理日志文件",
+                            message:
+                              "将删除内核日志目录下已归档的日志文件（不影响当前屏幕显示的内容）。此操作不可撤销。",
+                            confirmText: "清理",
+                            danger: true,
+                            onConfirm: async () => {
+                              const r = await window.veyra?.clearLogFiles?.();
+                              showToast(`已清理文件 ${r?.removed || 0} 个`);
+                            },
+                          })
+                        }
                       >
                         清理日志文件
                       </button>
@@ -2887,21 +2913,33 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                  <pre className="term-body">
-                    {logs.join("") || "等待代理服务输出…\n启动内核后，这里会实时显示 mihomo 日志。"}
-                  </pre>
+                  {logs.length ? (
+                    <pre className="term-body">{logs.join("")}</pre>
+                  ) : (() => {
+                    // 空态居中引导块：此前是终端顶部一行小字 + 一大块空板，观感像没加载完
+                    const [line1, line2] = t(
+                      "logs.empty",
+                      "Waiting for proxy output…\nStart the core to see live Mihomo logs here."
+                    ).split("\n");
+                    return (
+                      <div className="term-empty" role="status">
+                        <div className="term-empty-ico">
+                          <Terminal size={20} />
+                        </div>
+                        <p>{line1}</p>
+                        <small>{line2 || line1}</small>
+                      </div>
+                    );
+                  })()}
                 </div>
-              )}
 
-              {tab === "tests" && (
-                <div className="pane" hidden={tab !== "tests"}>
-                  <TestsPage running={running} onToast={showToast} />
-                </div>
-              )}
+              {/* 保留挂载（hidden 切换）：测试结果切页不丢 */}
+              <div className="pane" hidden={tab !== "tests"}>
+                <TestsPage running={running} onToast={showToast} />
+              </div>
 
-              {tab === "settings" && (
-                <div className="pane" hidden={tab !== "settings"}>
-                  <SettingsPanel
+              <div className="pane" hidden={tab !== "settings"}>
+                <SettingsPanel
                     running={running}
                     mixedPort={mixedPort}
                     controller={controller}
@@ -2915,9 +2953,8 @@ export default function App() {
                     onPrefs={handlePrefs}
                     onRefresh={refresh}
                     onCoreChange={setActiveCore}
-                  />
-                </div>
-              )}
+                />
+              </div>
             </main>
           </div>
 
@@ -2931,7 +2968,7 @@ export default function App() {
                     <div
                       style={{
                         background: "transparent",
-                        border: "1px solid rgba(51,65,85,0.50)",
+                        border: "1px solid var(--card-border)",
                         borderRadius: "var(--radius-md)",
                         padding: 12,
                       }}
@@ -2942,14 +2979,14 @@ export default function App() {
                     <div
                       style={{
                         background: "transparent",
-                        border: "1px solid rgba(51,65,85,0.50)",
+                        border: "1px solid var(--card-border)",
                         borderRadius: "var(--radius-md)",
                         padding: 12,
                       }}
                     >
                       <div className="text-xs text-muted mb-1">内核</div>
                       <div className="text-sm font-mono">
-                        {activeCore === "singbox" ? "sing-box" : "mihomo"}
+                        {activeCore === "singbox" ? "sing-box" : "Mihomo"}
                       </div>
                     </div>
                   </div>
@@ -3146,6 +3183,8 @@ export default function App() {
         </div>
       )}
 
+      <ConfirmDialog req={confirmReq} onClose={() => setConfirmReq(null)} />
+
       {homeCfgOpen && (
         <div className="modal-mask" onClick={closeHomeCfg}>
           <div className="modal-box home-cfg" ref={homeCfgBoxRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t("home.configureCards", "自定义首页卡片")} onClick={(e) => e.stopPropagation()}>
@@ -3225,9 +3264,10 @@ function LiveClock() {
   return (
     <div className="time-display">
       <div className="time-label">系统时间</div>
-      <div className="time-value">{now.toLocaleTimeString("en-US", { hour12: false })}</div>
+      <div className="time-value">{now.toLocaleTimeString(getLocale(), { hour12: false })}</div>
       <div className="time-date">
-        {now.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
+        {/* 日期跟随应用语言（此前固定 en-US，中文界面里显示 "Oct 15, 2026" 混排） */}
+        {now.toLocaleDateString(getLocale(), { year: "numeric", month: "long", day: "numeric" })}
       </div>
     </div>
   );

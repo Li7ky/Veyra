@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
 import yaml from "js-yaml";
+import { t } from "./i18n";
 
 type ProxyDraft = {
   name: string;
@@ -97,7 +98,7 @@ export function ProxiesVisualEditor({
         await window.veyra?.writeProfile?.(uid, body);
         await window.veyra?.enhanceApply?.();
       }
-      onToast(`已保存 ${proxies.length} 个节点并增强`);
+      onToast(t("proxies.saved").replace("{n}", String(proxies.length)));
     } catch (e) {
       onToast(String((e as Error).message || e));
     } finally {
@@ -108,21 +109,21 @@ export function ProxiesVisualEditor({
   return (
     <div className="visual-ed">
       <div className="block-hd">
-        <h2>节点可视化编辑</h2>
+        <h2>{t("proxies.editor")}</h2>
         <button type="button" className="btn primary btn-sm" onClick={save}>
-          <Save size={13} /> 保存为 Proxies 增强
+          <Save size={13} /> {t("proxies.saveAsProxies")}
         </button>
       </div>
       <div className="s-fields" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         {(
           [
-            ["name", "名称"],
-            ["type", "类型"],
-            ["server", "服务器"],
-            ["port", "端口"],
-            ["password", "密码"],
-            ["uuid", "UUID"],
-            ["cipher", "加密"],
+            ["name", t("proxies.fieldName")],
+            ["type", t("proxies.fieldType")],
+            ["server", t("proxies.fieldServer")],
+            ["port", t("proxies.fieldPort")],
+            ["password", t("proxies.fieldPassword")],
+            ["uuid", t("proxies.fieldUuid")],
+            ["cipher", t("proxies.fieldCipher")],
           ] as const
         ).map(([k, label]) => (
           <label key={k}>
@@ -154,12 +155,12 @@ export function ProxiesVisualEditor({
         className="btn ghost btn-sm"
         style={{ marginTop: 8 }}
         onClick={() => {
-          if (!draft.name || !draft.server) return onToast("名称与服务器必填");
+          if (!draft.name || !draft.server) return onToast(t("proxies.nameServerRequired"));
           setRows((prev) => [{ ...draft }, ...prev]);
           setDraft({ ...EMPTY_PROXY });
         }}
       >
-        <Plus size={13} /> 添加节点
+        <Plus size={13} /> {t("proxies.addNode")}
       </button>
       <div className="pf-list" style={{ marginTop: 12 }}>
         {rows.map((r, i) => (
@@ -232,7 +233,7 @@ export function GroupsVisualEditor({
         await window.veyra?.writeProfile?.(uid, body);
         await window.veyra?.enhanceApply?.();
       }
-      onToast(`已保存 ${groups.length} 个策略组`);
+      onToast(t("groups.saved").replace("{n}", String(groups.length)));
     } catch (e) {
       onToast(String((e as Error).message || e));
     } finally {
@@ -243,18 +244,18 @@ export function GroupsVisualEditor({
   return (
     <div className="visual-ed">
       <div className="block-hd">
-        <h2>策略组可视化编辑</h2>
+        <h2>{t("groups.editor")}</h2>
         <button type="button" className="btn primary btn-sm" onClick={save}>
-          <Save size={13} /> 保存为 Groups 增强
+          <Save size={13} /> {t("groups.saveAsGroups")}
         </button>
       </div>
       <div className="s-fields" style={{ gridTemplateColumns: "1fr 1fr 2fr" }}>
         <label>
-          名称
+          {t("proxies.fieldName")}
           <input className="s-input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
         </label>
         <label>
-          类型
+          {t("proxies.fieldType")}
           <select className="s-input" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
             {["select", "url-test", "fallback", "load-balance", "relay"].map((t) => (
               <option key={t} value={t}>
@@ -264,7 +265,7 @@ export function GroupsVisualEditor({
           </select>
         </label>
         <label>
-          节点（逗号分隔）
+          {t("groups.proxiesPlaceholder")}
           <input
             className="s-input"
             value={draft.proxies}
@@ -277,12 +278,12 @@ export function GroupsVisualEditor({
         className="btn ghost btn-sm"
         style={{ marginTop: 8 }}
         onClick={() => {
-          if (!draft.name) return onToast("名称必填");
+          if (!draft.name) return onToast(t("proxies.nameRequired"));
           setRows((p) => [{ ...draft }, ...p]);
           setDraft({ name: "", type: "select", proxies: "DIRECT" });
         }}
       >
-        <Plus size={13} /> 添加策略组
+        <Plus size={13} /> {t("groups.addGroup")}
       </button>
       <div className="pf-list" style={{ marginTop: 12 }}>
         {rows.map((r, i) => (

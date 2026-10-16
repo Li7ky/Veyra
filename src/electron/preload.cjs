@@ -3,6 +3,12 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("veyra", {
   minimize: () => ipcRenderer.invoke("window:minimize"),
   maximize: () => ipcRenderer.invoke("window:maximize"),
+  isMaximized: () => ipcRenderer.invoke("window:isMaximized"),
+  onMaximizedChange: (cb) => {
+    const fn = (_e, v) => cb(!!v);
+    ipcRenderer.on("window:maximized", fn);
+    return () => ipcRenderer.removeListener("window:maximized", fn);
+  },
   close: () => ipcRenderer.invoke("window:close"),
 
   startCore: () => ipcRenderer.invoke("core:start"),
@@ -91,6 +97,21 @@ contextBridge.exposeInMainWorld("veyra", {
   webdavDownload: () => ipcRenderer.invoke("verge:webdavDownload"),
   exitIp: () => ipcRenderer.invoke("verge:exitIp"),
   detectProxyConflict: () => ipcRenderer.invoke("system:detectProxyConflict"),
+  fullConflictScan: () => ipcRenderer.invoke("system:fullConflictScan"),
+  checkPorts: () => ipcRenderer.invoke("system:checkPorts"),
+  startConflictMonitor: (on) => ipcRenderer.invoke("system:startConflictMonitor", on),
+  getSelfIdentity: () => ipcRenderer.invoke("system:getSelfIdentity"),
+  // 运行时冲突事件订阅（主进程主动推送到渲染进程）
+  onConflictDetected: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on("conflict:detected", listener);
+    return () => ipcRenderer.removeListener("conflict:detected", listener);
+  },
+  onConflictResolved: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on("conflict:resolved", listener);
+    return () => ipcRenderer.removeListener("conflict:resolved", listener);
+  },
   streamingUnlock: () => ipcRenderer.invoke("verge:streaming"),
   streamingUnlockOne: (id) => ipcRenderer.invoke("verge:streamingOne", id),
   unlockCatalog: () => ipcRenderer.invoke("verge:unlockCatalog"),

@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import {
+  Search,
   Copy,
   FolderOpen,
   RefreshCw,
@@ -18,10 +19,27 @@ import {
   Globe2,
   Keyboard,
   Cloud,
+  Check,
+  Stethoscope,
+  AlertTriangle,
+  XCircle,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  Loader2,
 } from "lucide-react";
+import { runSelfCheck, type SelfCheckItem, type SelfCheckResult } from "./selfCheck";
+import ConfirmDialog, { type ConfirmRequest } from "./ConfirmDialog";
 import type { ThemeMode } from "./theme";
 import type { AppSettings } from "./vite-env";
 import { LOCALE_OPTIONS, setLocale, t } from "./i18n";
+
+/** 自检条目状态 → 图标 */
+const SC_ICON: Record<SelfCheckItem["state"], typeof CheckCircle2> = {
+  ok: CheckCircle2,
+  warn: AlertTriangle,
+  fail: XCircle,
+};
 
 /** 与主进程 DEFAULT_SETTINGS 对齐 */
 const DEFAULTS: AppSettings = {
@@ -51,7 +69,7 @@ const DEFAULTS: AppSettings = {
   tunAutoDetect: true,
   tunSniff: true,
   tunMtu: 9000,
-  tunDevice: "Veyra",
+  tunDevice: "Veyra-omini",
   serviceMode: false,
   dnsOverride: false,
   dnsEnable: true,
@@ -116,6 +134,7 @@ function formatBytes(n = 0) {
 }
 
 type Sec =
+  | "selfcheck"
   | "core"
   | "network"
   | "tun"
@@ -127,6 +146,7 @@ type Sec =
   | "about";
 
 const SECTIONS: { id: Sec; label: string; icon: typeof Server }[] = [
+  { id: "selfcheck", label: "自检", icon: Stethoscope },
   { id: "core", label: "内核", icon: Server },
   { id: "network", label: "网络", icon: Network },
   { id: "tun", label: "TUN", icon: Shield },
@@ -159,17 +179,30 @@ type Props = {
   onCoreChange?: (c: string) => void;
 };
 
+/** 外观 · 主题色预设（模块级常量，避免每次渲染重建数组） */
+const THEME_COLORS: ReadonlyArray<readonly [string, string]> = [
+  ["#2c71e8", "品牌蓝"],
+  ["#0ea5e9", "天蓝"],
+  ["#14b8a6", "青瓷"],
+  ["#7c3aed", "葡萄紫"],
+  ["#ec4899", "樱花粉"],
+  ["#f59e0b", "琥珀"],
+];
+
 function Row({
   label,
   desc,
+  last,
   children,
 }: {
   label: string;
   desc?: string;
+  /** 该行是所在分组的最后一行：不画下分隔线，避免与卡片底部操作栏的 border-top 叠成双线 */
+  last?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div className="s-row">
+    <div className={last ? "s-row s-row-last" : "s-row"}>
       <div className="s-row-text">
         <div className="s-row-label">{label}</div>
         {desc ? <div className="s-row-desc">{desc}</div> : null}
@@ -183,20 +216,25 @@ function Card({
   title,
   icon,
   extra,
+  meta,
   children,
 }: {
   title: string;
   icon?: React.ReactNode;
   extra?: React.ReactNode;
+  meta?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <section className="s-card">
       <div className="s-card-hd">
-        <h2>
-          {icon}
-          {title}
-        </h2>
+        <div className="s-card-hd-main">
+          <h2>
+            {icon}
+            {title}
+          </h2>
+          {meta ? <div className="s-card-meta">{meta}</div> : null}
+        </div>
         {extra}
       </div>
       <div className="s-card-bd">{children}</div>
@@ -232,6 +270,7 @@ function SettingsPanel(props: Props) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [latestTag, setLatestTag] = useState("");
   const [svc, setSvc] = useState({ installed: false });
+  const [runtimeMonitorOn, setRuntimeMonitorOn] = useState(false);
   const [conflictScan, setConflictScan] = useState<{ busy: boolean; list: string[]; done: boolean }>({
     busy: false,
     list: [],
@@ -240,12 +279,17 @@ function SettingsPanel(props: Props) {
   const [draftPort, setDraftPort] = useState(String(DEFAULTS.mixedPort));
   const [draftCtrl, setDraftCtrl] = useState(String(DEFAULTS.controllerPort));
   const [draftSecret, setDraftSecret] = useState(DEFAULTS.secret);
+  const [secretShown, setSecretShown] = useState(false);
+  // 危险操作（恢复默认设置等）统一走二次确认弹窗
+  const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
   const [draftBypass, setDraftBypass] = useState(DEFAULTS.proxyBypass);
   const [draftSubMin, setDraftSubMin] = useState(String(DEFAULTS.subAutoUpdateMin));
   const [draftNs, setDraftNs] = useState("");
   const [draftHosts, setDraftHosts] = useState("");
   const [draftCss, setDraftCss] = useState("");
   const [draftColor, setDraftColor] = useState("");
+  const [selfCheck, setSelfCheck] = useState<SelfCheckResult | null>(null);
+  const [selfCheckBusy, setSelfCheckBusy] = useState(false);
   // WebDAV 密码与热键：本地草稿 + 失焦提交。
   // 不能 onChange 直接提交 —— 主进程会把密码转成 enc: 存储并回传，
   // 实时回写会让输入框内容被加密串覆盖；热键则会每敲一个字符就重新注册一次。
@@ -297,22 +341,29 @@ function SettingsPanel(props: Props) {
     reload().catch(() => {});
   }, [running, mixedPort, version]);
 
-  // 代理冲突检测：调用主进程扫描端口 + 进程，展示结果
-  async function scanConflict() {
-    if (!window.veyra) {
-      onToast(t("conflict.preview"));
-      return;
-    }
-    setConflictScan({ busy: true, list: [], done: false });
-    try {
-      const list = ((await window.veyra.detectProxyConflict?.()) || []) as string[];
-      setConflictScan({ busy: false, list, done: true });
-      onToast(list.length ? t("conflict.foundToast").replace("{n}", String(list.length)) : t("conflict.noneToast"));
-    } catch (e) {
-      setConflictScan({ busy: false, list: [], done: true });
-      onToast(String((e as Error).message || e));
-    }
+  // 首次切到「自检」分区时自动跑一次；之后的重跑交给按钮
+  useEffect(() => {
+    if (sec === "selfcheck" && !selfCheck && !selfCheckBusy) void runSelfCheckNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sec]);
+
+// 代理冲突检测：完整扫描（进程+端口+系统代理/DNS/路由）
+async function scanConflict() {
+  if (!window.veyra) {
+    onToast(t("conflict.preview"));
+    return;
   }
+  setConflictScan({ busy: true, list: [], done: false });
+  try {
+    const res = (await window.veyra.fullConflictScan?.()) as { conflicts: Array<{ label: string }>; summary: string } | null;
+    const list = res?.conflicts?.map((c: { label: string }) => c.label) || [];
+    setConflictScan({ busy: false, list, done: true });
+    onToast(list.length ? t("conflict.foundToast").replace("{n}", String(list.length)) : t("conflict.noneToast"));
+  } catch (e) {
+    setConflictScan({ busy: false, list: [], done: true });
+    onToast(String((e as Error).message || e));
+  }
+}
 
   async function patchSettings(patch: Partial<AppSettings>) {
     if (!window.veyra) {
@@ -348,7 +399,7 @@ function SettingsPanel(props: Props) {
       el.id = "veyra-custom-css";
       document.head.appendChild(el);
     }
-    const color = s.themeColor ? `:root{--accent:${s.themeColor};--brand:${s.themeColor};--accent-2:${s.themeColor};--accent-3:${s.themeColor};--accent-grad:${s.themeColor};}` : "";
+    const color = s.themeColor ? `:root{--accent:${s.themeColor};--accent-strong:${s.themeColor};--accent-hover:${s.themeColor};}` : "";
     el.textContent = color + "\n" + (s.customCss || "");
   }
 
@@ -397,7 +448,7 @@ function SettingsPanel(props: Props) {
       await window.veyra.switchCore(next);
       setCores(await window.veyra.coreList());
       onCoreChange?.(next);
-      onToast(next === "singbox" ? "已切换到 sing-box（实验）" : "已切换到 mihomo");
+      onToast(next === "singbox" ? "已切换到 sing-box（实验）" : "已切换到 Mihomo");
       onRefresh();
       await reload();
     } catch (e) {
@@ -412,41 +463,141 @@ function SettingsPanel(props: Props) {
     return `${name} v${c.version || "?"}`;
   }
 
+  async function runSelfCheckNow() {
+    if (!window.veyra) {
+      onToast("预览模式下无法自检");
+      return;
+    }
+    setSelfCheckBusy(true);
+    try {
+      setSelfCheck(await runSelfCheck(running));
+    } catch (e) {
+      onToast(String((e as Error).message || e));
+    } finally {
+      setSelfCheckBusy(false);
+    }
+  }
+
   const s = settings || DEFAULTS;
 
   return (
     <div className="s-page s-page-split">
-      <aside className="s-nav">
-        {SECTIONS.map(({ id, label, icon: Icon }) => (
-          <button key={id} type="button" className={sec === id ? "active" : ""} onClick={() => setSec(id)}>
-            <Icon size={14} /> {t(`sec.${id}`, label)}
-          </button>
-        ))}
+      <aside className="s-rail">
+        <nav className="s-nav">
+          {SECTIONS.map(({ id, label, icon: Icon }) => (
+            <button key={id} type="button" className={sec === id ? "active" : ""} onClick={() => setSec(id)}>
+              <Icon size={14} /> {t(`sec.${id}`, label)}
+            </button>
+          ))}
+        </nav>
+        <p className="s-tip">
+          <Info size={13} />
+          <span>不清楚的功能请保持默认，不要随意开启，以免影响正常使用</span>
+        </p>
       </aside>
 
       <div className="s-main">
-        <div className="s-hint" style={{ marginBottom: 12, padding: "10px 14px", borderRadius: 10, background: "var(--warn-bg)", border: "1px solid var(--warn-border)", fontSize: 13, color: "var(--warn)" }}>
-          💡 温馨提示：不清楚的功能请保持默认，不要随意开启，以免影响正常使用
-        </div>
+        {sec === "selfcheck" && (
+          <Card
+            title="环境自检"
+            icon={<Stethoscope size={15} />}
+            extra={
+              selfCheck ? (
+                <span className={`pill ${selfCheck.fail ? "bad" : selfCheck.warn ? "warn" : "on"}`}>
+                  <i className="pill-dot" />
+                  {selfCheck.fail
+                    ? `${selfCheck.fail} 项待处理`
+                    : selfCheck.warn
+                      ? `${selfCheck.warn} 项需注意`
+                      : "环境正常"}
+                </span>
+              ) : null
+            }
+            meta="检查这台电脑当前环境能否正常运行 · 只读检测，不会改动任何设置"
+          >
+            {selfCheckBusy && !selfCheck ? (
+              <div className="sc-empty">
+                <Loader2 size={15} className="sc-spin" /> 正在检测…
+              </div>
+            ) : selfCheck ? (
+              <ul className="sc-list">
+                {selfCheck.items.map((it) => {
+                  const Icon = SC_ICON[it.state];
+                  return (
+                    <li key={it.id} className={`sc-item sc-${it.state}`}>
+                      <span className="sc-icon">
+                        <Icon size={15} />
+                      </span>
+                      <div className="sc-body">
+                        <div className="sc-line">
+                          <span className="sc-label">{it.label}</span>
+                          <span className="sc-value">{it.value}</span>
+                        </div>
+                        {it.hint ? (
+                          <div className="sc-hint">
+                            {it.hint}
+                            {it.go ? (
+                              <button
+                                type="button"
+                                className="sc-go"
+                                onClick={() => setSec(it.go!.section as Sec)}
+                              >
+                                {it.go.label} →
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <div className="sc-empty">点下方按钮运行一次环境自检</div>
+            )}
+            <div className="s-card-foot">
+              <div className="s-card-foot-meta">
+                <div className="s-meta">
+                  {selfCheck ? `共 ${selfCheck.items.length} 项 · 只读检测，不会改动任何设置` : "尚未检测"}
+                </div>
+              </div>
+              <div className="s-actions">
+                <button
+                  type="button"
+                  className="btn primary btn-sm"
+                  disabled={selfCheckBusy}
+                  onClick={runSelfCheckNow}
+                >
+                  {selfCheckBusy ? <Loader2 size={13} className="sc-spin" /> : <RefreshCw size={13} />}
+                  {selfCheckBusy ? "检测中…" : selfCheck ? "重新检测" : "开始检测"}
+                </button>
+              </div>
+            </div>
+          </Card>
+        )}
+
         {sec === "core" && (
           <Card
             title="内核运行状态"
             icon={<Server size={15} />}
-            extra={<span className={`pill ${running ? "on" : ""}`}>{running ? "运行中" : "已停止"}</span>}
+            extra={
+              <span className={`pill ${running ? "on" : ""}`}>
+                <i className="pill-dot" />
+                {running ? "运行中" : "已停止"}
+              </span>
+            }
+            meta={`${coreVerText(cores?.mihomo, "Mihomo")} · ${coreVerText(cores?.singbox, "sing-box")}`}
           >
-            <Row label="版本">
-              <span className="s-mono">{version}</span>
-            </Row>
-            <Row label="内核引擎" desc="mihomo 稳定全功能 · sing-box 实验">
+            <Row label="内核引擎" desc="Mihomo 稳定全功能 · sing-box 实验">
               <div className="seg">
                 {(["mihomo", "singbox"] as const).map((c) => (
                   <button key={c} type="button" className={activeCore === c ? "active" : ""} onClick={() => switchCore(c)}>
-                    {c === "mihomo" ? "mihomo" : "sing-box"}
+                    {c === "mihomo" ? "Mihomo" : "sing-box"}
                   </button>
                 ))}
               </div>
             </Row>
-            <Row label="mihomo 通道" desc="稳定版 / 测试版发行通道（更新时使用）">
+            <Row label="Mihomo 通道" desc="稳定版 / 测试版发行通道（更新时使用）" last>
               <div className="seg">
                 {([["stable", "稳定版"], ["alpha", "测试版"]] as const).map(([ch, label]) => (
                   <button
@@ -460,103 +611,104 @@ function SettingsPanel(props: Props) {
                 ))}
               </div>
             </Row>
-            <div className="s-foot">
-              {coreVerText(cores?.mihomo, "mihomo")} · {coreVerText(cores?.singbox, "sing-box")}
-            </div>
             {!activeCoreInstalled && (
               <div className="s-warn" style={{ marginTop: 8, padding: "10px 14px", borderRadius: 10, background: "var(--warn-bg, #fef3c7)", border: "1px solid var(--warn-border, #fcd34d)", fontSize: 13 }}>
                 ⚠️ 当前内核未安装，无法启动代理服务。请点击下方"安装内核"按钮下载安装。
               </div>
             )}
-            <div className="s-actions">
-              <button
-                type="button"
-                className="btn btn-sm"
-                disabled={!running && !activeCoreInstalled}
-                title={!running && !activeCoreInstalled ? "请先安装内核" : undefined}
-                onClick={async () => {
-                  onBusy(true);
-                  try {
-                    if (running) await window.veyra?.restartCore();
-                    else await window.veyra?.startCore();
-                    onToast(running ? "已重启" : "已启动");
-                    onRefresh();
-                    await reload();
-                  } catch (e) {
-                    onToast(String((e as Error).message || e));
-                  } finally {
-                    onBusy(false);
-                  }
-                }}
-              >
-                {running ? <RotateCcw size={13} /> : <Power size={13} />}
-                {running ? "重启" : "启动"}
-              </button>
-              <button
-                type="button"
-                className="btn danger btn-sm"
-                disabled={!running}
-                onClick={async () => {
-                  await window.veyra?.stopCore();
-                  onToast("已停止");
-                  onRefresh();
-                }}
-              >
-                <Square size={12} /> 停止
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={async () => {
-                  onBusy(true);
-                  try {
-                    const r = await window.veyra!.checkCoreUpdate();
-                    setLatestTag(r.latest);
-                    onToast(`最新 ${r.latest}`);
-                  } catch (e) {
-                    onToast(String((e as Error).message || e));
-                  } finally {
-                    onBusy(false);
-                  }
-                }}
-              >
-                检查内核更新
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={async () => {
-                  onBusy(true);
-                  try {
-                    const wasInstalled = activeCoreInstalled;
-                    await window.veyra!.updateCore();
-                    onRefresh();
-                    await reload();
-                    if (!wasInstalled) {
-                      // 首次安装后自动启动
-                      try {
-                        await window.veyra?.startCore();
-                        onToast("内核已安装并启动");
-                      } catch {
-                        onToast("内核已安装，请手动启动");
-                      }
-                      onRefresh();
-                    } else {
-                      onToast("内核已更新");
+            <div className="s-card-foot">
+              <div className="s-card-foot-meta">
+                <div className="s-path" title={core?.path}>
+                  {core?.path || "—"}
+                </div>
+                {latestTag ? <div className="s-meta">GitHub 最新：{latestTag}</div> : null}
+              </div>
+              <div className="s-actions">
+                <button
+                  type="button"
+                  className="btn ghost btn-sm"
+                  onClick={async () => {
+                    onBusy(true);
+                    try {
+                      const r = await window.veyra!.checkCoreUpdate();
+                      setLatestTag(r.latest);
+                      onToast(`最新 ${r.latest}`);
+                    } catch (e) {
+                      onToast(String((e as Error).message || e));
+                    } finally {
+                      onBusy(false);
                     }
-                  } catch (e) {
-                    onToast(String((e as Error).message || e));
-                  } finally {
-                    onBusy(false);
-                  }
-                }}
-              >
-                <Download size={13} /> {activeCoreInstalled ? "更新" : "安装内核"}
-              </button>
-            </div>
-            {latestTag ? <div className="s-foot">GitHub：{latestTag}</div> : null}
-            <div className="s-path" title={core?.path}>
-              {core?.path || "—"}
+                  }}
+                >
+                  检查内核更新
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost btn-sm"
+                  onClick={async () => {
+                    onBusy(true);
+                    try {
+                      const wasInstalled = activeCoreInstalled;
+                      await window.veyra!.updateCore();
+                      onRefresh();
+                      await reload();
+                      if (!wasInstalled) {
+                        // 首次安装后自动启动
+                        try {
+                          await window.veyra?.startCore();
+                          onToast("内核已安装并启动");
+                        } catch {
+                          onToast("内核已安装，请手动启动");
+                        }
+                        onRefresh();
+                      } else {
+                        onToast("内核已更新");
+                      }
+                    } catch (e) {
+                      onToast(String((e as Error).message || e));
+                    } finally {
+                      onBusy(false);
+                    }
+                  }}
+                >
+                  <Download size={13} /> {activeCoreInstalled ? "更新" : "安装内核"}
+                </button>
+                <button
+                  type="button"
+                  className="btn primary btn-sm"
+                  disabled={!running && !activeCoreInstalled}
+                  title={!running && !activeCoreInstalled ? "请先安装内核" : undefined}
+                  onClick={async () => {
+                    onBusy(true);
+                    try {
+                      if (running) await window.veyra?.restartCore();
+                      else await window.veyra?.startCore();
+                      onToast(running ? "已重启" : "已启动");
+                      onRefresh();
+                      await reload();
+                    } catch (e) {
+                      onToast(String((e as Error).message || e));
+                    } finally {
+                      onBusy(false);
+                    }
+                  }}
+                >
+                  {running ? <RotateCcw size={13} /> : <Power size={13} />}
+                  {running ? "重启" : "启动"}
+                </button>
+                <button
+                  type="button"
+                  className="btn danger btn-sm"
+                  disabled={!running}
+                  onClick={async () => {
+                    await window.veyra?.stopCore();
+                    onToast("已停止");
+                    onRefresh();
+                  }}
+                >
+                  <Square size={12} /> 停止
+                </button>
+              </div>
             </div>
           </Card>
         )}
@@ -574,7 +726,26 @@ function SettingsPanel(props: Props) {
               </label>
               <label>
                 Secret
-                <input className="s-input" value={draftSecret} onChange={(e) => setDraftSecret(e.target.value)} />
+                <div className="s-secret-wrap">
+                  <input
+                    className="s-input"
+                    type={secretShown ? "text" : "password"}
+                    value={draftSecret}
+                    onChange={(e) => setDraftSecret(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="s-secret-eye"
+                    onClick={() => setSecretShown((v) => !v)}
+                    title={secretShown ? "隐藏" : "显示"}
+                    aria-label={secretShown ? "隐藏 Secret" : "显示 Secret"}
+                    aria-pressed={secretShown}
+                  >
+                    {secretShown ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                </div>
               </label>
               <label>
                 绑定地址（WSL/局域网）
@@ -651,14 +822,52 @@ function SettingsPanel(props: Props) {
               />
             </Row>
             <Row label={t("conflict.scanLabel")} desc={t("conflict.scanDesc")}>
-              <button
-                type="button"
-                className="btn ghost btn-sm"
-                disabled={conflictScan.busy}
-                onClick={scanConflict}
-              >
-                <RefreshCw size={13} /> {conflictScan.busy ? t("conflict.scanning") : t("conflict.scanBtn")}
-              </button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn ghost btn-sm"
+                  disabled={conflictScan.busy}
+                  onClick={scanConflict}
+                >
+                  <RefreshCw size={13} /> {conflictScan.busy ? t("conflict.scanning") : t("conflict.scanBtn")}
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost btn-sm"
+                  title={t("conflict.fullScan")}
+                  onClick={() => {
+                    if (!window.veyra) return;
+                    window.veyra.fullConflictScan?.().then((res) => {
+                      const list = res?.conflicts?.map((c) => c.label) || [];
+                      setConflictScan({ busy: false, list, done: true });
+                      onToast(list.length ? t("conflict.foundToast").replace("{n}", String(list.length)) : t("conflict.noneToast"));
+                    }).catch(() => onToast("deep scan failed"));
+                  }}
+                >
+                  <Search size={13} /> {t("conflict.fullScanBtn")}
+                </button>
+              </div>
+            </Row>
+            <Row label={t("conflict.runtimeToggle")} desc={t("conflict.runtimeToggleDesc")}>
+              <input
+                type="checkbox"
+                checked={runtimeMonitorOn}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  if (!window.veyra) return;
+                  window.veyra.startConflictMonitor?.(on).then(() => {
+                    setRuntimeMonitorOn(on);
+                    onToast(on ? t("conflict.runtimeOn") : t("conflict.runtimeOff"));
+                  });
+                }}
+              />
+            </Row>
+            <Row label={t("conflict.registerLabel")} desc={t("conflict.registerDesc")}>
+              <input
+                type="checkbox"
+                checked={s.registerIdentity !== false}
+                onChange={(e) => patchSettings({ registerIdentity: e.target.checked })}
+              />
             </Row>
             {conflictScan.done ? (
               <div
@@ -669,9 +878,9 @@ function SettingsPanel(props: Props) {
                   borderRadius: 8,
                   fontSize: 12,
                   lineHeight: 1.6,
-                  background: conflictScan.list.length ? "rgba(239,68,68,.10)" : "rgba(34,197,94,.12)",
-                  border: `1px solid ${conflictScan.list.length ? "rgba(239,68,68,.35)" : "rgba(34,197,94,.35)"}`,
-                  color: conflictScan.list.length ? "var(--red-400)" : "var(--green-400, #16a34a)",
+                  background: conflictScan.list.length ? "color-mix(in srgb, var(--bad) 12%, transparent)" : "color-mix(in srgb, var(--ok) 14%, transparent)",
+                  border: `1px solid ${conflictScan.list.length ? "color-mix(in srgb, var(--bad) 35%, transparent)" : "color-mix(in srgb, var(--ok) 35%, transparent)"}`,
+                  color: conflictScan.list.length ? "var(--bad)" : "var(--ok)",
                 }}
               >
                 {conflictScan.list.length ? (
@@ -1084,49 +1293,55 @@ function SettingsPanel(props: Props) {
         {sec === "appearance" && (
           <Card title="外观" icon={<Palette size={15} />}>
             <Row label="主题模式">
-              <div className="theme-seg">
+              <div className="seg">
                 {(
                   [
-                    ["light", Sun],
-                    ["dark", Moon],
-                    ["system", Monitor],
+                    ["light", Sun, "浅色"],
+                    ["dark", Moon, "深色"],
+                    ["system", Monitor, "跟随系统"],
                   ] as const
-                ).map(([mode, Icon]) => (
-                  <button key={mode} type="button" className={themeMode === mode ? "active" : ""} onClick={() => setTheme(mode)}>
+                ).map(([mode, Icon, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={themeMode === mode ? "seg-icon active" : "seg-icon"}
+                    title={label}
+                    aria-label={label}
+                    aria-pressed={themeMode === mode}
+                    onClick={() => setTheme(mode)}
+                  >
                     <Icon size={14} />
                   </button>
                 ))}
               </div>
             </Row>
-            <Row label="主题色">
-              <div className="s-actions" style={{ gap: 8 }}>
-                {[
-                  ["#2c71e8", "品牌蓝"],
-                  ["#0ea5e9", "天蓝"],
-                  ["#14b8a6", "青瓷"],
-                  ["#7c3aed", "葡萄紫"],
-                  ["#ec4899", "樱花粉"],
-                  ["#f59e0b", "琥珀"],
-                ].map(([c, name]) => (
+            <Row label="主题色" desc="未选择时使用内置默认色">
+              <div className="swatches">
+                {THEME_COLORS.map(([c, name]) => (
                   <button
                     key={c}
                     type="button"
+                    className={draftColor.toLowerCase() === c ? "swatch active" : "swatch"}
                     title={name}
+                    aria-label={name}
+                    aria-pressed={draftColor.toLowerCase() === c}
+                    style={{ background: c }}
                     onClick={() => {
                       setDraftColor(c);
                       patchSettings({ themeColor: c });
                     }}
-                    style={{
-                      width: 28, height: 28, borderRadius: "50%", background: c, cursor: "pointer",
-                      border: draftColor === c ? "2px solid var(--text)" : "2px solid transparent",
-                      outline: "1px solid var(--line)",
-                    }}
-                  />
+                  >
+                    {draftColor.toLowerCase() === c ? <Check size={14} /> : null}
+                  </button>
                 ))}
                 <input
                   type="color"
+                  className={
+                    draftColor && !THEME_COLORS.some(([c]) => c === draftColor.toLowerCase())
+                      ? "swatch-picker active"
+                      : "swatch-picker"
+                  }
                   title="自定义颜色"
-                  style={{ width: 32, height: 28, padding: 2, border: "1px dashed var(--line)", borderRadius: 8, cursor: "pointer", background: "transparent" }}
                   value={/^#[0-9a-fA-F]{6}$/.test(draftColor) ? draftColor : "#2c71e8"}
                   onChange={(e) => {
                     setDraftColor(e.target.value);
@@ -1139,9 +1354,16 @@ function SettingsPanel(props: Props) {
               自定义 CSS 注入
               <textarea className="s-input full" rows={6} value={draftCss} onChange={(e) => setDraftCss(e.target.value)} />
             </label>
-            <button type="button" className="btn primary btn-sm" onClick={() => patchSettings({ customCss: draftCss })}>
-              保存 CSS
-            </button>
+            <div className="s-card-foot">
+              <div className="s-card-foot-meta">
+                <div className="s-meta">留空则不注入任何自定义样式；保存后立即生效</div>
+              </div>
+              <div className="s-actions">
+                <button type="button" className="btn primary btn-sm" onClick={() => patchSettings({ customCss: draftCss })}>
+                  保存 CSS
+                </button>
+              </div>
+            </div>
           </Card>
         )}
 
@@ -1280,7 +1502,7 @@ function SettingsPanel(props: Props) {
           <Card title="软件更新" icon={<RefreshCw size={15} />}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
               <span style={{ fontSize: 14, fontWeight: 600 }}>当前版本</span>
-              <span className="pill">v{appInfo?.version || "1.1.0"}</span>
+              <span className="pill">v{appInfo?.version || "…"}</span>
               {updateStatus && (
                 <span style={{ fontSize: 13 }} className="s-muted">{updateStatus}</span>
               )}
@@ -1319,8 +1541,14 @@ function SettingsPanel(props: Props) {
                     if (!res.ok) throw new Error(`HTTP ${res.status}`);
                     const data = await res.json();
                     const latest = String(data.tag_name || data.version || "").replace(/^v/, "");
-                    const current = String(appInfo?.version || "1.1.0");
-                    if (latest && latest !== current) {
+                    if (!latest) {
+                      // 更新源没给出版本号时明确提示，而不是误报「已是最新」
+                      setUpdateStatus("更新源未返回版本号，请确认 URL 是否正确");
+                      onToast("更新源未返回版本号");
+                    } else if (!appInfo?.version) {
+                      // 应用信息未就绪时不能用假版本号（旧代码兜底 1.1.0）做比较，否则会误判
+                      setUpdateStatus("应用信息未就绪，请稍后重试");
+                    } else if (latest !== appInfo.version) {
                       setUpdateStatus(`发现新版本 v${latest}`);
                       onToast(`发现新版本 v${latest}`);
                     } else {
@@ -1351,7 +1579,7 @@ function SettingsPanel(props: Props) {
               <div>
                 <span>应用</span>
                 <b>
-                  {appInfo?.name || "Veyra"} {appInfo?.version}
+                  {appInfo?.name || "Veyra-omini"} {appInfo?.version}
                 </b>
               </div>
               <div>
@@ -1369,13 +1597,22 @@ function SettingsPanel(props: Props) {
               type="button"
               className="btn danger btn-sm"
               style={{ display: "inline-block", height: "36px", lineHeight: "36px", padding: "0 14px", marginTop: "14px", fontFamily: "'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif" }}
-              onClick={async () => {
-                const { core: _omit, ...rest } = DEFAULTS;
-                await window.veyra?.setSettings(rest);
-                onToast("已恢复默认");
-                await reload();
-                onRefresh();
-              }}
+              onClick={() =>
+                setConfirmReq({
+                  title: "恢复默认设置",
+                  message:
+                    "将把除内核选择外的所有设置恢复为默认值（端口、Secret、DNS、TUN、热键、主题、更新源、WebDAV 等）。当前配置不做备份，此操作不可撤销。",
+                  confirmText: "恢复默认",
+                  danger: true,
+                  onConfirm: async () => {
+                    const { core: _omit, ...rest } = DEFAULTS;
+                    await window.veyra?.setSettings(rest);
+                    onToast("已恢复默认");
+                    await reload();
+                    onRefresh();
+                  },
+                })
+              }
             >
               <RotateCcw size={13} style={{ verticalAlign: "middle", marginRight: 6 }} />
               <span style={{ verticalAlign: "middle" }}>恢复默认设置</span>
@@ -1384,6 +1621,8 @@ function SettingsPanel(props: Props) {
           </>
         )}
       </div>
+
+      <ConfirmDialog req={confirmReq} onClose={() => setConfirmReq(null)} />
     </div>
   );
 }

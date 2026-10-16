@@ -1,7 +1,8 @@
-// 导航图标：Veyra 彩色线条风格 — 每个 tab 有专属色，几何感、圆润收角。
+// 导航图标：线性几何风格，几何感、圆润收角。
+// 颜色一律走 currentColor，由容器决定（.nav-item = --text-400 中性 / .nav-item.active = --accent）。
 import type { ReactNode } from "react";
 
-function Ico({ children, color }: { children: ReactNode; color: string }) {
+function Ico({ children }: { children: ReactNode }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -9,7 +10,7 @@ function Ico({ children, color }: { children: ReactNode; color: string }) {
       height={22}
       aria-hidden="true"
       fill="none"
-      stroke={color}
+      stroke="currentColor"
       strokeWidth={2.2}
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -19,22 +20,12 @@ function Ico({ children, color }: { children: ReactNode; color: string }) {
   );
 }
 
-// 配色：以品牌蓝 #2c71e8 为锚点，按语义分族（网络=蓝族 / 配置=紫 / 链路=青绿 / 分流=琥珀 / 测试=玫红 / 日志·设置=中性）
-// 统一饱和度与明度，避免上一版 8 个色相各自为政
-const C = {
-  home: "#2c71e8",        // 品牌蓝
-  proxies: "#0ea5e9",     // 天蓝 · 网络族
-  profiles: "#7c3aed",    // 紫罗兰 · 配置族
-  connections: "#14b8a6", // 青绿 · 链路
-  rules: "#f59e0b",       // 琥珀 · 分流
-  logs: "#64748b",        // 石板灰 · 中性
-  tests: "#ec4899",       // 玫红 · 测试
-  settings: "#6b7280",    // 中性灰
-};
+// 此前每个 tab 硬编码专属色（8 色相）：色彩不承载状态信息，只是噪音，
+// 且激活态的品牌蓝底会与紫 / 青图标撞色。现统一交给容器着色。
 
 export function NavHomeIcon() {
   return (
-    <Ico color={C.home}>
+    <Ico>
       <path d="M4 11.5 12 4l8 7.5" />
       <path d="M6 10.5V20h12v-9.5" />
       <path d="M10 20v-5h4v5" />
@@ -45,7 +36,7 @@ export function NavHomeIcon() {
 export function NavProxiesIcon() {
   // 重设计：服务器层叠 + 信号弧线，代表代理节点
   return (
-    <Ico color={C.proxies}>
+    <Ico>
       <rect x="4" y="4" width="16" height="6" rx="2" />
       <rect x="4" y="14" width="16" height="6" rx="2" />
       <path d="M8 7h.01" strokeWidth={2.8} />
@@ -57,7 +48,7 @@ export function NavProxiesIcon() {
 
 export function NavProfilesIcon() {
   return (
-    <Ico color={C.profiles}>
+    <Ico>
       <rect x="4" y="3.5" width="16" height="7" rx="2.5" />
       <rect x="4" y="13.5" width="16" height="7" rx="2.5" />
       <path d="M8 7h4" />
@@ -68,7 +59,7 @@ export function NavProfilesIcon() {
 
 export function NavConnectionsIcon() {
   return (
-    <Ico color={C.connections}>
+    <Ico>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M3.5 12h17" />
       <path d="M12 3.5c2.8 2.3 4.2 5.2 4.2 8.5s-1.4 6.2-4.2 8.5c-2.8-2.3-4.2-5.2-4.2-8.5s1.4-6.2 4.2-8.5z" />
@@ -78,7 +69,7 @@ export function NavConnectionsIcon() {
 
 export function NavRulesIcon() {
   return (
-    <Ico color={C.rules}>
+    <Ico>
       <path d="M5 6h14" />
       <path d="M5 12h14" />
       <path d="M5 18h9" />
@@ -89,7 +80,7 @@ export function NavRulesIcon() {
 
 export function NavLogsIcon() {
   return (
-    <Ico color={C.logs}>
+    <Ico>
       <path d="M6 3.5h9l4 4v13H6z" />
       <path d="M15 3.5v4h4" />
       <path d="M9.5 12h6" />
@@ -100,7 +91,7 @@ export function NavLogsIcon() {
 
 export function NavTestsIcon() {
   return (
-    <Ico color={C.tests}>
+    <Ico>
       <path d="M10 3.5h4" />
       <path d="M11 3.5v5.2L5.8 17a2.4 2.4 0 0 0 2.1 3.5h8.2a2.4 2.4 0 0 0 2.1-3.5L13 8.7V3.5" />
       <path d="M8.2 14.5h7.6" />
@@ -110,7 +101,7 @@ export function NavTestsIcon() {
 
 export function NavSettingsIcon() {
   return (
-    <Ico color={C.settings}>
+    <Ico>
       <circle cx="12" cy="12" r="3.2" />
       <path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1" />
     </Ico>

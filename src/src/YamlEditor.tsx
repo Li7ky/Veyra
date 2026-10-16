@@ -1,9 +1,25 @@
 import Editor, { loader } from "@monaco-editor/react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as monaco from "monaco-editor";
 
 // 本地打包 Monaco，不走 CDN（离线可用）
 loader.config({ monaco });
+
+/** 跟随应用主题：读取 <html data-theme>，并在主题切换时实时更新。
+ *  之前 theme="vs-dark" 是硬编码的，浅色界面里会显示成刺眼的黑色大块。 */
+function useEditorTheme(): "vs" | "vs-dark" {
+  const read = (): "vs" | "vs-dark" =>
+    document.documentElement.getAttribute("data-theme") === "light" ? "vs" : "vs-dark";
+  const [theme, setTheme] = useState<"vs" | "vs-dark">(read);
+  useEffect(() => {
+    const root = document.documentElement;
+    const mo = new MutationObserver(() => setTheme(read()));
+    mo.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    setTheme(read());
+    return () => mo.disconnect();
+  }, []);
+  return theme;
+}
 
 /** Monaco YAML/JS 编辑器 + 简易 Clash schema 提示 */
 export default function YamlEditor({
@@ -19,6 +35,7 @@ export default function YamlEditor({
   hint?: string;
   language?: "yaml" | "javascript" | "json";
 }) {
+  const editorTheme = useEditorTheme();
   const options = useMemo(
     () => ({
       minimap: { enabled: false },
@@ -41,7 +58,7 @@ export default function YamlEditor({
         <Editor
           height="320px"
           language={language}
-          theme="vs-dark"
+          theme={editorTheme}
           value={value || ""}
           options={options}
           onChange={(v) => onChange(v ?? "")}

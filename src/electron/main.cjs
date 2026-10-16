@@ -7,6 +7,7 @@ const vergeExt = require("./verge-ext.cjs");
 const winService = require("./win-service.cjs");
 const uriImport = require("./uri-import.cjs");
 const streamingUnlock = require("./streaming-unlock.cjs");
+const conflictGuard = require("./conflict-guard.cjs");
 let yamlLib = null;
 function getYaml() {
   if (!yamlLib) {
@@ -99,6 +100,7 @@ const DEFAULT_SETTINGS = {
   proxyGuard: false,
   disconnectOnProxyOff: true,
   blockConflict: true, // 禁止与其他主流代理工具同时运行（启动内核前检测并拦截）
+  registerIdentity: true, // 注册自身标识，让外部代理软件能检测到 Veyra-omini
   bindAddress: "127.0.0.1",
   // TUN
   tunEnable: false,
@@ -108,7 +110,7 @@ const DEFAULT_SETTINGS = {
   tunAutoDetect: true,
   tunSniff: true,
   tunMtu: 9000,
-  tunDevice: "Veyra",
+  tunDevice: "Veyra-omini",
   tunDnsHijack: ["any:53", "tcp://any:53"],
   serviceMode: false,
   // DNS
@@ -207,7 +209,7 @@ function sendProgress(phase, pct, label) {
 function toastNotify(title, body) {
   try {
     if (Notification.isSupported()) {
-      const n = new Notification({ title: title || "Veyra", body: body || "", silent: false });
+      const n = new Notification({ title: title || "Veyra-omini", body: body || "", silent: false });
       n.on("click", () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
       n.show();
     }
@@ -421,7 +423,7 @@ function normalizeSubscriptionBody(buf) {
 
   // 某些机场直接返回带 BOM / 杂讯的 yaml
   if (trimmed.includes("proxies:") || trimmed.includes("proxy-groups:")) return trimmed;
-  throw new Error("无法识别订阅格式（需要 Clash/mihomo YAML 或 Base64 YAML）");
+  throw new Error("无法识别订阅格式（需要 Clash/Mihomo YAML 或 Base64 YAML）");
 }
 
 function fetchWithPowershell(urlStr, proxyUrl, timeoutMs = 90000) {
@@ -494,7 +496,7 @@ function parseSubscriptionUserinfo(headers = {}) {
 
 async function fetchSubscription(urlStr, opts = {}) {
   sendProgress("sub:download", 10, "正在下载订阅…");
-  // 只用Veyra自身代理，失败再直连；不走任何第三方客户端端口
+  // 只用Veyra-omini自身代理，失败再直连；不走任何第三方客户端端口
   const viaProxy = appSettings?.subUpdateViaProxy !== false;
   const proxies = viaProxy ? [`http://127.0.0.1:${MIXED_PORT}`, null] : [null, `http://127.0.0.1:${MIXED_PORT}`];
   let lastErr;
@@ -543,6 +545,49 @@ if (portableData) {
     app.setPath("userData", portableData);
   } catch {}
 }
+
+/**
+ * 历史品牌名 → 对应的配置目录名。每次改名都必须在这里追加，否则老用户升级后
+ * 会看到「设置和订阅全没了」。
+ */
+const LEGACY_APP_NAMES = ["Veyra-Omni", "Veyra-Omini"];
+
+/**
+ * 品牌改名迁移：Electron 的 userData 目录由 productName 推导，改名后会指向新目录，
+ * 旧目录里的 settings.json / config / profiles / 日志不会被自动继承。
+ * 这里在所有历史目录中挑「settings.json 最新」的那个作为迁移源，整体复制到新目录；
+ * 新目录已有配置就保持不动，避免覆盖用户在新版本里做的改动。
+ * 便携模式（exe 同级 data 目录）与品牌名无关，直接跳过。
+ * 必须在 loadSettings() 之前执行（本文件为模块顶层，早于 app.whenReady()）。
+ */
+function migrateLegacyUserData() {
+  if (portableData) return;
+  try {
+    const next = app.getPath("userData");
+    const parent = path.dirname(next);
+    let src = "";
+    let srcMtime = -1;
+    for (const name of LEGACY_APP_NAMES) {
+      const dir = path.join(parent, name);
+      if (path.resolve(dir) === path.resolve(next)) continue;
+      const sp = path.join(dir, "settings.json");
+      if (!fs.existsSync(sp)) continue;
+      const mt = fs.statSync(sp).mtimeMs;
+      if (mt > srcMtime) {
+        srcMtime = mt;
+        src = dir;
+      }
+    }
+    if (!src) return;
+    if (fs.existsSync(path.join(next, "settings.json"))) return;
+    fs.mkdirSync(next, { recursive: true });
+    fs.cpSync(src, next, { recursive: true, force: false, errorOnExist: false });
+    console.log(`[veyra] 配置目录已迁移：${src} -> ${next}`);
+  } catch (e) {
+    console.warn("[veyra] 配置目录迁移失败：", (e && e.message) || e);
+  }
+}
+migrateLegacyUserData();
 
 function applyProxyGuardLoop() {
   vergeExt.stopProxyGuard();
@@ -809,7 +854,7 @@ async function waitController(retries = 40) {
     } catch {}
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error("mihomo controller not ready");
+  throw new Error("Mihomo controller not ready");
 }
 
 /** 从内核读取当前 mode 并缓存，供托盘菜单显示正确的勾选态（失败静默） */
@@ -821,90 +866,81 @@ async function syncCoreModeFromApi() {
   } catch {}
 }
 
-// 主流代理工具进程名（Windows）→ 用于进程级冲突检测。
-// 注意排除自家内核（mihomo/sing-box 由本软件拉起，不算冲突）。
-const PROXY_PROCESS_NAMES = [
-  ["clash.exe", "Clash for Windows"],
-  ["clash-verge.exe", "Clash Verge"],
-  ["verge.exe", "Clash Verge"],
-  ["clash-verge-service.exe", "Clash Verge Service"],
-  ["clash-win.exe", "Clash"],
-  ["v2rayn.exe", "v2rayN"],
-  ["v2ray.exe", "v2ray"],
-  ["xray.exe", "Xray"],
-  ["qv2ray.exe", "Qv2ray"],
-  ["nekoray.exe", "NekoRay"],
-  ["nekobox.exe", "NekoBox"],
-  ["shadowsocks.exe", "Shadowsocks"],
-  ["shadowsocks-qt5.exe", "Shadowsocks-Qt5"],
-  ["ss-local.exe", "Shadowsocks"],
-  ["trojan.exe", "Trojan"],
-  ["trojan-go.exe", "Trojan-Go"],
-  ["hysteria.exe", "Hysteria"],
-  ["proxifier.exe", "Proxifier"],
-];
+// ---------------------------------------------------------------------------
+// 冲突检测 — 委托给 conflict-guard.cjs（全面双向互斥）
+// ---------------------------------------------------------------------------
 
-// 进程级检测：Windows 用 tasklist 列出进程名，匹配主流代理工具。
-// 失败/非 Windows 平台安全返回空数组，不影响端口检测。
-function detectProxyProcesses() {
-  return new Promise((resolve) => {
-    if (process.platform !== "win32") return resolve([]);
-    try {
-      execFile("tasklist", ["/fo", "csv", "/nh"], { windowsHide: true, timeout: 4000 }, (err, stdout) => {
-        if (err) return resolve([]);
-        const out = String(stdout || "").toLowerCase();
-        const hits = [];
-        for (const [proc, label] of PROXY_PROCESS_NAMES) {
-          // CSV 每行形如 "clash.exe","1234","Console","1","5,000 K"，按带引号的进程名精确匹配
-          if (out.includes(`"${proc}"`)) hits.push(`${label}（进程 ${proc}）`);
-        }
-        resolve([...new Set(hits)]);
-      });
-    } catch {
-      resolve([]);
-    }
-  });
-}
-
+/** 启动前冲突检测（快速版：进程+端口，排除系统级以保启动速度） */
 async function detectOtherProxy() {
-  const conflicts = [];
-  // 常见代理软件端口
-  const commonPorts = [
-    [7890, "Clash/Verge"],
-    [7891, "Clash"],
-    [9090, "Clash 控制端"],
-    [10808, "v2rayN"],
-    [10809, "v2rayN"],
-    [1080, "SOCKS 代理"],
-  ];
-  const net = require("net");
-  for (const [port, label] of commonPorts) {
-    // 跳过我们自己的端口
-    if (port === MIXED_PORT) continue;
-    const inUse = await new Promise((resolve) => {
-      const s = net.connect(port, "127.0.0.1");
-      s.on("connect", () => { s.end(); resolve(true); });
-      s.on("error", () => resolve(false));
-      setTimeout(() => { s.destroy(); resolve(false); }, 800);
-    });
-    if (inUse) conflicts.push(`${label} (端口 ${port} 被占用)`);
-  }
-  // 端口检测之外补进程级检测（更可靠，避免端口改过就漏报）
-  const procs = await detectProxyProcesses();
-  conflicts.push(...procs);
-  return conflicts;
+  const { conflicts } = await conflictGuard.fullScan({
+    myPorts: [MIXED_PORT, Number(CONTROLLER.split(":")[1]) || 0],
+    includeSystem: false,
+  });
+  return conflicts.map((c) => c.label);
 }
 
-// 启动内核前的冲突拦截：开启 blockConflict 且检测到其他代理工具时返回冲突列表，
-// 由调用方决定是拒绝启动还是仅提示。返回 [] 表示可安全启动。
+/** 启动前冲突拦截：开启 blockConflict 且检测到其他代理工具时返回冲突列表 */
 async function checkConflictForStart() {
   if (!(appSettings && appSettings.blockConflict)) return [];
   return await detectOtherProxy();
 }
 
+/** 运行时监控：检测到 Veyra-omini 已在运行（自身互斥） */
+async function detectSelfConflict() {
+  return await conflictGuard.detectSelfConflict();
+}
+
+/** Windows：找出监听指定端口的进程 PID（失败返回 null，不抛错） */
+function findPidListeningOn(port) {
+  return new Promise((resolve) => {
+    if (process.platform !== "win32" || !port) return resolve(null);
+    execFile("netstat", ["-ano"], { windowsHide: true, timeout: 4000 }, (err, stdout) => {
+      if (err) return resolve(null);
+      for (const line of String(stdout || "").split(/\r?\n/)) {
+        const m = line.match(/\s(?:\S+):(\d+)\s+\S+\s+LISTENING\s+(\d+)/i);
+        if (m && m[1] === String(port)) return resolve(Number(m[2]));
+      }
+      resolve(null);
+    });
+  });
+}
+
+/** Windows：查询进程可执行文件路径（wmic 不可用时返回 null） */
+function findProcessExePath(pid) {
+  return new Promise((resolve) => {
+    if (process.platform !== "win32" || !pid) return resolve(null);
+    execFile(
+      "wmic",
+      ["process", "where", `ProcessId=${pid}`, "get", "ExecutablePath", "/value"],
+      { windowsHide: true, timeout: 4000 },
+      (err, stdout) => {
+        if (err) return resolve(null);
+        const m = String(stdout || "").match(/ExecutablePath=(.+)/i);
+        resolve(m ? m[1].trim() : null);
+      }
+    );
+  });
+}
+
+/** 收养内核时：确认端口占用者是否为本应用 bin 目录下的自家内核，是则纳入自家 PID 集合。
+ *  只有当可执行文件确实位于本应用 bin 目录才认定为自己人，外部 Clash/mihomo 不排除。 */
+async function adoptOwnCorePid() {
+  try {
+    const port = Number(String(CONTROLLER).split(":")[1]) || 0;
+    const pid = await findPidListeningOn(port);
+    if (!pid) return;
+    const exe = await findProcessExePath(pid);
+    if (!exe) return;
+    const binDir = path.dirname(coreBinPath(activeCore));
+    if (path.resolve(exe).toLowerCase().startsWith(path.resolve(binDir).toLowerCase())) {
+      conflictGuard.setOwnCorePids([pid]);
+    }
+  } catch {}
+}
+
 async function startCore() {
   const bin = coreBinPath(activeCore);
-  const coreLabel = activeCore === "singbox" ? "sing-box" : "mihomo";
+  const coreLabel = activeCore === "singbox" ? "sing-box" : "Mihomo";
   if (!fs.existsSync(bin)) {
     toastNotify("内核未找到", `${coreLabel} 未安装，请到设置 → 代理服务 里下载`);
     throw new Error(`内核(${coreLabel})未找到: ${bin}，请到 设置 → 代理服务 里下载/切换内核`);
@@ -920,12 +956,27 @@ async function startCore() {
       // 收养路径：内核是外部进程，本进程不知道它是否开着系统代理。
       // 主动读一次注册表同步 sysProxyOn 变量，否则 UI orb 变绿但托盘/开关状态飘移。
       await syncSystemProxyState();
+      // 收养场景附加动作：如果端口占用者是自家 bin 下的内核（上个实例遗留的孤儿进程），
+      // 把它的 PID 纳入自家集合，避免自检/运行时监控把它误报成「其它代理软件」。
+      if (!coreProc) await adoptOwnCorePid();
       if (!coreProc && mainWindow) {
         const proxyHint = sysProxyOn ? "系统代理已生效" : "系统代理未生效（需手动开启）";
         mainWindow.webContents.send(
           "core:log",
-          `[veyra] controller ${CONTROLLER} 已有响应，收养为运行态（非本进程拉起，PID 未知，${proxyHint}）。如非 Veyra 内核请更换控制端口。\n`
+          `[veyra] controller ${CONTROLLER} 已有响应，收养为运行态（非本进程拉起，PID 未知，${proxyHint}）。如非 Veyra-omini 内核请更换控制端口。\n`
         );
+      }
+      // 收养路径同样注册自身标识（让外部代理能检测到 Veyra-omini）
+      if (appSettings.registerIdentity !== false) {
+        conflictGuard.registerSelfIdentity({
+          pid: process.pid,
+          mixedPort: MIXED_PORT,
+          controllerPort: CONTROLLER,
+          secret: SECRET,
+          coreMode: appSettings.coreMode,
+          version: ver.data ? (ver.data.version || ver.data.PVersion || "") : app.getVersion(),
+        });
+        _startRuntimeConflictMonitor();
       }
       return { already: true, version: ver.data };
     }
@@ -954,6 +1005,9 @@ async function startCore() {
     windowsHide: true,
   });
   const spawned = coreProc;
+  // 把自家内核 PID 告知冲突扫描：否则内核一启动，「其它代理软件」检测会把
+  // 自己 spawn 的 mihomo/sing-box 误报成外部软件（自检页 + 运行时横幅都会误报）。
+  conflictGuard.setOwnCorePids(coreProc.pid ? [coreProc.pid] : []);
   const onData = (buf) => {
     const line = buf.toString();
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("core:log", line);
@@ -963,6 +1017,7 @@ async function startCore() {
   // spawn 失败（无执行权限/被杀软拦截/二进制损坏）若无监听会抛未捕获异常致主进程崩溃
   coreProc.on("error", (err) => {
     if (coreProc === spawned) coreProc = null;
+    conflictGuard.setOwnCorePids([]);
     setCoreOnline(false, { code: -1, error: String((err && err.message) || err) });
   });
   coreProc.on("exit", (code) => {
@@ -970,6 +1025,7 @@ async function startCore() {
     // 不校验会误清新内核 coreProc 引用、并清掉刚恢复的系统代理。
     if (coreProc !== spawned) return;
     coreProc = null;
+    conflictGuard.setOwnCorePids([]);
     // 进程异常退出时清掉我们留下的系统代理，避免指向死端口
     clearOurSystemProxy()
       .catch(() => {})
@@ -979,6 +1035,18 @@ async function startCore() {
   try {
     const ver = await waitController();
     setCoreOnline(true, { version: ver });
+    // 内核已成功启动，注册自身标识（让外部代理软件能检测到 Veyra-omini）
+    if (appSettings.registerIdentity !== false) {
+      conflictGuard.registerSelfIdentity({
+        pid: process.pid,
+        mixedPort: MIXED_PORT,
+        controllerPort: CONTROLLER,
+        secret: SECRET,
+        coreMode: appSettings.coreMode,
+        version: ver || app.getVersion(),
+      });
+      _startRuntimeConflictMonitor();
+    }
     await syncCoreModeFromApi();
     return { version: ver };
   } catch (e) {
@@ -1019,12 +1087,14 @@ async function _doStopCore(opts = {}) {
       // 留一点时间让端口释放，避免下一次 startCore 误判成「已被占用」
       await new Promise((r) => setTimeout(r, 300));
     }
+    conflictGuard.setOwnCorePids([]);
     setCoreOnline(false);
     return;
   }
   return new Promise((resolve) => {
     const p = coreProc;
     coreProc = null;
+    conflictGuard.setOwnCorePids([]);
     coreMemCache = { mb: 0, t: 0 };
     let settled = false;
     const done = () => {
@@ -1051,6 +1121,46 @@ async function _doStopCore(opts = {}) {
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// 运行时冲突监控：检测其他代理软件在我们运行期间启动
+// ---------------------------------------------------------------------------
+
+function _startRuntimeConflictMonitor() {
+  _stopRuntimeConflictMonitor();
+  conflictGuard.startMonitor(
+    // 发现新冲突
+    (items) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("conflict:detected", {
+          items: items.map((c) => c.label),
+          at: new Date().toISOString(),
+        });
+      }
+      toastNotify(
+        "检测到其他代理软件启动",
+        `${items.map((c) => c.label).join("、")} 可能正在占用代理端口或系统代理。建议关闭避免冲突。`
+      );
+    },
+    // 冲突已消失
+    () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("conflict:resolved", { at: new Date().toISOString() });
+      }
+    },
+    5000
+  );
+}
+
+function _stopRuntimeConflictMonitor() {
+  conflictGuard.stopMonitor();
+}
+
+// 退出时清理
+app.on("before-quit", () => {
+  _stopRuntimeConflictMonitor();
+  conflictGuard.unregisterSelfIdentity();
+});
 
 function regAdd(args) {
   return new Promise((resolve) => {
@@ -1112,7 +1222,7 @@ async function getSystemProxyStatus() {
   const serverOut = await regQuery(["query", key, "/v", "ProxyServer"]);
   const m = serverOut.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
   const server = m ? m[1].trim() : "";
-  // 严格判定：注册表必须精确指向当前 MIXED_PORT，才算 Veyra 接管。
+  // 严格判定：注册表必须精确指向当前 MIXED_PORT，才算 Veyra-omini 接管。
   // 旧逻辑把 DEFAULT_MIXED / 设置端口都算 ours，端口漂移(+10003)后旧注册表指向死端口也会误判为开。
   let ours = false;
   if (enabled && server) {
@@ -1349,7 +1459,7 @@ Invoke-WebRequest -Uri '${url}' -OutFile '${tmp.replace(/'/g, "''")}' -Headers @
 }
 
 async function updateCoreBinary(core = activeCore) {
-  const label = core === "singbox" ? "sing-box" : "mihomo";
+  const label = core === "singbox" ? "sing-box" : "Mihomo";
   // 只停正在跑的核：更新非当前核时只下载不动服务。
   // 注意含「收养的遗留内核」场景：coreProc 为空但 controller 可达，也必须先停，
   // 否则 Windows 下二进制被占用，删除/替换会静默失败，用户以为更新了实际还是旧版。
@@ -1496,7 +1606,7 @@ function coreList() {
 async function switchCore(next) {
   if (next !== "mihomo" && next !== "singbox") throw new Error(`未知内核：${next}`);
   if (next === activeCore) return { core: activeCore, info: coreInfo() };
-  const label = next === "singbox" ? "sing-box" : "mihomo";
+  const label = next === "singbox" ? "sing-box" : "Mihomo";
   const wasRunning = !!coreProc || coreOnline;
   const wasProxy = sysProxyOn;
   await stopCore({ clearProxy: true });
@@ -1619,6 +1729,14 @@ function createWindow() {
   };
   mainWindow.webContents.on("did-finish-load", pushStateNow);
   mainWindow.on("show", pushStateNow);
+
+  // 最大化状态变化推送到渲染层（标题栏「最大化/还原」按钮切换图标用）
+  const pushMaximized = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("window:maximized", mainWindow.isMaximized());
+  };
+  mainWindow.on("maximize", pushMaximized);
+  mainWindow.on("unmaximize", pushMaximized);
 }
 
 function iconsDir() {
@@ -1737,14 +1855,14 @@ function updateTray() {
     img = loadTrayImage(proxyActive);
   }
   if (!img.isEmpty()) tray.setImage(img);
-  const coreLabel = activeCore === "singbox" ? "sing-box" : "mihomo";
+  const coreLabel = activeCore === "singbox" ? "sing-box" : "Mihomo";
   let tip;
   if (proxyActive) {
-    tip = `Veyra · 代理生效中（绿点）\n${coreLabel} · 127.0.0.1:${MIXED_PORT} · 系统代理：开`;
+    tip = `Veyra-omini · 代理生效中（绿点）\n${coreLabel} · 127.0.0.1:${MIXED_PORT} · 系统代理：开`;
   } else if (coreOnline) {
-    tip = `Veyra · 内核运行中，系统代理关（灰点）\n${coreLabel} · 127.0.0.1:${MIXED_PORT} · 在窗口或托盘菜单打开系统代理`;
+    tip = `Veyra-omini · 内核运行中，系统代理关（灰点）\n${coreLabel} · 127.0.0.1:${MIXED_PORT} · 在窗口或托盘菜单打开系统代理`;
   } else {
-    tip = `Veyra · 未连接（灰点）\n当前内核：${coreLabel}`;
+    tip = `Veyra-omini · 未连接（灰点）\n当前内核：${coreLabel}`;
   }
   tray.setToolTip(tip);
   const statusLabel = proxyActive
@@ -1782,7 +1900,7 @@ function updateTray() {
         click: async () => {
           try {
             if (!coreOnline) {
-              trayBalloon("Veyra", "内核未运行，无法开启系统代理");
+              trayBalloon("Veyra-omini", "内核未运行，无法开启系统代理");
               return;
             }
             await setSystemProxy(!sysProxyOn);
@@ -1861,7 +1979,7 @@ function buildTrayProxySubmenu() {
             ([, v]) => v && ["Selector", "URLTest", "Fallback", "LoadBalance"].includes(v.type)
           );
           if (!groups.length) {
-            trayBalloon("Veyra", "暂无策略组");
+            trayBalloon("Veyra-omini", "暂无策略组");
             return;
           }
           const submenu = [];
@@ -1890,7 +2008,7 @@ function buildTrayProxySubmenu() {
             ])
           );
         } catch (e) {
-          trayBalloon("Veyra", String(e.message || e));
+          trayBalloon("Veyra-omini", String(e.message || e));
         }
       },
     },
@@ -1940,11 +2058,12 @@ function registerIpc() {
     if (!mainWindow) return;
     mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
   });
+  ipcMain.handle("window:isMaximized", () => !!mainWindow?.isMaximized());
   ipcMain.handle("window:close", () => {
     if (appSettings?.closeToTray !== false) {
       mainWindow?.hide();
       trayBalloon(
-        "Veyra 已最小化到托盘",
+        "Veyra-omini 已最小化到托盘",
         coreOnline
           ? `代理仍在后台运行（127.0.0.1:${MIXED_PORT}）。点击托盘图标可重新打开窗口。`
           : "代理服务未运行。点击托盘图标可重新打开窗口。"
@@ -2248,7 +2367,7 @@ function registerIpc() {
   });
   ipcMain.handle("verge:backupImport", async () => {
     const picked = await dialog.showOpenDialog(mainWindow, {
-      title: "导入 Veyra 备份",
+      title: "导入 Veyra-omini 备份",
       filters: [{ name: "ZIP", extensions: ["zip"] }],
       properties: ["openFile"],
     });
@@ -2311,6 +2430,30 @@ function registerIpc() {
   });
   ipcMain.handle("verge:exitIp", async () => vergeExt.fetchExitIp(MIXED_PORT));
   ipcMain.handle("system:detectProxyConflict", async () => detectOtherProxy());
+  // 完整冲突扫描（含系统代理 / DNS / 路由表）— 手动扫描用
+  ipcMain.handle("system:fullConflictScan", async () => {
+    const { conflicts, summary } = await conflictGuard.fullScan({
+      myPorts: [MIXED_PORT, Number(CONTROLLER.split(":")[1]) || 0],
+      includeSystem: true,
+    });
+    return { conflicts, summary };
+  });
+  // 端口可用性自检：直接尝试绑定，判断我们配置的端口能不能用。
+  // fullConflictScan 只扫一份「已知代理端口」清单、并且会跳过自身端口，
+  // 所以它测不出「用户把端口改成 7890 后被别的软件占了」这类问题。
+  ipcMain.handle("system:checkPorts", async () => {
+    const ctrlPort = Number(CONTROLLER.split(":")[1]) || 0;
+    const [mixedFree, ctrlFree] = await Promise.all([portFree(MIXED_PORT), portFree(ctrlPort)]);
+    return { mixedPort: MIXED_PORT, controllerPort: ctrlPort, mixedFree, ctrlFree };
+  });
+  // 启动 / 停止运行时冲突监控
+  ipcMain.handle("system:startConflictMonitor", async (_e, on) => {
+    if (on) _startRuntimeConflictMonitor();
+    else _stopRuntimeConflictMonitor();
+    return { ok: true };
+  });
+  // 获取自身标识信息（供 UI 展示/调试）
+  ipcMain.handle("system:getSelfIdentity", async () => conflictGuard.getSelfIdentity());
   ipcMain.handle("verge:streaming", async () => streamingUnlock.runUnlockChecks(MIXED_PORT));
   ipcMain.handle("verge:streamingOne", async (_e, id) => streamingUnlock.runOne(MIXED_PORT, id));
   ipcMain.handle("verge:unlockCatalog", async () => streamingUnlock.catalog());
@@ -2718,11 +2861,11 @@ app.whenReady().then(async () => {
   // 服务没起来却还指着我们的端口 → 关掉，避免整机断网
   if (!coreOnline) {
     await clearOurSystemProxy();
-    trayBalloon("Veyra 已启动（托盘）", "代理服务未能启动，请打开窗口查看日志。托盘图标为灰色状态。");
+    trayBalloon("Veyra-omini 已启动（托盘）", "代理服务未能启动，请打开窗口查看日志。托盘图标为灰色状态。");
   } else {
     await syncSystemProxyState();
     trayBalloon(
-      "Veyra 已启动（托盘）",
+      "Veyra-omini 已启动（托盘）",
       `代理服务运行中 · 127.0.0.1:${MIXED_PORT}。托盘绿点 = 系统代理已生效。`
     );
   }

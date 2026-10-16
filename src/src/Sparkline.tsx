@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useId } from "react";
 
 type Props = {
   data: number[];
@@ -20,6 +20,8 @@ function Sparkline({
   const min = 0;
   const span = Math.max(max - min, 1);
   const step = pts.length > 1 ? width / (pts.length - 1) : width;
+  // 渐变面积填充：顶 0.26 → 底 0.02，比纯色低透明更有体积感
+  const gid = `spark-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
 
   const coords = pts.map((v, i) => {
     const x = i * step;
@@ -31,10 +33,21 @@ function Sparkline({
   const area = `0,${height} ${line} ${width},${height}`;
 
   return (
-    <svg className="sparkline" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden>
-      {fill && (
-        <polygon points={area} fill={color} opacity={0.12} />
-      )}
+    <svg
+      className="sparkline"
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.26" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      {fill && <polygon points={area} fill={`url(#${gid})`} />}
       <polyline
         points={line}
         fill="none"
@@ -42,6 +55,7 @@ function Sparkline({
         strokeWidth="1.6"
         strokeLinejoin="round"
         strokeLinecap="round"
+        vector-effect="non-scaling-stroke"
       />
     </svg>
   );

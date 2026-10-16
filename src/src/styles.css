@@ -2689,25 +2689,101 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   background: var(--line);
 }
 
-/* ── 解锁状态 · 空态（v15）─────────────────────────────────────
-   未测试时不再罗列 6 行「未测试」（等于 6 行无信息），
-   收敛成一句说明 + 唯一动作，卡片高度随之减半。 */
-.unlock-empty {
+/* ── 解锁状态 · 聚合网格（v16）─────────────────────────────────
+   6 个品牌磁贴代替 6 行文字：未测试时整体去饱和，测出结果恢复品牌色。
+   颜色本身就是状态信号 —— 不用逐行读文字就知道哪些通、哪些不通。 */
+.unlock-grid {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
+  gap: 10px;
 }
-.unlock-empty p {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text-300);
-}
-.unlock-empty small {
+.unlock-row-label {
+  margin-bottom: 6px;
   font-size: 11px;
-  line-height: 1.5;
+  font-weight: 500;
   color: var(--text-500);
 }
+.unlock-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.unlock-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 4px 7px;
+  border: 0.5px solid transparent;
+  border-radius: var(--radius-md);
+  transition: background 0.2s var(--ease);
+}
+.unlock-tile:hover { background: var(--hover); }
+.unlock-tile:disabled { cursor: default; }
+.unlock-tile-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: var(--brand, var(--text-600));
+  /* 未测试 = 去饱和（颜色即状态） */
+  filter: grayscale(1) opacity(0.38);
+  transition: filter 0.25s var(--ease), box-shadow 0.25s var(--ease);
+}
+.unlock-tile.ok .unlock-tile-mark {
+  filter: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 38%, transparent);
+}
+.unlock-tile.fail .unlock-tile-mark {
+  filter: grayscale(1) opacity(0.5);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bad) 38%, transparent);
+}
+.unlock-tile.no .unlock-tile-mark { filter: grayscale(0.6) opacity(0.5); }
+.unlock-tile.busy .unlock-tile-mark {
+  filter: none;
+  animation: unlockPulse 1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes unlockPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+}
+.unlock-tile-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-400);
+}
+.unlock-tile.ok .unlock-tile-name { color: var(--text-200); }
+.unlock-tile-dot {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+}
+.unlock-tile-dot.ok { background: var(--ok); }
+.unlock-tile-dot.fail { background: var(--bad); }
+.unlock-tile-dot.no { background: var(--text-500); }
+.unlock-foot {
+  padding-top: 2px;
+  font-size: 11px;
+  color: var(--text-500);
+}
+/* 品牌色：未测试时被上面的 grayscale 压掉，测出来才显色 */
+.unlock-tile[data-brand="chatgpt"] { --brand: #10a37f; }
+.unlock-tile[data-brand="claude"] { --brand: #d97757; }
+.unlock-tile[data-brand="gemini"] { --brand: #4285f4; }
+.unlock-tile[data-brand="netflix"] { --brand: #e50914; }
+.unlock-tile[data-brand="disney"] { --brand: #113ccf; }
+.unlock-tile[data-brand="youtube"] { --brand: #ff0000; }
 
 /* ── 顶栏时钟（v13：从右栏「系统时间」卡收进顶栏）────────────
    时间属窗口级信息，不值得在右栏独占一张卡。 */

@@ -490,6 +490,76 @@ const RAIL_UNLOCK_GROUPS: { key: string; label: string; ids: [string, string][] 
   },
 ];
 
+/* 简化几何标识。
+   说明：右栏只有 324px 宽，直接内嵌各家官方 SVG 会带来体积与授权上的麻烦；
+   这里用「品牌色底 + 白色简化标识」表达品牌识别，需要官方 logo 时只替换下面的 path 即可。
+   品牌色写在 CSS（用 [data-brand] 选择器），未测试时整块去饱和、测出结果恢复品牌色——
+   颜色本身就是状态信号。 */
+function BrandMark({ id }: { id: string }) {
+  const svg = (children: ReactNode) => (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      {children}
+    </svg>
+  );
+  switch (id) {
+    case "chatgpt":
+      // 六边形花环 + 中心点（OpenAI 标记的几何简化）
+      return svg(
+        <>
+          <path
+            d="M12 3.4 19.4 7.7v8.6L12 20.6 4.6 16.3V7.7z"
+            fill="none"
+            stroke="#fff"
+            strokeWidth="1.9"
+            strokeLinejoin="round"
+          />
+          <circle cx="12" cy="12" r="2.1" fill="#fff" />
+        </>
+      );
+    case "claude":
+      // 八道星芒
+      return svg(
+        <path
+          d="M12 4v16M4 12h16M6.4 6.4l11.2 11.2M17.6 6.4 6.4 17.6"
+          stroke="#fff"
+          strokeWidth="1.9"
+          strokeLinecap="round"
+        />
+      );
+    case "gemini":
+      // 四角星
+      return svg(
+        <path
+          d="M12 3c.7 4.6 3.4 7.3 8 8-4.6.7-7.3 3.4-8 8-.7-4.6-3.4-7.3-8-8 4.6-.7 7.3-3.4 8-8z"
+          fill="#fff"
+        />
+      );
+    case "netflix":
+      // 斜体 N
+      return svg(
+        <path d="M8.4 3.4h2.3l4.9 11.9V3.4h2.3v17.2h-2.3L10.7 8.7v11.9H8.4z" fill="#fff" />
+      );
+    case "disney":
+      // 城堡拱门
+      return svg(
+        <path
+          d="M12 4.2 14 6.6 16 4.2l1.2 2.6h1.5v12.7H5.3V6.8h1.5L8 4.2l2 2.4z"
+          fill="#fff"
+        />
+      );
+    case "youtube":
+      // 圆角矩形 + 播放三角（三角取品牌色，露出底色）
+      return svg(
+        <>
+          <rect x="2.4" y="5.6" width="19.2" height="12.8" rx="3.6" fill="#fff" />
+          <path d="M10.4 9.2v5.6l5-2.8z" fill="var(--brand, #e50914)" />
+        </>
+      );
+    default:
+      return svg(<circle cx="12" cy="12" r="6" fill="#fff" />);
+  }
+}
+
 // 首页卡片信息行：图标点缀 + 标签/值居中 + 明显描边框
 function InfoRow({
   icon: Icon,
@@ -1365,14 +1435,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   }, [running, refreshExitIp]);
 
   // 右栏解锁状态：全量测试（串行，耗时长）。切换内核后结果即失效，由调用方决定何时重跑。
-  // 是否有任一测试结果：全未测试时整卡收敛为引导态
-  // （6 行「未测试」= 6 行无信息，还占掉一整张卡的高度）
-  const hasUnlockResult = RAIL_UNLOCK_GROUPS.some((g) =>
-    g.ids.some(([id]) => {
-      const st = unlockMap[id];
-      return !!(st && st.testedAt);
-    })
-  );
   const testAllUnlock = useCallback(async () => {
     const api = window.veyra?.streamingUnlock;
     if (!api) {
@@ -3067,69 +3129,56 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 <div className="card-body tight">
                   {!running ? (
                     <div className="text-xs text-muted">内核未运行</div>
-                  ) : hasUnlockResult ? (
-                    <div className="rail-unlock">
+                  ) : (
+                    /* v16 聚合式：品牌磁贴网格。原来 6 行「未测试」文字换成 6 个品牌图标，
+                       未测试时整块去饱和，测出结果恢复品牌色 + 状态角标——一眼扫完。 */
+                    <div className="unlock-grid">
                       {RAIL_UNLOCK_GROUPS.map((g) => (
-                        <div key={g.key} className="rail-unlock-group">
-                          <div className="rail-unlock-label">{g.label}</div>
-                          {g.ids.map(([id, name]) => {
-                            const st = unlockMap[id];
-                            const busy = unlockBusy === id || unlockBusy === "__all__";
-                            const tested = !!(st && st.testedAt);
-                            const ok = tested && st.ok;
-                            const fail = tested && !st.ok && !!st.fail;
-                            // 三态：已解锁 / 不支持 / 检测失败；未测为中性灰点
-                            const cls = busy ? "busy" : ok ? "ok" : fail ? "fail" : tested ? "no" : "idle";
-                            const note = busy
-                              ? "检测中"
-                              : !tested
-                                ? "未测试"
-                                : ok
-                                  ? st.region || st.note || "支持"
-                                  : fail
-                                    ? "检测失败"
-                                    : st.note || "不支持";
-                            return (
-                              <button
-                                key={id}
-                                type="button"
-                                className="rail-unlock-item"
-                                onClick={() => testOneUnlock(id)}
-                                disabled={busy}
-                                title={`${name} · ${note}（点击重新检测）`}
-                              >
-                                <i className={`rail-unlock-dot ${cls}`} />
-                                <span className="rail-unlock-name">{name}</span>
-                                <span className={`rail-unlock-note${ok ? " ok" : ""}`}>{note}</span>
-                              </button>
-                            );
-                          })}
+                        <div key={g.key} className="unlock-row">
+                          <div className="unlock-row-label">{g.label}</div>
+                          <div className="unlock-tiles">
+                            {g.ids.map(([id, name]) => {
+                              const st = unlockMap[id];
+                              const busy = unlockBusy === id || unlockBusy === "__all__";
+                              const tested = !!(st && st.testedAt);
+                              const ok = tested && st.ok;
+                              const fail = tested && !st.ok && !!st.fail;
+                              // 三态：已解锁 / 不支持 / 检测失败；未测为去饱和
+                              const cls = busy ? "busy" : ok ? "ok" : fail ? "fail" : tested ? "no" : "idle";
+                              const note = busy
+                                ? "检测中"
+                                : !tested
+                                  ? "未测试"
+                                  : ok
+                                    ? st.region || st.note || "支持"
+                                    : fail
+                                      ? "检测失败"
+                                      : st.note || "不支持";
+                              return (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  className={`unlock-tile ${cls}`}
+                                  data-brand={id}
+                                  onClick={() => testOneUnlock(id)}
+                                  disabled={busy}
+                                  title={`${name} · ${note}（点击检测）`}
+                                  aria-label={`${name} · ${note}`}
+                                >
+                                  <span className="unlock-tile-mark">
+                                    <BrandMark id={id} />
+                                  </span>
+                                  <span className="unlock-tile-name">{name}</span>
+                                  <i className={`unlock-tile-dot ${cls}`} aria-hidden="true" />
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       ))}
-                      <div className="text-xs text-muted" style={{ marginTop: 2 }}>
-                        完整 12 项见「测试」页
+                      <div className="unlock-foot">
+                        {t("unlock.footTip", "点图标单独检测 · 完整 12 项见「测试」页")}
                       </div>
-                    </div>
-                  ) : (
-                    /* 空态：不说六遍「未测试」，直接给唯一的动作 */
-                    <div className="unlock-empty">
-                      <p>{t("unlock.notTestedYet", "尚未测试任何服务")}</p>
-                      <small>
-                        {t(
-                          "unlock.emptyHint",
-                          "测试后可查看 ChatGPT、Netflix 等 12 项在当前节点下的可达性"
-                        )}
-                      </small>
-                      <button
-                        type="button"
-                        className="btn primary btn-xs"
-                        onClick={testAllUnlock}
-                        disabled={!!unlockBusy}
-                      >
-                        {unlockBusy === "__all__"
-                          ? t("unlock.testing", "测试中…")
-                          : t("unlock.startTest", "开始测试")}
-                      </button>
                     </div>
                   )}
                 </div>

@@ -285,6 +285,7 @@ export interface VeyraAPI {
   onConflictDetected?: (cb: (data: { items: string[]; severity: "critical" | "high" | "medium"; at: string }) => void) => () => void;
   onConflictResolved?: (cb: (data: { at: string; autoRecover?: boolean }) => void) => () => void;
   onConflictBlockStartup?: (cb: (data: { conflicts: string[]; severity: string; rawConflicts: Array<{ type: string; proc?: string; label: string; pids?: number[]; port?: number }>; at: string }) => void) => () => void;
+  resolveExternalProxy?: () => Promise<{ ok: boolean; killed: number[]; failed: number[]; conflicts?: string[] }>;
   killProxyProcesses?: (pids: number[]) => Promise<{ killed: number[]; failed: number[] }>;
   retryStartAfterConflict?: () => Promise<{ ok: boolean; conflicts?: string[]; severity?: string; error?: string }>;
   onNotice?: (cb: (data: { message: string; at: string }) => void) => () => void;

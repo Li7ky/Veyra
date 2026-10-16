@@ -943,28 +943,24 @@ async function detectOtherProxy() {
   return result.conflicts.map((c) => c.label);
 }
 
-/** 启动前冲突检测（返回详细结果含严重度） */
+/** 启动前冲突检测：只阻止外部软件实际接管系统代理。
+ *  外部代理进程已打开、但没有应用系统代理时，不属于启动冲突。 */
 async function detectOtherProxyDetailed() {
-  const ctrlPort = Number(CONTROLLER.split(":")[1]) || 0;
   const result = await conflictGuard.fullScan({
-    myPorts: [MIXED_PORT, ctrlPort],
-    myCustomPorts: [MIXED_PORT, ctrlPort],
     includeSystem: false,
     includeSystemProxy: true,
   });
-  // 系统代理指向 Veyra 自己时是正常状态，不能在启动/重启时把自己拦截。
+  // 进程/端口监听不代表系统代理已生效；这里只保留系统代理冲突。
   result.conflicts = result.conflicts.filter((c) =>
-    c.type !== "system-proxy" || !isOurProxyServer(c.server)
+    c.type === "system-proxy" && !isOurProxyServer(c.server)
   );
-  if (result.conflicts.length === 0) {
-    result.severity = "none";
-    result.counts = { critical: 0, high: 0, medium: 0 };
-  }
+  result.severity = result.conflicts.length > 0 ? "high" : "none";
+  result.counts = { critical: 0, high: result.conflicts.length, medium: 0 };
   return result;
 }
 
-/** 启动前冲突检测：任何检测到的外部代理进程或代理端口占用都会阻止启动。
- *  只有扫描结果为空时才允许启动。 */
+/** 启动前冲突检测：只有外部系统代理实际生效时才阻止启动。
+ *  其他代理软件仅打开但未应用系统代理时允许 Veyra 启动。 */
 async function checkConflictForStart() {
   const result = await detectOtherProxyDetailed();
   return {
@@ -977,6 +973,29 @@ async function checkConflictForStart() {
 /** 运行时监控：检测到 Veyra-omini 已在运行（自身互斥） */
 async function detectSelfConflict() {
   return await conflictGuard.detectSelfConflict();
+}
+
+/** 关闭外部系统代理并退出已检测到的代理软件。 */
+async function resolveExternalProxyConflict() {
+  const proxyState = await systemProxyStatusRaw();
+  if (proxyState.enabled) {
+    await vergeExt.setWinProxyMode({
+      mode: "off",
+      mixedPort: MIXED_PORT,
+      bypass: appSettings?.proxyBypass || DEFAULT_SETTINGS.proxyBypass,
+      regAdd,
+      refreshWinInet,
+    });
+    sysProxyOn = false;
+    notifySysProxy();
+    updateTray();
+  }
+  const processes = await conflictGuard.detectProxyProcesses();
+  const pids = processes.flatMap((item) => Array.isArray(item.pids) ? item.pids : []);
+  const result = await killProxyProcesses([...new Set(pids)]);
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const check = await checkConflictForStart();
+  return { ...result, ok: check.conflicts.length === 0, conflicts: check.conflicts };
 }
 
 /** 一键关闭其他代理软件：按 PID 终止进程 */
@@ -1070,7 +1089,7 @@ function startCore() {
   startingCore = (async () => {
     const { conflicts, severity, rawConflicts } = await checkConflictForStart();
     if (conflicts.length > 0) {
-      const msg = `检测到其他代理软件正在运行：${conflicts.join("、")}。已阻止启动以避免冲突，请先关闭其他代理软件后重试。`;
+      const msg = `检测到其他软件已启用系统代理：${conflicts.join("、")}。已阻止启动，请先停止外部系统代理并退出对应软件后重试。`;
       if (mainWindow && !mainWindow.isDestroyed()) {
         sendStartupConflict({
           conflicts,
@@ -1417,7 +1436,14 @@ function _startRuntimeConflictMonitor() {
         startCore().catch(() => {});
       }
     },
-    5000
+    5000,
+    [],
+    {
+      includeSystemProxy: true,
+      filterConflicts: (items) => items.filter((c) =>
+        c.type === "system-proxy" && !isOurProxyServer(c.server)
+      ),
+    }
   );
 }
 
@@ -2375,7 +2401,7 @@ function registerIpc() {
   ipcMain.handle("core:start", async () => {
     const { conflicts, severity, rawConflicts } = await checkConflictForStart();
     if (conflicts.length > 0) {
-      const msg = `检测到其他代理软件正在运行：${conflicts.join("、")}。已阻止启动以避免冲突，请先关闭其他代理软件后重试。`;
+      const msg = `检测到其他软件已启用系统代理：${conflicts.join("、")}。已阻止启动，请先停止外部系统代理并退出对应软件后重试。`;
       if (mainWindow && !mainWindow.isDestroyed()) {
         sendStartupConflict({
           conflicts,
@@ -2390,7 +2416,10 @@ function registerIpc() {
     return startCore();
   });
 
-  // 一键关闭其他代理软件
+  // 停止外部系统代理并退出检测到的代理软件，然后重新检测
+  ipcMain.handle("conflict:resolveExternal", async () => resolveExternalProxyConflict());
+
+  // 保留底层 PID 终止接口供兼容调用
   ipcMain.handle("conflict:killOthers", async (_event, pids) => {
     const result = await killProxyProcesses(pids);
     return result;

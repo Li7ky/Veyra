@@ -3207,11 +3207,11 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
       {blockStartupOpen && blockStartupData && (
         <div className="modal-mask" onClick={() => {}}>
-          <div className="modal-box" role="dialog" aria-modal="true" aria-label={t("conflict.blockStartupTitle", "检测到其他代理软件正在运行")}>
+          <div className="modal-box" role="dialog" aria-modal="true" aria-label={t("conflict.blockStartupTitle", "检测到其他软件已启用系统代理")}>
             <div className="home-cfg-hd">
               <div>
-                <div className="home-cfg-title">{t("conflict.blockStartupTitle", "检测到其他代理软件正在运行")}</div>
-                <div className="home-cfg-sub">{t("conflict.blockStartupDesc", "以下代理软件可能与 Veyra 产生冲突，建议关闭后再启动：")}</div>
+                <div className="home-cfg-title">{t("conflict.blockStartupTitle", "检测到其他软件已启用系统代理")}</div>
+                <div className="home-cfg-sub">{t("conflict.blockStartupDesc", "请在其他代理软件中关闭系统代理；仅打开软件但未启用系统代理不会影响 Veyra。")}</div>
               </div>
               <button
                 type="button"
@@ -3242,31 +3242,29 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 disabled={blockStartupKilling}
                 onClick={async () => {
                   setBlockStartupKilling(true);
-                  setBlockStartupMessage(t("conflict.blockStartupKilling", "正在关闭其他代理软件…"));
+                  setBlockStartupMessage(t("conflict.blockStartupKilling", "正在停止外部系统代理并退出代理软件…"));
                   try {
-                    // 收集所有进程类型冲突的 PID
-                    const allPids = blockStartupData.rawConflicts
-                      .filter((c) => c.type === "process" && c.pids && c.pids.length > 0)
-                      .flatMap((c) => c.pids)
-                      .filter((pid): pid is number => typeof pid === "number");
-                    if (allPids.length > 0 && window.veyra?.killProxyProcesses) {
-                      await window.veyra.killProxyProcesses(allPids);
-                    }
-                    // 等待一下让进程完全退出
-                    await new Promise((r) => setTimeout(r, 1500));
-                    // 重新检测
-                    const result = window.veyra?.retryStartAfterConflict ? await window.veyra.retryStartAfterConflict() : null;
+                    const result = window.veyra?.resolveExternalProxy
+                      ? await window.veyra.resolveExternalProxy()
+                      : null;
                     if (result?.ok) {
-                      setBlockStartupMessage(t("conflict.blockStartupSuccess", "冲突已解决，正在启动…"));
-                      setTimeout(() => setBlockStartupOpen(false), 1000);
-                    } else if (result && result.conflicts && result.conflicts.length > 0) {
-                      setBlockStartupMessage(t("conflict.blockStartupStillConflict", "仍有代理软件在运行，请全部关闭后再试"));
-                      setBlockStartupData((prev) => prev ? { ...prev, conflicts: result.conflicts!, rawConflicts: prev.rawConflicts } : prev);
+                      const started = window.veyra?.retryStartAfterConflict
+                        ? await window.veyra.retryStartAfterConflict()
+                        : null;
+                      if (started?.ok) {
+                        setBlockStartupMessage(t("conflict.blockStartupSuccess", "系统代理已恢复正常，正在启动…"));
+                        setTimeout(() => setBlockStartupOpen(false), 1000);
+                      } else {
+                        setBlockStartupMessage(t("conflict.blockStartupKillFailed", "系统代理已恢复，但 Veyra 内核启动失败，请重试"));
+                      }
+                    } else if (result?.conflicts && result.conflicts.length > 0) {
+                      setBlockStartupMessage(t("conflict.blockStartupStillConflict", "系统代理仍未恢复正常，请关闭外部代理的系统代理后重试"));
+                      setBlockStartupData((prev) => prev ? { ...prev, conflicts: result.conflicts! } : prev);
                     } else {
-                      setBlockStartupMessage(t("conflict.blockStartupKillFailed", "部分软件关闭失败，请手动关闭后重试"));
+                      setBlockStartupMessage(t("conflict.blockStartupKillFailed", "无法自动恢复系统代理，请手动关闭外部代理的系统代理后重试"));
                     }
                   } catch {
-                    setBlockStartupMessage(t("conflict.blockStartupKillFailed", "部分软件关闭失败，请手动关闭后重试"));
+                    setBlockStartupMessage(t("conflict.blockStartupKillFailed", "无法自动恢复系统代理，请手动关闭外部代理的系统代理后重试"));
                   } finally {
                     setBlockStartupKilling(false);
                   }

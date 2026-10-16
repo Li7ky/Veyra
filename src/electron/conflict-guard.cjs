@@ -605,8 +605,11 @@ async function fullScan(opts = {}) {
  * @param {number} intervalMs — 轮询间隔毫秒
  * @param {number[]} myCustomPorts — 自身端口（这些端口被占升级为 critical）
  */
-function startMonitor(onConflict, onResolved, intervalMs = 5000, myCustomPorts = []) {
+function startMonitor(onConflict, onResolved, intervalMs = 5000, myCustomPorts = [], scanOptions = {}) {
   stopMonitor();
+  const filterConflicts = typeof scanOptions.filterConflicts === "function"
+    ? scanOptions.filterConflicts
+    : (items) => items;
   let lastHits = [];
   let firstScanDone = false;
   _monitorCallback = { onConflict, onResolved };
@@ -616,7 +619,12 @@ function startMonitor(onConflict, onResolved, intervalMs = 5000, myCustomPorts =
     // 否则会以空的 lastHits 为基准，把启动前就已存在的冲突全部当「新出现」误报
     if (!firstScanDone) return;
     try {
-      const { conflicts } = await fullScan({ includeSystem: false, myCustomPorts });
+      const { conflicts: scannedConflicts } = await fullScan({
+        includeSystem: false,
+        includeSystemProxy: !!scanOptions.includeSystemProxy,
+        myCustomPorts,
+      });
+      const conflicts = filterConflicts(scannedConflicts);
       const curKeys = new Set(conflicts.map((c) => `${c.type}:${c.proc || c.port}`));
       const prevKeys = new Set(lastHits.map((c) => `${c.type}:${c.proc || c.port}`));
 
@@ -637,8 +645,12 @@ function startMonitor(onConflict, onResolved, intervalMs = 5000, myCustomPorts =
   // 首次立即执行；完成后才允许 interval 做 diff
   (async () => {
     try {
-      const { conflicts } = await fullScan({ includeSystem: false, myCustomPorts });
-      lastHits = conflicts;
+      const { conflicts: scannedConflicts } = await fullScan({
+        includeSystem: false,
+        includeSystemProxy: !!scanOptions.includeSystemProxy,
+        myCustomPorts,
+      });
+      lastHits = filterConflicts(scannedConflicts);
     } catch {} finally {
       firstScanDone = true;
     }

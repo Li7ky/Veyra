@@ -101,7 +101,9 @@ contextBridge.exposeInMainWorld("veyra", {
   checkPorts: () => ipcRenderer.invoke("system:checkPorts"),
   startConflictMonitor: (on) => ipcRenderer.invoke("system:startConflictMonitor", on),
   getSelfIdentity: () => ipcRenderer.invoke("system:getSelfIdentity"),
-  // 一键关闭其他代理软件
+  // 关闭外部系统代理并退出对应代理软件
+  resolveExternalProxy: () => ipcRenderer.invoke("conflict:resolveExternal"),
+  // 兼容旧版底层 PID 终止接口
   killProxyProcesses: (pids) => ipcRenderer.invoke("conflict:killOthers", pids),
   // 冲突解决后重试启动
   retryStartAfterConflict: () => ipcRenderer.invoke("conflict:retryStart"),

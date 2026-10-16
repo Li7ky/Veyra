@@ -660,17 +660,16 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   });
   const [editorMode, setEditorMode] = useState<"profile" | "runtime">("profile");
   const [bindTarget, setBindTarget] = useState<string | null>(null);
-  // 首页6卡片可见性
+  // 首页卡片可见性（仅列出实际渲染并有配置弹窗开关的卡；
+  // 主进程存储里的旧 homeCards 可能带多余键，spread 合并后无 UI 消费即无害）
   const [homeCards, setHomeCards] = useState({
     subscription: true,
     node: true,
     network: true,
     mode: true,
     traffic: true,
-    ip: true,
     core: true,
     system: true,
-    webtest: true,
   });
   const [testing, setTesting] = useState(false);
   const [testProgress, setTestProgress] = useState(0);
@@ -948,6 +947,9 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
   const goTab = useCallback(
     (id: Tab) => {
+      // 已在目标页时直接返回：防止顶栏搜索逐字符触发重复 goTab
+      // 叠加多个 setTimeout(refresh) 与多余 IPC
+      if (tabRef.current === id) return;
       // 切掉代理页时中止正在进行的测速，避免后台继续发请求浪费资源
       if (id !== "proxies" && testAbortRef.current) {
         testAbortRef.current.abort();
@@ -2894,7 +2896,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
               </div>
 
               <div className="pane conn-wrap" hidden={tab !== "connections"}>
-                <ConnectionsPage onToast={showToast} />
+                <ConnectionsPage onToast={showToast} active={tab === "connections"} />
               </div>
 
               <div className="pane term" hidden={tab !== "logs"}>

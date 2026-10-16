@@ -37,33 +37,50 @@ let coreProc = null;
 let stoppingCore = null;
 let startingCore = null;
 let coreMemCache = { mb: 0, t: 0 };
-// 内核进程内存占用（MB），带 5s 缓存避免频繁起子进程
-function coreMemoryMB() {
+// 内核进程内存占用（MB），带 5s 缓存避免频繁起子进程。
+// 改为异步 execFile：原先的 execFileSync 由 connections/info 高频轮询调用，
+// 每 5s 同步阻塞主进程一次（tasklist 50-200ms），托盘/热键/IPC 全部跟着卡。
+let coreMemPending = null;
+async function coreMemoryMB() {
   const now = Date.now();
   if (now - coreMemCache.t < 5000) return coreMemCache.mb;
-  let mb = 0;
-  try {
-    const pid = coreProc && !coreProc.killed ? coreProc.pid : 0;
-    if (pid) {
-      if (process.platform === "win32") {
-        const out = execFileSync("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], {
-          encoding: "utf8",
-          timeout: 4000,
-          windowsHide: true,
-        });
-        const m = out.match(/"([\d,]+)\s*K"/i);
-        if (m) mb = Math.round(parseInt(m[1].replace(/,/g, ""), 10) / 1024);
-      } else {
-        const out = execFileSync("ps", ["-o", "rss=", "-p", String(pid)], { encoding: "utf8", timeout: 4000 });
-        const kb = parseInt(String(out).trim(), 10);
-        if (!Number.isNaN(kb)) mb = Math.round(kb / 1024);
+  if (coreMemPending) return coreMemPending;
+  coreMemPending = (async () => {
+    let mb = 0;
+    try {
+      const pid = coreProc && !coreProc.killed ? coreProc.pid : 0;
+      if (pid) {
+        const run = (cmd, args) =>
+          new Promise((res) => {
+            try {
+              execFile(cmd, args, { encoding: "utf8", timeout: 4000, windowsHide: true }, (e, out) =>
+                res(e ? "" : String(out || ""))
+              );
+            } catch {
+              res("");
+            }
+          });
+        const out =
+          process.platform === "win32"
+            ? await run("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"])
+            : await run("ps", ["-o", "rss=", "-p", String(pid)]);
+        if (process.platform === "win32") {
+          const m = out.match(/"([\d,]+)\s*K"/i);
+          if (m) mb = Math.round(parseInt(m[1].replace(/,/g, ""), 10) / 1024);
+        } else {
+          const kb = parseInt(out.trim(), 10);
+          if (!Number.isNaN(kb)) mb = Math.round(kb / 1024);
+        }
       }
+    } catch {
+      /* 忽略：读不到就显示 0 */
     }
-  } catch {
-    /* 忽略：读不到就显示 0 */
-  }
-  coreMemCache = { mb, t: now };
-  return mb;
+    coreMemCache = { mb, t: Date.now() };
+    return mb;
+  })().finally(() => {
+    coreMemPending = null;
+  });
+  return coreMemPending;
 }
 let appSettings = null;
 let coreOnline = false;
@@ -73,6 +90,8 @@ let isQuitting = false;
 // 内核 API 连续探测失败次数。连续 3 次失败即判离线并把托盘打灰，
 // 避免 controller 僵死时托盘/界面硬绿、与体感不一致。
 let apiFailStreak = 0;
+// 内核异常退出后的自动重启计数（有限次数，成功启动后清零）
+let coreAutoRestarts = 0;
 
 const userData = () => app.getPath("userData");
 const configDir = () => path.join(userData(), "config");
@@ -333,22 +352,30 @@ async function rebuildSingboxConfig() {
   return stats;
 }
 
-function portFree(port) {
+function portFree(port, host = "127.0.0.1") {
   return new Promise((resolve) => {
     const net = require("net");
     const srv = net.createServer();
     srv.unref();
     srv.once("error", () => resolve(false));
     srv.once("listening", () => srv.close(() => resolve(true)));
-    srv.listen(port, "127.0.0.1");
+    srv.listen(port, host);
   });
+}
+
+// 端口是否可用：allowLan 时内核绑 0.0.0.0，仅探测 127.0.0.1 会漏判
+// 「被其它进程绑在通配/网卡地址上」的端口，导致内核启动时绑定失败。
+async function portUsable(port) {
+  if (!(await portFree(port))) return false;
+  if (appSettings?.allowLan) return portFree(port, "0.0.0.0");
+  return true;
 }
 
 async function pickPorts() {
   const preferMixed = Number(appSettings?.mixedPort) || DEFAULT_MIXED;
   const preferCtrl = Number(appSettings?.controllerPort) || DEFAULT_CTRL;
   const pick = async (prefer) => {
-    if (await portFree(prefer)) return prefer;
+    if (await portUsable(prefer)) return prefer;
     const alt = prefer + 10003;
     // 回退端口也必须验证空闲；两者都被占时保持首选端口，
     // 让启动失败报错指向用户实际配置的端口而不是一个莫名的 +10003。
@@ -687,9 +714,12 @@ async function applyProxyMode(mode) {
 // 内核代理模式：统一入口，同时缓存到设置里供托盘菜单显示勾选态
 async function setCoreMode(mode, { notify = false } = {}) {
   const m = mode === "global" || mode === "direct" ? mode : "rule";
+  // PATCH 成功后才持久化：内核不可达时不把 coreMode 写死，
+  // 否则托盘勾选与内核实际模式脱节（只能等下次启动 syncCoreModeFromApi 纠正）
+  const r = await api("/configs", "PATCH", { mode: m });
   saveSettings({ coreMode: m });
   if (notify) updateTray();
-  return api("/configs", "PATCH", { mode: m });
+  return r;
 }
 
 function registerHotkeys() {
@@ -1001,6 +1031,30 @@ async function _doStartCore() {
 
   if (coreProc) return { already: true };
 
+  // 服务模式接线：内核由 Windows 服务（VeyraCore）负责拉起，本进程不再 spawn
+  // 本地内核与服务进程抢 mixed/controller 端口，只等待 controller 就绪后收养。
+  if (appSettings.serviceMode) {
+    let st = null;
+    try {
+      st = await winService.serviceStatus();
+    } catch {}
+    if (st && st.installed && st.running) {
+      const ver = await waitController().catch(() => null);
+      if (ver !== null) {
+        setCoreOnline(true, { version: ver });
+        await syncCoreModeFromApi();
+        if (appSettings.registerIdentity !== false) _startRuntimeConflictMonitor();
+        return { version: ver, viaService: true };
+      }
+      // 服务声称在跑但 controller 没起来：宁可报错也不 spawn 本地进程去抢端口
+      throw new Error("服务(VeyraCore)运行中但内核未响应，请在 设置 → 代理服务 里重启服务或改用本地模式");
+    }
+    if (st && !st.installed) {
+      // 服务已被卸载：清掉标记，回退本地 spawn
+      saveSettings({ serviceMode: false });
+    }
+  }
+
   ensureDirs();
   await pickPorts();
   // sing-box 每次启动前重建配置（端口可能漂移 + 订阅可能已变）；mihomo 沿用旧的打端口补丁
@@ -1043,6 +1097,21 @@ async function _doStartCore() {
     if (coreProc !== spawned) return;
     coreProc = null;
     conflictGuard.setOwnCorePids([]);
+    coreMemCache = { mb: 0, t: 0 };
+    // 非主动停止的异常退出：有限次数自动重启（防杀软误杀/OOM/panic 后永久掉线）
+    if (!isQuitting && !stoppingCore && code !== 0 && coreAutoRestarts < 3) {
+      coreAutoRestarts += 1;
+      setTimeout(() => {
+        if (isQuitting || coreProc || stoppingCore || startingCore) return;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(
+            "core:log",
+            `[veyra] 内核异常退出(code ${code})，自动重启（第 ${coreAutoRestarts}/3 次）…\n`
+          );
+        }
+        startCore().catch(() => {});
+      }, 3000);
+    }
     // 进程异常退出时清掉我们留下的系统代理，避免指向死端口
     clearOurSystemProxy()
       .catch(() => {})
@@ -1065,6 +1134,7 @@ async function _doStartCore() {
       _startRuntimeConflictMonitor();
     }
     await syncCoreModeFromApi();
+    coreAutoRestarts = 0; // 稳定运行后重置自动重启预算
     return { version: ver };
   } catch (e) {
     await stopCore({ clearProxy: true });
@@ -1072,9 +1142,24 @@ async function _doStartCore() {
   }
 }
 
+let pendingClearProxy = false;
 async function stopCore(opts = {}) {
-  if (stoppingCore) return stoppingCore;
-  stoppingCore = _doStopCore(opts).finally(() => { stoppingCore = null; });
+  const wantClear = opts.clearProxy !== false;
+  if (stoppingCore) {
+    // 互斥复用不丢选项：本次调用若要求清代理而进行中的那次没有清，
+    // 记下意图，进行中的停止结束后补清一次（幂等）。
+    if (wantClear) pendingClearProxy = true;
+    return stoppingCore;
+  }
+  pendingClearProxy = false;
+  stoppingCore = _doStopCore(opts)
+    .finally(async () => {
+      stoppingCore = null;
+      if (pendingClearProxy) {
+        pendingClearProxy = false;
+        await clearOurSystemProxy().catch(() => {});
+      }
+    });
   return stoppingCore;
 }
 
@@ -1480,10 +1565,15 @@ Invoke-WebRequest -Uri '${url}' -OutFile '${tmp.replace(/'/g, "''")}' -Headers @
       err ? reject(err) : resolve()
     );
   });
-  let data = JSON.parse(fs.readFileSync(tmp, "utf8"));
+  // parse 与 unlink 用 try/finally 绑定：GitHub 返回非 JSON（限流页等）时不再残留临时文件
+  let data;
   try {
-    fs.unlinkSync(tmp);
-  } catch {}
+    data = JSON.parse(fs.readFileSync(tmp, "utf8"));
+  } finally {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {}
+  }
   if (Array.isArray(data)) {
     data = data.find((x) => x.prerelease) || data[0] || {};
   }
@@ -2163,8 +2253,26 @@ function registerIpc() {
       // controller 连续 3 次(约 4.5s)不可达即判离线，不再因 coreProc 存在而硬保绿：
       // 进程僵死/controller 挂掉时，硬绿就是托盘与体感不一致的来源。
       // 启动瞬间(waitController 最长 10s)渲染层会看到短暂未连接，startCore 成功后会立即推绿纠正。
-      if (coreOnline && apiFailStreak >= 3) setCoreOnline(false);
-      else sendStatus();
+      if (coreOnline && apiFailStreak >= 3) {
+        setCoreOnline(false);
+        // controller 僵死且 coreProc 还挂着：用户点「重连」会因 coreProc 存在直接返回
+        // already，永远恢复不了。这里自动 stop→start 一次（互斥保证不叠加）。
+        if (coreProc && !stoppingCore && !startingCore && !isQuitting) {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(
+              "core:log",
+              "[veyra] controller 连续不可达，自动重启内核…\n"
+            );
+          }
+          stopCore({ clearProxy: false })
+            .catch(() => {})
+            .finally(() => {
+              if (!isQuitting && !coreProc) startCore().catch(() => {});
+            });
+        }
+      } else {
+        sendStatus();
+      }
       return { running: coreOnline, pid: coreProc?.pid || null, seq: statusSeq };
     }
   });
@@ -2208,7 +2316,7 @@ function registerIpc() {
       mixedPort: MIXED_PORT,
       controller: CONTROLLER,
       preferredPort: Number(appSettings?.mixedPort) || DEFAULT_MIXED,
-      coreMemoryMB: coreMemoryMB(),
+      coreMemoryMB: await coreMemoryMB(),
     };
   });
 
@@ -2279,11 +2387,11 @@ function registerIpc() {
     // 强制使用用户设置的端口（若空闲）
     if (patch?.mixedPort) {
       const want = Number(patch.mixedPort);
-      if (await portFree(want)) MIXED_PORT = want;
+      if (await portUsable(want)) MIXED_PORT = want;
     }
     if (patch?.controllerPort) {
       const want = Number(patch.controllerPort);
-      if (await portFree(want)) CONTROLLER = `127.0.0.1:${want}`;
+      if (await portUsable(want)) CONTROLLER = `127.0.0.1:${want}`;
     }
     if (patch?.secret) SECRET = String(patch.secret);
     patchRuntimePorts();
@@ -2297,6 +2405,8 @@ function registerIpc() {
       await startCore();
       if (wasProxy) await setSystemProxy(true);
     }
+    // 内核离线时改端口不经 setCoreOnline，托盘 tooltip/菜单里的端口会停在旧值
+    updateTray();
     return { settings: next, mixedPort: MIXED_PORT, controller: CONTROLLER };
   });
   ipcMain.handle("settings:openPath", async (_e, which) => {
@@ -2402,13 +2512,19 @@ function registerIpc() {
   ipcMain.handle("verge:serviceStatus", async () => winService.serviceStatus());
   ipcMain.handle("verge:serviceInstall", async () => {
     const cfgPath = activeCore === "singbox" ? singboxConfig() : runtimeConfig();
-    const r = await winService.installService({
-      binPath: coreBinPath(activeCore),
-      workDir: path.dirname(cfgPath),
-      configFile: path.basename(cfgPath),
-    });
-    saveSettings({ serviceMode: true });
-    return r;
+    try {
+      const r = await winService.installService({
+        binPath: coreBinPath(activeCore),
+        workDir: path.dirname(cfgPath),
+        configFile: path.basename(cfgPath),
+      });
+      saveSettings({ serviceMode: true });
+      return r;
+    } catch (e) {
+      // 安装失败（UAC 拒绝/sc.exe 失败）时绝不置 serviceMode，并向用户如实提示
+      toastNotify("服务安装失败", String((e && e.message) || e));
+      throw e;
+    }
   });
   ipcMain.handle("verge:serviceUninstall", async () => {
     const r = await winService.uninstallService();

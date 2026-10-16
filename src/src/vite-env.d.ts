@@ -25,8 +25,6 @@ export interface HomeCards {
   network: boolean;
   mode: boolean;
   traffic: boolean;
-  webtest: boolean;
-  ip: boolean;
   core: boolean;
   system: boolean;
 }

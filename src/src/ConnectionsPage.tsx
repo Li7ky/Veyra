@@ -13,8 +13,10 @@ type SortKey = "upload" | "download" | "host" | "chain";
 
 function ConnectionsPage({
   onToast,
+  active,
 }: {
   onToast: (m: string) => void;
+  active: boolean;
 }) {
   const [items, setItems] = useState<ConnectionItem[]>([]);
   const [totals, setTotals] = useState({ up: 0, down: 0 });
@@ -37,10 +39,13 @@ function ConnectionsPage({
   }, [onToast]);
 
   useEffect(() => {
+    // 仅在页面可见时轮询：App 用 hidden 保活不卸载本组件，
+    // 不门控的话即使从未打开过连接页也会每 2s 打一次 IPC 并 setState。
+    if (!active) return;
     reload();
     const t = window.setInterval(reload, 2000);
     return () => window.clearInterval(t);
-  }, [reload]);
+  }, [reload, active]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -141,8 +146,12 @@ function ConnectionsPage({
                       className="btn ghost btn-sm"
                       title={t("conn.disconnect")}
                       onClick={async () => {
-                        await window.veyra?.closeConnection?.(c.id);
-                        await reload();
+                        try {
+                          await window.veyra?.closeConnection?.(c.id);
+                          await reload();
+                        } catch (e) {
+                          onToast(String((e as Error).message || e));
+                        }
                       }}
                     >
                       <X size={13} />

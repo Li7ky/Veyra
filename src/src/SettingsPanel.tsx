@@ -338,8 +338,13 @@ function SettingsPanel(props: Props) {
   }
 
   useEffect(() => {
+    // 仅挂载时拉取一次：running/mixedPort/version 由 1.5s 轮询驱动会频繁变化，
+    // 若挂在依赖上，用户正在编辑的 draft（端口/Secret/绕过域名等）会被存储值
+    // 无提示覆盖。所有操作路径（应用网络/切内核/装服务/备份恢复）完成后都会
+    // 手动 await reload() 刷新，无需依赖外部状态触发。
     reload().catch(() => {});
-  }, [running, mixedPort, version]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 首次切到「自检」分区时自动跑一次；之后的重跑交给按钮
   useEffect(() => {

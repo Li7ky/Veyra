@@ -22,17 +22,31 @@ function loadIndex(profilesDir) {
   const p = path.join(profilesDir, "index.json");
   if (!fs.existsSync(p)) return { items: [], active: null };
   try {
-    const raw = JSON.parse(fs.readFileSync(p, "utf8"));
-    if (!raw || !Array.isArray(raw.items)) return { items: [], active: null };
-    return { items: raw.items, active: raw.active || null };
+    // 剥离 UTF-8 BOM：记事本（UTF-8 with BOM）编辑过的文件 JSON.parse 会抛错，
+    // 原实现直接 catch 成空 index，随后的任何 saveIndex 都会把空列表持久化——档案全部丢失
+    let raw = fs.readFileSync(p, "utf8");
+    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.items)) return { items: [], active: null };
+    return { items: data.items, active: data.active || null };
   } catch {
+    // 解析失败时先备份坏文件，避免下一次 saveIndex 把损坏现场覆盖掉、无法恢复
+    try {
+      const backup = path.join(profilesDir, `index.json.corrupt-${Date.now()}`);
+      fs.copyFileSync(p, backup);
+    } catch {}
     return { items: [], active: null };
   }
 }
 
 function saveIndex(profilesDir, idx) {
   fs.mkdirSync(profilesDir, { recursive: true });
-  fs.writeFileSync(path.join(profilesDir, "index.json"), JSON.stringify(idx, null, 2), "utf8");
+  // 临时文件 + rename 原子替换：直接 writeFileSync 被中断会截断 index.json，
+  // 截断文件又会被上面的解析兜底当空 index 处理——等价于全部档案丢失
+  const target = path.join(profilesDir, "index.json");
+  const tmp = path.join(profilesDir, `index.json.tmp-${process.pid}`);
+  fs.writeFileSync(tmp, JSON.stringify(idx, null, 2), "utf8");
+  fs.renameSync(tmp, target);
 }
 
 function refreshSizes(profilesDir, idx) {

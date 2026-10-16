@@ -44,7 +44,14 @@ function httpThroughMixed(url, mixedPort, { method = "GET", headers = {}, body =
       req.destroy();
       reject(new Error("timeout"));
     });
-    if (body) req.write(body);
+    if (body) {
+      // 显式带长度：无 Content-Length 的 body 会走 chunked 编码，
+      // 部分严格服务器（老 nginx / CF 部分端点）会 400 或挂起，造成解锁误判
+      if (!Object.keys(headers).some((k) => k.toLowerCase() === "content-length")) {
+        req.setHeader("Content-Length", Buffer.byteLength(body));
+      }
+      req.write(body);
+    }
     req.end();
   });
 }
@@ -95,9 +102,15 @@ function connectTls(url, mixedPort, { method = "GET", headers = {}, body = null,
         reject(new Error("timeout"));
       }, timeout);
       tlsSock.on("data", (c) => chunks.push(c));
-      tlsSock.on("end", () => {
+      const finish = () => {
         clearTimeout(timer);
         resolve(parseHttpResponse(Buffer.concat(chunks)));
+      };
+      tlsSock.on("end", finish);
+      // close 兜底：部分服务器响应后保持连接不回 end（即使发了 Connection: close），
+      // 只能等满超时后误报「网络连接问题」；close 时按已收到的数据解析（幂等，end 先到则无影响）
+      tlsSock.on("close", () => {
+        if (chunks.length) finish();
       });
       tlsSock.on("error", (e) => {
         clearTimeout(timer);

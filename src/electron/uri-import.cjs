@@ -216,6 +216,18 @@ function parseNodeUri(uri) {
   for (const k of Object.keys(proxy)) {
     if (proxy[k] === undefined) delete proxy[k];
   }
+  // 统一终检：base64 宽容解码/URL 宽容解析可能产出「合法对象但关键字段缺失」的
+  // 残缺节点（server 空、port 非法、vmess 缺 uuid），这类节点运行时必然连接失败，
+  // 单节点导入路径会直接落盘且无任何告警——这里统一抛错，由调用方按契约捕获。
+  if (!proxy.server || typeof proxy.server !== "string") {
+    throw new Error("节点解析失败：server 缺失");
+  }
+  if (!Number.isInteger(proxy.port) || proxy.port <= 0 || proxy.port > 65535) {
+    throw new Error("节点解析失败：port 非法");
+  }
+  if (proxy.type === "vmess" && !proxy.uuid) {
+    throw new Error("节点解析失败：vmess 缺少 uuid");
+  }
   return proxy;
 }
 

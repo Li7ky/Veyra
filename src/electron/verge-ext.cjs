@@ -301,22 +301,37 @@ function exportBackupZip({ userData, settingsPath, configDir }) {
 }
 
 function unzipStore(buf, destDir) {
-  // 仅支持 store 方法的简易解压（本备份格式）
+  // 仅支持 store/deflate 方法的简易解压（本备份格式）。
+  // 安全防护：bit 3（data descriptor，local header 里 size=0）直接拒绝；
+  // 条目名过滤 .. / 绝对路径 / 盘符，防止 zip-slip 写出到 destDir 之外。
   let offset = 0;
   const extracted = [];
+  const resolvedDest = path.resolve(destDir);
   while (offset + 4 <= buf.length) {
     const sig = buf.readUInt32LE(offset);
     if (sig !== 0x04034b50) break;
+    const flags = buf.readUInt16LE(offset + 6);
     const method = buf.readUInt16LE(offset + 8);
     const compSize = buf.readUInt32LE(offset + 18);
     const nameLen = buf.readUInt16LE(offset + 26);
     const extraLen = buf.readUInt16LE(offset + 28);
     const name = buf.slice(offset + 30, offset + 30 + nameLen).toString("utf8");
+    if (flags & 0x08) {
+      // data descriptor：真实大小在数据尾部，local header 里 compSize=0，
+      // 解析会错位并静默产出空文件——只接受自家 zipStore 导出的不带 bit3 的 zip
+      throw new Error(`压缩包条目使用了不支持的 data descriptor 格式：${name}`);
+    }
+    if (!name || name.includes("..") || /^[a-zA-Z]:/.test(name) || name.startsWith("/") || name.startsWith("\\")) {
+      throw new Error(`压缩包含非法路径条目：${name}`);
+    }
     const dataStart = offset + 30 + nameLen + extraLen;
     let data = buf.slice(dataStart, dataStart + compSize);
     if (method === 8) data = zlib.inflateRawSync(data);
     else if (method !== 0) throw new Error(`不支持的压缩方法 ${method}`);
-    const target = path.join(destDir, name);
+    const target = path.resolve(path.join(destDir, name));
+    if (!target.startsWith(resolvedDest + path.sep) && target !== resolvedDest) {
+      throw new Error(`压缩包条目路径逃逸：${name}`);
+    }
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, data);
     extracted.push(name);
@@ -431,7 +446,9 @@ async function streamingUnlock(mixedPort) {
       const r = await proxyFetch(t.url, mixedPort);
       results.push({
         id: t.id,
-        ok: r.status > 0 && r.status < 500,
+        // ok 只认 2xx/3xx：403（封锁）/451（法律原因不可用）说明该区域不可用，
+        // 记成 ok 会让前端把「未解锁」渲染成绿色
+        ok: r.status >= 200 && r.status < 400,
         status: r.status,
         note: r.status === 403 || r.status === 451 ? "可能未解锁" : r.status >= 200 && r.status < 400 ? "可达" : "异常",
       });

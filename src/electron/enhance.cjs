@@ -151,7 +151,9 @@ function applyScript(config, script, profileName) {
 }
 
 function injectFoxveyDefaults(config, opts) {
-  config["mixed-port"] = opts.mixedPort;
+  // 缺省兜底：现状所有调用链均传数字（enhanceOpts 的 MIXED_PORT 恒为数字），
+  // 但新增调用方传 undefined 时会写入 mixed-port: null 导致内核绑定异常
+  config["mixed-port"] = opts.mixedPort ?? 7897;
   const bind = opts.bindAddress || "127.0.0.1";
   config["external-controller"] = `${bind === "0.0.0.0" || opts.allowLan ? "0.0.0.0" : "127.0.0.1"}:${opts.controllerPort}`;
   if (opts.bindAddress) config["bind-address"] = opts.bindAddress;

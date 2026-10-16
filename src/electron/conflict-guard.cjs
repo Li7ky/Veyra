@@ -560,9 +560,13 @@ async function fullScan(opts = {}) {
 function startMonitor(onConflict, onResolved, intervalMs = 5000) {
   stopMonitor();
   let lastHits = [];
+  let firstScanDone = false;
   _monitorCallback = { onConflict, onResolved };
 
   _monitorTimer = setInterval(async () => {
+    // 首轮完整扫描（含多个 probePort，单端口超时可达 1.2s）完成前不做 diff：
+    // 否则会以空的 lastHits 为基准，把启动前就已存在的冲突全部当「新出现」误报
+    if (!firstScanDone) return;
     try {
       const { conflicts } = await fullScan({ includeSystem: false });
       const curKeys = new Set(conflicts.map((c) => `${c.type}:${c.proc || c.port}`));
@@ -582,12 +586,14 @@ function startMonitor(onConflict, onResolved, intervalMs = 5000) {
       // 检测失败不传播
     }
   }, intervalMs);
-  // 首次立即执行
+  // 首次立即执行；完成后才允许 interval 做 diff
   (async () => {
     try {
       const { conflicts } = await fullScan({ includeSystem: false });
       lastHits = conflicts;
-    } catch {}
+    } catch {} finally {
+      firstScanDone = true;
+    }
   })();
 }
 

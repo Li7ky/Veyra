@@ -649,8 +649,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   });
   // 内存显示文本：抽出来避免 JSX 表达式内嵌模板字面量导致解析歧义。
   const memText = typeof coreMemMB === "number" ? coreMemMB + " MB" : "—";
-  // v12：侧栏趋势图带只在「运行且有流量」时画火花线（零流量两条平线会叠成深色横线）
-  const railHasTraffic =
+  // 「有真实流量」守卫：零流量时平线与贴底直线在视觉上都等同于「图表故障」。
+  // 此前名 railHasTraffic 且只在侧栏版本使用，侧栏改版后成了死变量——
+  // 首页流量图因此漏掉守卫，零流量画出贴底绿线。现统一由它兜底。
+  const hasTraffic =
     rateHistory.down.some((v) => v > 0) || rateHistory.up.some((v) => v > 0);
   const [banner, setBanner] = useState("");
   const [isMaximized, setIsMaximized] = useState(false);
@@ -1732,7 +1734,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 aria-pressed={showRail}
                 onClick={() => setRailOverride(!showRail)}
               >
-                <PanelRight size={18} />
+                <PanelRight size={17} />
               </button>
               <button
                 type="button"
@@ -1741,13 +1743,13 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 aria-label={isMaximized ? "还原窗口" : "最大化"}
                 title={isMaximized ? "还原窗口" : "最大化"}
               >
-                {isMaximized ? <Copy size={17} /> : <Square size={16} />}
+                {isMaximized ? <Copy size={17} /> : <Square size={17} />}
               </button>
               <button type="button" className="icon-btn" onClick={() => window.veyra?.minimize()} aria-label={t("nav.minimize", "Minimize")} title={t("nav.minimize", "Minimize")}>
-                <Minus size={18} />
+                <Minus size={17} />
               </button>
               <button type="button" className="icon-btn" onClick={() => window.veyra?.close()} aria-label={t("nav.close", "Close")} title={t("nav.close", "Close")}>
-                <X size={18} />
+                <X size={17} />
               </button>
             </div>
           </div>
@@ -1884,7 +1886,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                             style={{
                               fontSize: 16,
                               fontWeight: 600,
-                              color: "var(--green-500)",
+                              /* 0 值用彩色会暗示「有数据」——无流量时降为中性灰 */
+                              color: upRate > 0 ? "var(--green-500)" : "var(--text-500)",
                               fontFamily: "var(--font-mono)",
                             }}
                           >
@@ -1915,7 +1918,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                             style={{
                               fontSize: 16,
                               fontWeight: 600,
-                              color: "var(--blue-500)",
+                              color: downRate > 0 ? "var(--blue-500)" : "var(--text-500)",
                               fontFamily: "var(--font-mono)",
                             }}
                           >
@@ -1946,7 +1949,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                             style={{
                               fontSize: 16,
                               fontWeight: 600,
-                              color: "var(--text-100)",
+                              color: connCount > 0 ? "var(--text-100)" : "var(--text-500)",
                               fontFamily: "var(--font-mono)",
                             }}
                           >
@@ -1986,22 +1989,28 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       marginBottom: 8,
                     }}
                   >
-                    {rateHistory.down.length || rateHistory.up.length ? (
-                      <WaveChart up={rateHistory.up} down={rateHistory.down} />
-                    ) : (
-                      <div
-                        style={{
-                          height: 80,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: 12,
-                          color: "var(--text-500)",
-                        }}
-                      >
-                        {running ? t("home.collectingTraffic", "Collecting traffic data…") : t("nav.serviceNotRunning", "Service not running")}
-                      </div>
-                    )}
+                    <div className="home-chart-wrap">
+                      {hasTraffic ? (
+                        <WaveChart up={rateHistory.up} down={rateHistory.down} />
+                      ) : (
+                        <>
+                          {/* 零流量：只留网格底，不画数据线；给明确引导而非留一片空白 */}
+                          <WaveChart up={[]} down={[]} empty />
+                          <div className="home-chart-empty">
+                            <p>
+                              {running
+                                ? t("home.noTraffic", "暂无流量数据")
+                                : t("nav.serviceNotRunning", "服务未运行")}
+                            </p>
+                            {running ? (
+                              <small>
+                                {t("home.noTrafficHint", "有流量经过时会自动记录")}
+                              </small>
+                            ) : null}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   {/* 区段 3: 订阅状态 */}
@@ -2050,8 +2059,13 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                                 textOverflow: "ellipsis",
                                 whiteSpace: "nowrap",
                               }}
+                              title={sub.name}
                             >
-                              {sub.name}
+                              {/* 订阅名常是 55 字符的 UUID 文件名：首尾可辨、中段无信息量。
+                                  中间省略比尾部省略更能保住识别度（完整值走 title）。 */}
+                              {sub.name.length > 34
+                                ? `${sub.name.slice(0, 20)}…${sub.name.slice(-11)}`
+                                : sub.name}
                             </span>
                             {sub.userinfo ? (
                               <span
@@ -2110,19 +2124,36 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         >
                           {t("home.rules", "规则数量")}
                         </div>
-                        <div
-                          style={{
-                            fontSize: 14,
-                            fontWeight: 600,
-                            color: "var(--text-100)",
-                            fontFamily: "var(--font-mono)",
-                          }}
-                        >
-                          {ruleCount != null ? ruleCount : "—"}
-                        </div>
-                        <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
-                          {t("home.ruleCount", "条规则")}
-                        </div>
+                        {ruleCount != null ? (
+                          <>
+                            <div
+                              style={{
+                                fontSize: 14,
+                                fontWeight: 600,
+                                color: "var(--text-100)",
+                                fontFamily: "var(--font-mono)",
+                              }}
+                            >
+                              {ruleCount}
+                            </div>
+                            <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
+                              {t("home.ruleCount", "条规则")}
+                            </div>
+                          </>
+                        ) : (
+                          /* 空态一句话说清：此前是「—」+「条规则」两行，
+                             破折号容易被读成分隔线，且数值与单位分家 */
+                          <div
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 500,
+                              color: "var(--text-400)",
+                              marginTop: 2,
+                            }}
+                          >
+                            {t("home.noRules", "暂无规则")}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -3029,22 +3060,24 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           {exitIp.ip}
                         </button>
                       </div>
-                      <div className="grid-2" style={{ gap: 8 }}>
-                        <div>
-                          <div className="text-xs text-muted mb-1">归属</div>
-                          <div className="text-sm">
-                            {[exitIp.country, exitIp.city].filter(Boolean).join(" · ") || "—"}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-muted mb-1">运营商</div>
-                          <div
-                            className="text-sm"
-                            style={{ overflow: "hidden", textOverflow: "ellipsis" }}
-                            title={exitIp.isp || exitIp.org || ""}
+                      {/* 归属 / 运营商改为单列行式（label 左 · 值右）：窄轨道下两列各约 70px，
+                          「Japan · Tokyo」与「GSL Networks Pty LTD」断行位置不同，基线永远对不齐。
+                          行式与侧栏 facts 的语言一致，值走 ellipsis + title 保留全量。 */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div className="exit-ip-row">
+                          <span className="exit-ip-k">归属</span>
+                          <span
+                            className="exit-ip-v"
+                            title={[exitIp.country, exitIp.city].filter(Boolean).join(" · ")}
                           >
+                            {[exitIp.country, exitIp.city].filter(Boolean).join(" · ") || "—"}
+                          </span>
+                        </div>
+                        <div className="exit-ip-row">
+                          <span className="exit-ip-k">运营商</span>
+                          <span className="exit-ip-v" title={exitIp.isp || exitIp.org || ""}>
                             {exitIp.isp || exitIp.org || "—"}
-                          </div>
+                          </span>
                         </div>
                       </div>
                       {exitIp.as && (

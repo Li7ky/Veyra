@@ -3,6 +3,8 @@ import { memo } from "react";
 type Props = {
   up: number[];
   down: number[];
+  /** 空态：只渲染网格底，不画数据线（零流量画出的贴底直线会被读成「图表故障」） */
+  empty?: boolean;
 };
 
 function smoothPath(data: number[], w: number, h: number, pad = 10) {
@@ -35,9 +37,11 @@ function smoothPath(data: number[], w: number, h: number, pad = 10) {
   return { line: d, area: `${d} L${w},${h} L0,${h} Z`, tip };
 }
 
-function WaveChart({ up, down }: Props) {
+function WaveChart({ up, down, empty }: Props) {
   const w = 720;
   const h = 170;
+  // 全 0 数据：smoothPath 会算出一条贴底水平线，与「图表挂了」无法区分——直接不画。
+  const hasData = !empty && (up.some((v) => v > 0) || down.some((v) => v > 0));
   const dn = smoothPath(down, w, h);
   const u = smoothPath(up, w, h);
   const gid = "aurora-wave";
@@ -66,16 +70,20 @@ function WaveChart({ up, down }: Props) {
           y1={h * f}
           y2={h * f}
           stroke="currentColor"
-          strokeOpacity="0.07"
+          strokeOpacity="0.15"
           strokeDasharray="4 6"
           strokeWidth="1"
         />
       ))}
-      <path d={dn.area} fill={`url(#${gid}-dn)`} />
-      <path d={u.area} fill={`url(#${gid}-up)`} />
-      <path d={dn.line} fill="none" stroke={`url(#${gid}-dn-line)`} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-      <path d={u.line} fill="none" stroke="var(--green-400)" strokeOpacity="0.85" strokeWidth="1.8" strokeDasharray="1 0" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-      <circle cx={dn.tip.x} cy={dn.tip.y} r="4.5" fill="var(--indigo-500)" stroke="#fff" strokeWidth="2" />
+      {hasData && (
+        <>
+          <path d={dn.area} fill={`url(#${gid}-dn)`} />
+          <path d={u.area} fill={`url(#${gid}-up)`} />
+          <path d={dn.line} fill="none" stroke={`url(#${gid}-dn-line)`} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          <path d={u.line} fill="none" stroke="var(--green-400)" strokeOpacity="0.85" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          <circle cx={dn.tip.x} cy={dn.tip.y} r="4.5" fill="var(--indigo-500)" stroke="#fff" strokeWidth="2" />
+        </>
+      )}
     </svg>
   );
 }

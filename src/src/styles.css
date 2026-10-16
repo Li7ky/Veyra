@@ -302,10 +302,9 @@ code, pre { font-family: var(--font-mono); }
   font-size: 20px;
   font-weight: 700;
   font-family: var(--font-display);
-  background: var(--grad-text);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  /* 单色：小字号渐变文字在截图/缩放后发虚，且与扁平化的卡片语言冲突。
+     品牌感由左侧 logo 图形承担。 */
+  color: var(--text-100);
   letter-spacing: -0.02em;
 }
 .header-actions {
@@ -377,7 +376,8 @@ code, pre { font-family: var(--font-mono); }
   gap: 4px;
   background: var(--input-bg);
   border: 1px solid var(--card-border);
-  border-radius: var(--radius-full);
+  /* 与卡片圆角语言对齐：全胶囊（radius-full）是消费级观感，控件用 --radius-md */
+  border-radius: var(--radius-md);
   padding: 6px 12px;
   backdrop-filter: var(--blur-sm);
   -webkit-backdrop-filter: var(--blur-sm);
@@ -396,6 +396,18 @@ code, pre { font-family: var(--font-mono); }
   display: flex;
   align-items: center;
   gap: 12px;
+}
+/* 首个按钮是「侧栏开关」（应用功能，带 on 状态），后三个是「窗口控制」（系统行为）。
+   两者间距相同、无任何分组提示，加一条 1px 竖线分开。 */
+.header-icons .icon-btn:first-child::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -6px;
+  width: 1px;
+  height: 16px;
+  transform: translateY(-50%);
+  background: var(--card-border);
 }
 .icon-btn {
   position: relative;
@@ -447,7 +459,9 @@ code, pre { font-family: var(--font-mono); }
 }
 .grid-12.no-rail { grid-template-columns: 208px minmax(0, 1fr); }
 .grid-12.no-rail > .col-right { display: none; }
-.col-sidebar { min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; }
+/* 三栏起跑线对齐：主区内容在 .stage 里有 22px 上内边距，左右两栏原本从 0 开始，
+   导致右栏首卡比 hero 高约 22px、侧栏卡也各差一截。 */
+.col-sidebar { min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; padding-top: 22px; }
 /* 侧栏卡片：flex 列布局；状态面板 margin-top:auto 贴底，这里给导航留最小 16px 间距 */
 .col-sidebar .nav-list { margin-bottom: 16px; }
 /* 侧栏卡片：flex 列布局，底部监控块用 margin-top:auto 顶到底部 */
@@ -457,7 +471,7 @@ code, pre { font-family: var(--font-mono); }
   overflow-y: auto; overflow-x: hidden;
 }
 .col-main { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.col-right { min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.col-right { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-top: 22px; }
 
 /* ── Card ────────────────────────────────────────────────── */
 .card {
@@ -2391,6 +2405,65 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
    卡内只保留 k-dot.idle 一个琥珀状态点（状态指示，非行动点）。 */
 
 
+/* ── Home · 实时流量图 ───────────────────────────────────────
+   图高由容器固定：.wave-chart 此前没有任何尺寸规则，高度交给 SVG 的默认
+   行为，不同窗口下不稳定。空态叠在网格底之上，不拦截指针事件。 */
+.home-chart-wrap {
+  position: relative;
+  height: 128px;
+}
+.home-chart-wrap .wave-chart {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.home-chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  pointer-events: none;
+  text-align: center;
+}
+.home-chart-empty p {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-400);
+}
+.home-chart-empty small {
+  font-size: 11px;
+  color: var(--text-500);
+}
+
+/* ── 出口 IP 卡 · 归属 / 运营商行式 ───────────────────────────
+   窄轨道（右栏卡 ~158px）下两列各约 70px，「Japan · Tokyo」与
+   「GSL Networks Pty LTD」的断行位置不可能一致——改单列行式，
+   与侧栏 facts 同语言：标签左、值右对齐、溢出省略。 */
+.exit-ip-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.exit-ip-k {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-500);
+}
+.exit-ip-v {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-100);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
 /* ── Window Drag Regions ────────────────────────────────── */
 .header { -webkit-app-region: drag; }
 .header-search, .header-icons, .header-actions button, .header-actions input, .speed-chip {
@@ -2493,14 +2566,8 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
 [data-theme="light"] .btn-primary:hover { background: var(--blue-400); }
 [data-theme="light"] .btn-danger:hover, [data-theme="light"] .btn.danger:hover { background: var(--red-500); color: #fff; }
 [data-theme="light"] .badge-cyan { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--cyan-500); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
-[data-theme="light"] .time-display { background: linear-gradient(to bottom right, rgba(255,255,255,0.60), var(--bg-1)); }
+[data-theme="light"] .time-display { background: var(--card); }
 [data-theme="light"] .time-value { color: var(--cyan-500); }
-[data-theme="light"] .header-brand .brand-text {
-  background: var(--grad-text);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
 /* （清理）浅色 .term-body 覆盖曾在此处与 2468 行重复定义且值互相矛盾，
    现统一走 --term-bg/--term-fg 令牌，两主题各定义一次即可。 */
 [data-theme="light"] ::-webkit-scrollbar-thumb { background: var(--text-600); }

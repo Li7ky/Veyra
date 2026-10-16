@@ -987,28 +987,23 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
   useEffect(() => {
     if (!window.veyra) return;
-    // 启动时检测其他代理软件冲突（完整扫描：含系统代理/DNS）
-    window.veyra
-      .fullConflictScan?.()
-      .then((res) => {
-        if (res?.conflicts?.length) {
-          setBanner(
-            `检测到其他代理软件可能正在运行：${res.conflicts.map((c) => c.label).join("、")}。建议一次只运行一个代理软件，避免端口冲突。`
-          );
-        }
-      })
-      .catch(() => {});
-    // 订阅运行时冲突事件：其他代理软件在 Veyra-omini 运行期间启动
+    // 启动时检测其他代理软件冲突：静默扫描，不自动弹横幅——
+    // 检测到别的代理软件只是提示信息（关掉对方即可恢复），弹横幅反而打扰；
+    // 结果在 设置 → 自检页 有完整呈现，需要时用户自行查看。
+    window.veyra.fullConflictScan?.().catch(() => {});
+    // 订阅运行时冲突事件：其他代理软件在 Veyra-omini 运行期间启动。
+    // 用自动消失的 toast 而非持久横幅：提示点到为止，不打断当前操作。
     let conflictToastTimer: ReturnType<typeof setTimeout> | null = null;
     const offConflict = window.veyra.onConflictDetected?.(({ items }) => {
       if (conflictToastTimer) return; // 节流避免重复通知
-      setBanner(
-        `⚠ 检测到其他代理软件启动：${items.join("、")}。可能与 Veyra-omini 冲突，建议关闭其中一个。`
-      );
+      showToast(`检测到其他代理软件：${items.join("、")}，如遇连接异常建议只保留一个`, 6000);
       conflictToastTimer = setTimeout(() => { conflictToastTimer = null; }, 12000);
     });
     const offResolved = window.veyra.onConflictResolved?.(() => {
-      setBanner((prev) => (prev.includes("检测到其他代理软件启动") ? "" : prev));
+      // 兜底：旧版本遗留的冲突类横幅在冲突解除时清掉（不影响其它类型横幅）
+      setBanner((prev) =>
+        prev.includes("检测到其他代理软件") || prev.includes("系统代理被占用") ? "" : prev
+      );
     });
     const off1 = window.veyra.onCoreStatus((d) => {
       applyStatus(d as { running?: boolean; seq?: number; version?: { version?: string } });

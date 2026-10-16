@@ -2695,18 +2695,29 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
 .unlock-grid {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 7px;
+}
+/* 标签在左、网格在右：12 项若让标签独占一行，4 个组标签就吃掉 ~72px，
+   右栏会溢出需要滚动。横排后既保住分组语义，又压到一屏内。 */
+.unlock-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .unlock-row-label {
-  margin-bottom: 6px;
-  font-size: 11px;
+  flex-shrink: 0;
+  width: 26px;
+  font-size: 10.5px;
   font-weight: 500;
+  line-height: 1.25;
   color: var(--text-500);
 }
 .unlock-tiles {
+  flex: 1;
+  min-width: 0;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  gap: 4px;
 }
 .unlock-tile {
   position: relative;
@@ -2714,7 +2725,7 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   flex-direction: column;
   align-items: center;
   gap: 5px;
-  padding: 9px 4px 7px;
+  padding: 5px 3px 4px;
   border: 0.5px solid transparent;
   border-radius: var(--radius-md);
   transition: background 0.2s var(--ease);
@@ -2724,9 +2735,9 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
 .unlock-tile-mark {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 11px;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
   background: var(--brand, var(--text-600));
   /* 未测试 = 去饱和（颜色即状态） */
   filter: grayscale(1) opacity(0.38);
@@ -2756,7 +2767,7 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-400);
 }
 .unlock-tile.ok .unlock-tile-name { color: var(--text-200); }
@@ -2784,6 +2795,12 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
 .unlock-tile[data-brand="netflix"] { --brand: #e50914; }
 .unlock-tile[data-brand="disney"] { --brand: #113ccf; }
 .unlock-tile[data-brand="youtube"] { --brand: #ff0000; }
+.unlock-tile[data-brand="prime"] { --brand: #00a8e1; }
+.unlock-tile[data-brand="spotify"] { --brand: #1db954; }
+.unlock-tile[data-brand="tiktok"] { --brand: #161823; }
+.unlock-tile[data-brand="bahamut"] { --brand: #1f8fbf; }
+.unlock-tile[data-brand="bilibili-cn"],
+.unlock-tile[data-brand="bilibili-hk"] { --brand: #fb7299; }
 
 /* ── 顶栏时钟（v13：从右栏「系统时间」卡收进顶栏）────────────
    时间属窗口级信息，不值得在右栏独占一张卡。 */

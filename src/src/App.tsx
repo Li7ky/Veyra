@@ -466,9 +466,10 @@ function delayDotClass(ms: number | null | undefined): string {
   return DELAY_DOT[delayClass(ms ?? undefined)];
 }
 
-// 右栏「解锁状态」展示项：按用途分两组，各取最有代表性的 3 项，共 6 项。
-// 全量 12 项（含 B站、Bahamut、Prime、Spotify、TikTok）保留在测试页，此处不重复堆砌，
-// 否则 324px 宽的右栏会被撑到需要滚动，失去「扫一眼」的价值。
+// 右栏「解锁状态」展示项（v17）：全 12 项聚合在此，分 4 组 × 3 项——
+// 正好 3 列 × 4 行，组内一行放满：既保留分组语义，又比 6 项版只高约一行（约 330px，
+// 与「网络状态」卡合计仍在右栏一屏内，不需要滚动）。
+// id 与测试页严格一致，直接复用 unlockMap；名称取短名以适配 3 列宽度。
 const RAIL_UNLOCK_GROUPS: { key: string; label: string; ids: [string, string][] }[] = [
   {
     key: "ai",
@@ -480,12 +481,30 @@ const RAIL_UNLOCK_GROUPS: { key: string; label: string; ids: [string, string][] 
     ],
   },
   {
-    key: "stream",
-    label: "流媒体",
+    key: "film",
+    label: "影视",
     ids: [
       ["netflix", "Netflix"],
       ["disney", "Disney+"],
+      ["prime", "Prime"],
+    ],
+  },
+  {
+    key: "media",
+    label: "影音",
+    ids: [
       ["youtube", "YouTube"],
+      ["spotify", "Spotify"],
+      ["bahamut", "Bahamut"],
+    ],
+  },
+  {
+    key: "social",
+    label: "社区",
+    ids: [
+      ["tiktok", "TikTok"],
+      ["bilibili-cn", "B站大陆"],
+      ["bilibili-hk", "B站港澳台"],
     ],
   },
 ];
@@ -497,7 +516,7 @@ const RAIL_UNLOCK_GROUPS: { key: string; label: string; ids: [string, string][] 
    颜色本身就是状态信号。 */
 function BrandMark({ id }: { id: string }) {
   const svg = (children: ReactNode) => (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
       {children}
     </svg>
   );
@@ -553,6 +572,55 @@ function BrandMark({ id }: { id: string }) {
         <>
           <rect x="2.4" y="5.6" width="19.2" height="12.8" rx="3.6" fill="#fff" />
           <path d="M10.4 9.2v5.6l5-2.8z" fill="var(--brand, #e50914)" />
+        </>
+      );
+    case "prime":
+      // 微笑箭头
+      return svg(
+        <>
+          <path
+            d="M4.2 13.4c4.3 3 11.3 3 15.6-0.4"
+            stroke="#fff"
+            strokeWidth="2"
+            fill="none"
+            strokeLinecap="round"
+          />
+          <path d="M17.2 12.2l4-0.8-1.3 3.6z" fill="#fff" />
+        </>
+      );
+    case "spotify":
+      // 三道声波弧
+      return svg(
+        <>
+          <path d="M6.2 9.6c3.6-1.1 8-0.7 11.2 0.9" stroke="#fff" strokeWidth="1.9" fill="none" strokeLinecap="round" />
+          <path d="M6.9 12.9c2.9-0.9 6.4-0.6 9.1 0.7" stroke="#fff" strokeWidth="1.9" fill="none" strokeLinecap="round" />
+          <path d="M7.6 16c2.3-0.7 5-0.4 7.2 0.6" stroke="#fff" strokeWidth="1.9" fill="none" strokeLinecap="round" />
+        </>
+      );
+    case "tiktok":
+      // 音符
+      return svg(
+        <path
+          d="M13.5 3.6h2.3c.3 2.1 1.5 3.4 3.6 3.7v2.4c-1.4 0-2.6-.5-3.6-1.2v5.4c0 2.9-2.2 5-5.1 5s-5.1-2.1-5.1-5 2.2-5 5.1-5c.3 0 .6 0 .9.1v2.6c-.3-.1-.6-.2-.9-.2-1.5 0-2.6 1.1-2.6 2.6s1.1 2.6 2.6 2.6 2.6-1.1 2.6-2.6z"
+          fill="#fff"
+        />
+      );
+    case "bahamut":
+      // 盾徽三角
+      return svg(
+        <>
+          <path d="M12 4 19.6 18.8H4.4z" fill="none" stroke="#fff" strokeWidth="1.9" strokeLinejoin="round" />
+          <path d="M12 9.4v4.8" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" />
+        </>
+      );
+    case "bilibili-cn":
+    case "bilibili-hk":
+      // 电视机（天线 + 双眼）
+      return svg(
+        <>
+          <rect x="3.2" y="8" width="17.6" height="11.6" rx="2.6" fill="none" stroke="#fff" strokeWidth="1.9" />
+          <path d="M7.6 4.6 11.2 8M16.4 4.6 12.8 8" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" />
+          <path d="M9.4 11.6v4M14.6 11.6v4" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" />
         </>
       );
     default:

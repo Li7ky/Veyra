@@ -77,6 +77,7 @@ import ConnectionsPage from "./ConnectionsPage";
 import RulesPage from "./RulesPage";
 import TestsPage from "./TestsPage";
 import WaveChart from "./WaveChart";
+import { BRAND_PATHS } from "./brandIcons";
 import Sparkline from "./Sparkline";
 // Monaco 体积占主包的绝大部分（约 4.4MB）；改为懒加载，首屏 JS 解析时间大幅下降，
 // 只有用户首次切到「YAML」子标签时才加载编辑器 chunk。
@@ -509,123 +510,16 @@ const RAIL_UNLOCK_GROUPS: { key: string; label: string; ids: [string, string][] 
   },
 ];
 
-/* 简化几何标识。
-   说明：右栏只有 324px 宽，直接内嵌各家官方 SVG 会带来体积与授权上的麻烦；
-   这里用「品牌色底 + 白色简化标识」表达品牌识别，需要官方 logo 时只替换下面的 path 即可。
-   品牌色写在 CSS（用 [data-brand] 选择器），未测试时整块去饱和、测出结果恢复品牌色——
-   颜色本身就是状态信号。 */
+/* 品牌标识：真实矢量路径见 ./brandIcons.ts（源自 simple-icons，CC0 1.0）。
+   外层是品牌色磁贴 + 白色填充；未测试时整块去饱和——颜色本身就是状态信号。 */
 function BrandMark({ id }: { id: string }) {
-  const svg = (children: ReactNode) => (
+  const d = BRAND_PATHS[id];
+  if (!d) return null;
+  return (
     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      {children}
+      <path d={d} fill="#fff" />
     </svg>
   );
-  switch (id) {
-    case "chatgpt":
-      // 六边形花环 + 中心点（OpenAI 标记的几何简化）
-      return svg(
-        <>
-          <path
-            d="M12 3.4 19.4 7.7v8.6L12 20.6 4.6 16.3V7.7z"
-            fill="none"
-            stroke="#fff"
-            strokeWidth="1.9"
-            strokeLinejoin="round"
-          />
-          <circle cx="12" cy="12" r="2.1" fill="#fff" />
-        </>
-      );
-    case "claude":
-      // 八道星芒
-      return svg(
-        <path
-          d="M12 4v16M4 12h16M6.4 6.4l11.2 11.2M17.6 6.4 6.4 17.6"
-          stroke="#fff"
-          strokeWidth="1.9"
-          strokeLinecap="round"
-        />
-      );
-    case "gemini":
-      // 四角星
-      return svg(
-        <path
-          d="M12 3c.7 4.6 3.4 7.3 8 8-4.6.7-7.3 3.4-8 8-.7-4.6-3.4-7.3-8-8 4.6-.7 7.3-3.4 8-8z"
-          fill="#fff"
-        />
-      );
-    case "netflix":
-      // 斜体 N
-      return svg(
-        <path d="M8.4 3.4h2.3l4.9 11.9V3.4h2.3v17.2h-2.3L10.7 8.7v11.9H8.4z" fill="#fff" />
-      );
-    case "disney":
-      // 城堡拱门
-      return svg(
-        <path
-          d="M12 4.2 14 6.6 16 4.2l1.2 2.6h1.5v12.7H5.3V6.8h1.5L8 4.2l2 2.4z"
-          fill="#fff"
-        />
-      );
-    case "youtube":
-      // 圆角矩形 + 播放三角（三角取品牌色，露出底色）
-      return svg(
-        <>
-          <rect x="2.4" y="5.6" width="19.2" height="12.8" rx="3.6" fill="#fff" />
-          <path d="M10.4 9.2v5.6l5-2.8z" fill="var(--brand, #e50914)" />
-        </>
-      );
-    case "prime":
-      // 微笑箭头
-      return svg(
-        <>
-          <path
-            d="M4.2 13.4c4.3 3 11.3 3 15.6-0.4"
-            stroke="#fff"
-            strokeWidth="2"
-            fill="none"
-            strokeLinecap="round"
-          />
-          <path d="M17.2 12.2l4-0.8-1.3 3.6z" fill="#fff" />
-        </>
-      );
-    case "spotify":
-      // 三道声波弧
-      return svg(
-        <>
-          <path d="M6.2 9.6c3.6-1.1 8-0.7 11.2 0.9" stroke="#fff" strokeWidth="1.9" fill="none" strokeLinecap="round" />
-          <path d="M6.9 12.9c2.9-0.9 6.4-0.6 9.1 0.7" stroke="#fff" strokeWidth="1.9" fill="none" strokeLinecap="round" />
-          <path d="M7.6 16c2.3-0.7 5-0.4 7.2 0.6" stroke="#fff" strokeWidth="1.9" fill="none" strokeLinecap="round" />
-        </>
-      );
-    case "tiktok":
-      // 音符
-      return svg(
-        <path
-          d="M13.5 3.6h2.3c.3 2.1 1.5 3.4 3.6 3.7v2.4c-1.4 0-2.6-.5-3.6-1.2v5.4c0 2.9-2.2 5-5.1 5s-5.1-2.1-5.1-5 2.2-5 5.1-5c.3 0 .6 0 .9.1v2.6c-.3-.1-.6-.2-.9-.2-1.5 0-2.6 1.1-2.6 2.6s1.1 2.6 2.6 2.6 2.6-1.1 2.6-2.6z"
-          fill="#fff"
-        />
-      );
-    case "bahamut":
-      // 盾徽三角
-      return svg(
-        <>
-          <path d="M12 4 19.6 18.8H4.4z" fill="none" stroke="#fff" strokeWidth="1.9" strokeLinejoin="round" />
-          <path d="M12 9.4v4.8" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" />
-        </>
-      );
-    case "bilibili-cn":
-    case "bilibili-hk":
-      // 电视机（天线 + 双眼）
-      return svg(
-        <>
-          <rect x="3.2" y="8" width="17.6" height="11.6" rx="2.6" fill="none" stroke="#fff" strokeWidth="1.9" />
-          <path d="M7.6 4.6 11.2 8M16.4 4.6 12.8 8" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" />
-          <path d="M9.4 11.6v4M14.6 11.6v4" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" />
-        </>
-      );
-    default:
-      return svg(<circle cx="12" cy="12" r="6" fill="#fff" />);
-  }
 }
 
 // 首页卡片信息行：图标点缀 + 标签/值居中 + 明显描边框

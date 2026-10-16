@@ -667,17 +667,20 @@ function applyProxyGuardLoop() {
       if (!desired.enabled) return;
       const st = await systemProxyStatusRaw();
       if (desired.mode === "pac") {
-        // PAC：只要 AutoConfigURL 丢了就恢复
-        if (!st.pacUrl) await applyProxyMode("pac");
-      } else if (!st.enabled || (st.server && !String(st.server).includes(String(MIXED_PORT)))) {
+        // 外部 PAC 已生效时保持原状，不能把 Clash 的 PAC 覆盖成 Veyra PAC。
+        if (!st.pacUrl && !st.enabled) await applyProxyMode("pac");
+      } else if (!st.enabled && !st.pacUrl) {
         await applyProxyMode("system");
+      } else if (st.enabled && isOurProxyServer(st.server)) {
+        // 已经是 Veyra 的系统代理，无需重复写注册表。
+        return;
       }
     },
   });
 }
 
 async function systemProxyStatusRaw() {
-  if (process.platform !== "win32") return { enabled: false };
+  if (process.platform !== "win32") return { enabled: false, server: "", pacUrl: "" };
   const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
   try {
     const { stdout } = await new Promise((resolve, reject) => {
@@ -694,13 +697,39 @@ async function systemProxyStatusRaw() {
       pacUrl: pm ? pm[1].trim() : "",
     };
   } catch {
-    return { enabled: false };
+    return { enabled: false, server: "", pacUrl: "" };
   }
+}
+
+async function externalSystemProxyConflict() {
+  const st = await systemProxyStatusRaw();
+  const active = st.enabled || !!st.pacUrl;
+  if (!active) return null;
+  if (st.enabled && isOurProxyServer(st.server)) return null;
+  if (st.pacUrl && isOurProxyPac(st.pacUrl)) return null;
+  const target = st.pacUrl
+    ? `系统 PAC 代理被占用 → ${st.pacUrl}`
+    : `系统代理被占用 → ${st.server || "未知地址"}`;
+  return { type: "system-proxy", label: target, server: st.server, pacUrl: st.pacUrl };
 }
 
 async function applyProxyMode(mode) {
   const s = appSettings || DEFAULT_SETTINGS;
   const m = mode || s.proxyMode || "system";
+  if (m !== "off") {
+    const external = await externalSystemProxyConflict();
+    if (external) {
+      const msg = `检测到外部系统代理：${external.label}。请先停止外部代理并退出对应软件后再启用 Veyra。`;
+      sendStartupConflict({
+        conflicts: [external.label],
+        severity: "high",
+        rawConflicts: [external],
+        at: new Date().toISOString(),
+      });
+      toastNotify("系统代理冲突", msg);
+      throw new Error(msg);
+    }
+  }
   if (m === "off") {
     const r = await vergeExt.setWinProxyMode({
       mode: "off",
@@ -950,10 +979,20 @@ async function detectOtherProxyDetailed() {
     includeSystem: false,
     includeSystemProxy: true,
   });
-  // 进程/端口监听不代表系统代理已生效；这里只保留系统代理冲突。
+  // 进程/端口监听不代表系统代理已生效；启动互斥只保留系统代理冲突。
+  const processHits = result.conflicts.filter((c) => c.type === "process");
   result.conflicts = result.conflicts.filter((c) =>
-    c.type === "system-proxy" && !isOurProxyServer(c.server)
+    c.type === "system-proxy" && !isOurProxyServer(c.server) && !isOurProxyPac(c.pacUrl || c.server)
   );
+  // 将检测到的代理软件名和 PID 关联到系统代理冲突，弹窗能明确告诉用户该关闭哪个软件。
+  if (processHits.length > 0) {
+    const pids = [...new Set(processHits.flatMap((c) => Array.isArray(c.pids) ? c.pids : []))];
+    const names = [...new Set(processHits.map((c) => c.label).filter(Boolean))];
+    result.conflicts.forEach((c) => {
+      if (names.length > 0) c.label = `${names.join("、")}：${c.label}`;
+      if (pids.length > 0) c.pids = pids;
+    });
+  }
   result.severity = result.conflicts.length > 0 ? "high" : "none";
   result.counts = { critical: 0, high: result.conflicts.length, medium: 0 };
   return result;
@@ -978,7 +1017,7 @@ async function detectSelfConflict() {
 /** 关闭外部系统代理并退出已检测到的代理软件。 */
 async function resolveExternalProxyConflict() {
   const proxyState = await systemProxyStatusRaw();
-  if (proxyState.enabled) {
+  if (proxyState.enabled || proxyState.pacUrl) {
     await vergeExt.setWinProxyMode({
       mode: "off",
       mixedPort: MIXED_PORT,
@@ -1441,7 +1480,7 @@ function _startRuntimeConflictMonitor() {
     {
       includeSystemProxy: true,
       filterConflicts: (items) => items.filter((c) =>
-        c.type === "system-proxy" && !isOurProxyServer(c.server)
+        c.type === "system-proxy" && !isOurProxyServer(c.server) && !isOurProxyPac(c.pacUrl || c.server)
       ),
     }
   );
@@ -1544,6 +1583,13 @@ async function syncSystemProxyState() {
 }
 
 /** 判断注册表里的代理服务器地址是否指向 Veyra 自己的端口（含历史/漂移端口） */
+function isOurProxyPac(pacUrl) {
+  const ownPacPort = Number(vergeExt.pacPort?.() || 0);
+  if (!ownPacPort) return false;
+  const match = String(pacUrl || "").trim().match(/^https?:\/\/(127\.0\.0\.1|localhost):(\d+)\//i);
+  return !!match && Number(match[2]) === ownPacPort;
+}
+
 function isOurProxyServer(server) {
   const prefer = Number(appSettings?.mixedPort) || DEFAULT_MIXED;
   const ports = new Set([MIXED_PORT, DEFAULT_MIXED, prefer, DEFAULT_MIXED + 10003, prefer + 10003].map(Number));
@@ -3243,7 +3289,7 @@ app.whenReady().then(async () => {
           at: new Date().toISOString(),
         });
       }
-      toastNotify("启动被拦截", `检测到其他代理软件正在运行：${conflicts.join("、")}。请关闭后重试。`);
+      toastNotify("启动被拦截", `检测到外部系统代理：${conflicts.join("、")}。请先关闭外部代理后重试。`);
       // 不自动启动内核，等待用户在对话框中操作后重试
     } else {
       await startCore();

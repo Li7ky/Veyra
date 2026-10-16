@@ -290,25 +290,37 @@ function detectProxyProcesses() {
 // 系统级检测（Windows 注册表 + macOS scutil）
 // ---------------------------------------------------------------------------
 
-/** 检测系统代理是否已被其他应用设置 */
+/** 检测系统代理是否已被其他应用设置（经典代理或 PAC） */
 function detectSystemProxyConflict() {
   return new Promise((resolve) => {
     if (process.platform !== "win32") return resolve(null);
-    // 读取注册表判断代理是否开启
-    execFile("reg", ["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", "/v", "ProxyEnable"],
-      { windowsHide: true, timeout: 3000 }, (err, stdout) => {
-        if (err) return resolve(null);
-        const enabled = /0x1$|0x1\s/i.test(stdout);
-        if (!enabled) return resolve(null);
-        // 进一步检测代理服务器地址
-        execFile("reg", ["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", "/v", "ProxyServer"],
-          { windowsHide: true, timeout: 3000 }, (err2, stdout2) => {
-            if (err2) return resolve({ type: "system-proxy", label: "系统代理已开启（未知软件）" });
-            const match = stdout2.match(/ProxyServer\s+REG_SZ\s+([^\r\n]+)/i);
-            const addr = match ? match[1].trim() : "未知";
-            resolve({ type: "system-proxy", label: `系统代理被占用 → ${addr}`, server: addr });
-          });
+    const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
+    execFile("reg", ["query", key], { windowsHide: true, timeout: 3000 }, (err, stdout) => {
+      if (err) return resolve(null);
+      const text = String(stdout || "");
+      const enabled = /ProxyEnable\s+REG_DWORD\s+0x1\b/i.test(text);
+      const serverMatch = text.match(/ProxyServer\s+REG_SZ\s+([^\r\n]+)/i);
+      const pacMatch = text.match(/AutoConfigURL\s+REG_SZ\s+([^\r\n]+)/i);
+      const server = serverMatch ? serverMatch[1].trim() : "";
+      const pacUrl = pacMatch ? pacMatch[1].trim() : "";
+      if (!enabled && !pacUrl) return resolve(null);
+      if (pacUrl && !enabled) {
+        resolve({
+          type: "system-proxy",
+          label: `系统 PAC 代理被占用 → ${pacUrl}`,
+          server: pacUrl,
+          pacUrl,
+        });
+        return;
+      }
+      const addr = server || "未知";
+      resolve({
+        type: "system-proxy",
+        label: `系统代理被占用 → ${addr}`,
+        server: addr,
+        pacUrl,
       });
+    });
   });
 }
 

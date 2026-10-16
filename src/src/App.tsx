@@ -1797,7 +1797,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       <Icon />
                       <span>{label}</span>
                       {typeof badge === "number" && badge > 0 ? (
-                        <span className="badge badge-cyan" style={{ marginLeft: "auto" }}>
+                        <span className="badge badge-count" style={{ marginLeft: "auto" }}>
                           {badge > 99 ? "99+" : badge}
                         </span>
                       ) : null}
@@ -1864,135 +1864,65 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     }
                   />
 
-                  {/* 区段 1: KPI — 降级为次要信息 */}
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 14 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{ fontSize: 13, color: "var(--text-400)", marginBottom: 6 }}
-                      >
-                        {MODE_LABEL[mode] || mode} · {nodes.length} {t("home.nodesAvailable", "节点可用")} ·{" "}
-                        {formatRate(downRate)} ↓
-                      </div>
-                      <div style={{ display: "flex", gap: 10 }}>
-                        <div
-                          className="glass-tile"
-                          style={{
-                            flex: 1,
-                            padding: "10px 14px",
-                          }}
-                        >
-                          <div
-                            style={{
-                              fontSize: 10,
-                              color: "var(--text-500)",
-                              fontWeight: 500,
-                              marginBottom: 3,
-                            }}
-                          >
-                            ↑ {t("home.uploadSpeed", "上传速率")}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: 18,
-                              fontWeight: 600,
-                              /* 0 值用彩色会暗示「有数据」——无流量时降为中性灰 */
-                              color: upRate > 0 ? "var(--green-500)" : "var(--text-500)",
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            {formatRate(upRate)}
-                          </div>
-                        </div>
-                        <div
-                          className="glass-tile"
-                          style={{
-                            flex: 1,
-                            padding: "10px 14px",
-                          }}
-                        >
-                          <div
-                            style={{
-                              fontSize: 10,
-                              color: "var(--text-500)",
-                              fontWeight: 500,
-                              marginBottom: 3,
-                            }}
-                          >
-                            ↓ {t("home.downloadSpeed", "下载速率")}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: 18,
-                              fontWeight: 600,
-                              color: downRate > 0 ? "var(--blue-500)" : "var(--text-500)",
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            {formatRate(downRate)}
-                          </div>
-                        </div>
-                        <div
-                          className="glass-tile"
-                          style={{
-                            flex: 1,
-                            padding: "10px 14px",
-                          }}
-                        >
-                          <div
-                            style={{
-                              fontSize: 10,
-                              color: "var(--text-500)",
-                              fontWeight: 500,
-                              marginBottom: 3,
-                            }}
-                          >
-                            {t("home.activeConnections", "活跃连接")}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: 18,
-                              fontWeight: 600,
-                              color: connCount > 0 ? "var(--text-100)" : "var(--text-500)",
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            {connCount}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    {/* 首页卡片配置入口：这个弹窗此前没有任何入口（setHomeCfgOpen(true) 全项目 0 次调用），
-                        卡片开关逻辑与持久化都已实现好，只是打不开。 */}
-                    <button
-                      ref={homeCfgTriggerRef}
-                      type="button"
-                      className="btn ghost btn-sm home-cfg-open"
-                      onClick={() => {
-                        setHomeCfgDraft(homeCards);
-                        setHomeCfgOpen(true);
-                      }}
-                      title={t("home.configureCards", "自定义首页卡片")}
-                      aria-haspopup="dialog"
-                    >
-                      <SlidersHorizontal size={14} />
-                      {t("home.configureCards", "自定义首页卡片")}
-                    </button>
-                  </div>
-
-                  {/* 区段 2: 实时流量图
-                      原实现为 3 条硬编码 path 的静态装饰图，不随时间/流量变化，具有欺骗性。
-                      改用项目已有的 WaveChart 组件消费真实累积的 rateHistory（见 setRateHistory）。 */}
-                  <div
-                    className="glass-tile"
-                    style={{ padding: "12px 14px", marginBottom: 14 }}
-                  >
-                    {/* 加标题行 + 时间窗口：这块是中栏最大的格子，之前只有一片空白，
-                        看起来像「没画完」而不是「暂时没数据」 */}
+                  {/* 实时流量面板（v14）
+                      合并原「上传速率 / 下载速率 / 活跃连接」三张指标卡 + 独立流量图。
+                      理由：四者语义上就是同一件事，拆成四块会让中栏失去视觉焦点，
+                      并把最大面积给了最空的内容。速率现在是全页最大的数据。 */}
+                  <div className="glass-tile tf-panel" style={{ marginBottom: 14 }}>
                     <div className="tf-head">
-                      <span className="tf-title">{t("home.realtimeTraffic", "实时流量")}</span>
-                      <span className="tf-window">{t("home.window60s", "最近 60 秒")}</span>
+                      <div className="tf-head-l">
+                        <span className="tf-title">{t("home.realtimeTraffic", "实时流量")}</span>
+                        <span className="tf-sub">
+                          {MODE_LABEL[mode] || mode} · {nodes.length}{" "}
+                          {t("home.nodesAvailable", "节点可用")}
+                        </span>
+                      </div>
+                      {/* 首页卡片配置入口：这个弹窗此前没有任何入口（setHomeCfgOpen(true) 全项目 0 次调用），
+                          卡片开关逻辑与持久化都已实现好，只是打不开。 */}
+                      <button
+                        ref={homeCfgTriggerRef}
+                        type="button"
+                        className="btn ghost btn-xs home-cfg-open"
+                        onClick={() => {
+                          setHomeCfgDraft(homeCards);
+                          setHomeCfgOpen(true);
+                        }}
+                        title={t("home.configureCards", "自定义首页卡片")}
+                        aria-haspopup="dialog"
+                      >
+                        <SlidersHorizontal size={13} />
+                        {t("home.configureCards", "自定义首页卡片")}
+                      </button>
                     </div>
+
+                    {/* 焦点数据：下载速率是全页最大的数字。0 值降为中性灰——彩色 0 会暗示「有数据」 */}
+                    <div className="tf-rates">
+                      <div className="tf-rate">
+                        <span className="tf-rate-k">↓ {t("home.download", "下载")}</span>
+                        <span
+                          className={`tf-rate-v${downRate > 0 ? " down" : " is-zero"}`}
+                        >
+                          {formatRate(downRate)}
+                        </span>
+                      </div>
+                      <div className="tf-rate">
+                        <span className="tf-rate-k">↑ {t("home.upload", "上传")}</span>
+                        <span className={`tf-rate-v sm${upRate > 0 ? " up" : " is-zero"}`}>
+                          {formatRate(upRate)}
+                        </span>
+                      </div>
+                      <div className="tf-conn">
+                        <span className="tf-conn-k">
+                          {t("home.activeConnections", "活跃连接")}
+                        </span>
+                        <span className={`tf-conn-v${connCount > 0 ? "" : " is-zero"}`}>
+                          {connCount}
+                        </span>
+                      </div>
+                    </div>
+
                     <div className="home-chart-wrap">
+                      <span className="tf-window">{t("home.window60s", "最近 60 秒")}</span>
                       {hasTraffic ? (
                         <WaveChart up={rateHistory.up} down={rateHistory.down} />
                       ) : (
@@ -2000,7 +1930,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           {/* 零流量：只留网格底，不画数据线；给明确引导而非留一片空白 */}
                           <WaveChart up={[]} down={[]} empty />
                           <div className="home-chart-empty">
-                            {/* 空态给一个图标：只有两行字的话，这块区域看起来像「没画完」 */}
                             <svg
                               viewBox="0 0 24 24"
                               width="20"
@@ -2019,11 +1948,12 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                                 ? t("home.noTraffic", "暂无流量数据")
                                 : t("nav.serviceNotRunning", "服务未运行")}
                             </p>
-                            {running ? (
-                              <small>
-                                {t("home.noTrafficHint", "有流量经过时会自动记录")}
-                              </small>
-                            ) : null}
+                            {/* 空态 = 原因 + 下一步，不能只说「没有」 */}
+                            <small>
+                              {running
+                                ? t("home.noTrafficHint", "有流量经过时会自动记录")
+                                : t("home.startHint", "启动内核后开始记录")}
+                            </small>
                           </div>
                         </>
                       )}
@@ -2125,45 +2055,25 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           padding: "12px 14px",
                         }}
                       >
-                        <div
-                          style={{
-                            fontSize: 10,
-                            color: "var(--text-500)",
-                            fontWeight: 500,
-                            letterSpacing: "0.04em",
-                            marginBottom: 4,
-                          }}
-                        >
-                          {t("home.rules", "规则数量")}
+                        <div className="tile-head">
+                          <span className="tile-title">{t("home.rules", "规则数量")}</span>
+                          <span className={`tile-num${ruleCount != null ? "" : " is-zero"}`}>
+                            {ruleCount != null ? ruleCount : 0}
+                          </span>
                         </div>
                         {ruleCount != null ? (
-                          <>
-                            <div
-                              style={{
-                                fontSize: 14,
-                                fontWeight: 600,
-                                color: "var(--text-100)",
-                                fontFamily: "var(--font-mono)",
-                              }}
-                            >
-                              {ruleCount}
-                            </div>
-                            <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
-                              {t("home.ruleCount", "条规则")}
-                            </div>
-                          </>
+                          <div className="tile-hint">{t("home.ruleCount", "条规则")}</div>
                         ) : (
-                          /* 空态一句话说清：此前是「—」+「条规则」两行，
-                             破折号容易被读成分隔线，且数值与单位分家 */
-                          <div
-                            style={{
-                              fontSize: 12,
-                              fontWeight: 500,
-                              color: "var(--text-400)",
-                              marginTop: 2,
-                            }}
-                          >
-                            {t("home.noRules", "暂无规则")}
+                          /* 空态 = 原因 + 下一步：只说「暂无」用户不知道要做什么 */
+                          <div className="tile-empty">
+                            <span>{t("home.noRulesHint", "还没有加载规则集，当前为直连模式")}</span>
+                            <button
+                              type="button"
+                              className="link-btn"
+                              onClick={() => goTab("rules")}
+                            >
+                              {t("home.goAddRules", "去添加规则集")} →
+                            </button>
                           </div>
                         )}
                       </div>
@@ -2186,13 +2096,33 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       <div style={{ display: "flex", gap: 10 }}>
                         <div style={HOME_TILE}>
                           <div style={HOME_TILE_LABEL}>{t("home.nodeName", "节点")}</div>
-                          <div style={HOME_TILE_VALUE} title={currentNode}>
-                            {currentNode || "—"}
-                          </div>
-                          <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
-                            {currentNodeInfo.type || "—"}
-                            {currentNodeInfo.udp ? " · UDP" : ""}
-                          </div>
+                          {/* currentNode 在无选中时取值是 "—" 而非空串（见 currentNodeInfo 的同一判断），
+                              只判真值会让空态分支永远不触发 */}
+                          {currentNode && currentNode !== "—" ? (
+                            <>
+                              <div style={HOME_TILE_VALUE} title={currentNode}>
+                                {currentNode}
+                              </div>
+                              <div
+                                style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}
+                              >
+                                {currentNodeInfo.type || "—"}
+                                {currentNodeInfo.udp ? " · UDP" : ""}
+                              </div>
+                            </>
+                          ) : (
+                            /* 空态给出口：未选节点时告诉用户去哪里选 */
+                            <div className="tile-empty">
+                              <span>{t("home.noNode", "还没有选择节点")}</span>
+                              <button
+                                type="button"
+                                className="link-btn"
+                                onClick={() => goTab("proxies")}
+                              >
+                                {t("home.goSelectNode", "去选择节点")} →
+                              </button>
+                            </div>
+                          )}
                         </div>
                         <div style={HOME_TILE}>
                           <div style={HOME_TILE_LABEL}>{t("home.delay", "延迟")}</div>
@@ -3029,11 +2959,13 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     <div className="text-xs text-muted">正在检测…</div>
                   ) : exitIp?.ip ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      <div>
-                        <div className="text-xs text-muted mb-1">当前出口</div>
+                      {/* 统一成行式（标签左 / 值右），与下方归属、运营商同一套对齐逻辑。
+                          此前 IP 左对齐、下面两行右对齐，一张卡里两套对齐规则。 */}
+                      <div className="exit-ip-row">
+                        <span className="exit-ip-k">当前出口</span>
                         <button
                           type="button"
-                          className="exit-ip-value"
+                          className="exit-ip-v is-ip"
                           onClick={() => {
                             navigator.clipboard?.writeText(exitIp.ip || "");
                             showToast("已复制出口 IP");

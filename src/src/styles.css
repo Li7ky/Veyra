@@ -176,10 +176,17 @@ code, pre { font-family: var(--font-mono); }
 /* 子标签包裹层：display:contents 不生成盒子，子元素仍是 .pane 的 flex 子项（保留 gap 布局） */
 .pf-pane { display: contents; }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
+/* 滚动条：默认几乎不可见，悬停才显影。
+   此前是一条满高灰条，横在主区与右栏之间的缝隙里，像界面多了一条竖线。 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--text-600); border-radius: var(--radius-full); }
-::-webkit-scrollbar-thumb:hover { background: var(--text-500); }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-500) 22%, transparent);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-500) 50%, transparent);
+}
 
 /* ── App Shell ───────────────────────────────────────────── */
 .app {
@@ -508,6 +515,49 @@ code, pre { font-family: var(--font-mono); }
   border: 0.5px solid var(--card-border);
   border-radius: var(--radius-md);
   box-shadow: inset 0 1px 0 var(--glass-hilite), var(--shadow-sm);
+}
+
+/* ── 次级信息瓦片（v14）──────────────────────────────────────
+   标题 + 数值同行（数值右对齐），空态给「原因 + 动作」。
+   空态不预留固定高度，卡片随内容收缩。 */
+.tile-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.tile-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-500);
+}
+.tile-num {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-100);
+}
+.tile-num.is-zero { color: var(--text-500); }
+.tile-hint {
+  font-size: 11px;
+  color: var(--text-400);
+}
+.tile-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.tile-empty > span {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-400);
+}
+.tile-empty .link-btn {
+  font-size: 11px;
+  font-weight: 500;
 }
 .card-header {
   display: flex;
@@ -945,6 +995,14 @@ code, pre { font-family: var(--font-mono); }
   color: var(--text-300);
 }
 .badge-cyan { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--cyan-400); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+/* 导航计数徽标：中性色。它是「有多少条」，不是需要强调的动作——
+   用品牌蓝会和「当前项 / 主操作」抢同一个语义（60-30-10：强调色只留一处）。 */
+.badge-count {
+  background: var(--bg-soft);
+  color: var(--text-400);
+  border-color: var(--card-border);
+  font-variant-numeric: tabular-nums;
+}
 .badge-green { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--green-400); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
 .badge-blue { background: color-mix(in srgb, var(--blue-500) 15%, transparent); color: var(--blue-400); border-color: color-mix(in srgb, var(--blue-500) 50%, transparent); }
 .badge-amber { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--amber-400); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
@@ -2335,9 +2393,9 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
 }
 
 .hero-meta code {
-  font-size: 11px;
+  font-size: 11.5px;
   background: var(--bg-soft);
-  padding: 1px 6px;
+  padding: 2px 8px;
   border-radius: var(--radius-sm);
 }
 
@@ -2346,19 +2404,21 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   font-weight: 500;
 }
 
-/* P2：可点击节点入口——节点名 + chevron，hover 微底暗示可点 */
+/* P2：可点击节点入口——节点名 + chevron，hover 微底暗示可点。
+   内边距与字号和相邻的 .hero-meta code 胶囊保持一致（此前 11px/1px6px
+   vs 12px/2px7px8px，并排时肉眼可见不等高、文字贴边）。 */
 .hero-node-btn {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
   max-width: 220px;
-  padding: 2px 7px 2px 8px;
+  padding: 2px 8px;
   margin-left: 2px;
   border-radius: var(--radius-sm);
   background: var(--bg-soft);
   color: var(--text-300);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 500;
   transition: background 0.2s var(--ease), color 0.2s var(--ease);
 }
@@ -2445,22 +2505,92 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
    卡内只保留 k-dot.idle 一个琥珀状态点（状态指示，非行动点）。 */
 
 
-/* ── Home · 实时流量图 ───────────────────────────────────────
-   图高由容器固定：.wave-chart 此前没有任何尺寸规则，高度交给 SVG 的默认
-   行为，不同窗口下不稳定。空态叠在网格底之上，不拦截指针事件。 */
+/* ── 实时流量面板（v14）───────────────────────────────────────
+   合并原「上传/下载/活跃连接」三张指标卡与独立图表。
+   速率是本页最大的数据，承担视觉焦点；0 值一律中性灰（彩色 0 会暗示有数据）。 */
+.tf-panel {
+  padding: 16px 18px;
+}
 .tf-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.tf-head-l {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 .tf-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  color: var(--text-300);
+  color: var(--text-200);
+  white-space: nowrap;
 }
-.tf-window {
+.tf-sub {
+  font-size: 11px;
+  color: var(--text-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tf-rates {
+  display: flex;
+  align-items: flex-end;
+  gap: 28px;
+  margin-bottom: 12px;
+}
+.tf-rate {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.tf-rate-k {
+  font-size: 11px;
+  color: var(--text-500);
+}
+.tf-rate-v {
+  font-family: var(--font-mono);
+  font-size: 32px;
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-500);
+}
+.tf-rate-v.sm { font-size: 20px; }
+.tf-rate-v.down { color: var(--blue-500); }
+.tf-rate-v.up { color: var(--green-500); }
+.tf-rate-v.is-zero { color: var(--text-500); }
+.tf-conn {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: right;
+}
+.tf-conn-k {
+  font-size: 11px;
+  color: var(--text-500);
+}
+.tf-conn-v {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-100);
+}
+.tf-conn-v.is-zero { color: var(--text-500); }
+/* 时间窗口标注贴在图表右上角，不占独立高度 */
+.home-chart-wrap .tf-window {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  z-index: 1;
   font-size: 11px;
   color: var(--text-500);
 }
@@ -2537,6 +2667,16 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   color: var(--text-500);
   font-family: var(--font-mono);
 }
+/* 出口 IP 走行式后的值样式：仍是 card 里最大的数字，但与其他行共用同一套对齐 */
+.exit-ip-v.is-ip {
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-100);
+  cursor: pointer;
+}
+.exit-ip-v.is-ip:hover { color: var(--accent); }
 
 /* 卡内分段线：出口信息 / 流量数据之间 */
 .rail-sep {
@@ -2689,8 +2829,12 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
 [data-theme="light"] .time-value { color: var(--cyan-500); }
 /* （清理）浅色 .term-body 覆盖曾在此处与 2468 行重复定义且值互相矛盾，
    现统一走 --term-bg/--term-fg 令牌，两主题各定义一次即可。 */
-[data-theme="light"] ::-webkit-scrollbar-thumb { background: var(--text-600); }
-[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: var(--text-500); }
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-500) 20%, transparent);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-500) 42%, transparent);
+}
 [data-theme="light"] .loading-overlay { background: rgba(255, 255, 255, 0.85); }
 [data-theme="light"] .loading-text { color: var(--blue-500); }
 

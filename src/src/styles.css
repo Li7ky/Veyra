@@ -488,10 +488,12 @@ code, pre { font-family: var(--font-mono); }
   /* 22px：与 .stage / .col-right 的首卡起跑线对齐（此前 28px，侧栏卡比左右两栏低 6px） */
   padding-top: 22px;
 }
-/* 侧栏卡吃满整列高度，底边与右栏「网络状态」卡齐平（三栏同高）。
-   页脚用 margin-top:auto 贴底，导航与页脚之间的留白就是这一列的呼吸区。 */
+/* 侧栏卡高度随内容收缩（和右栏「网络状态」卡一致），不再吃满整列：
+   原来 flex:1 + .rail-status margin-top:auto 把状态区顶到窗口底，
+   导航和状态之间留出 216px 空白，卡片底边比主内容多出 99px。
+   现在导航下面直接接状态区，卡片在自己内容处收口。 */
 .col-sidebar > .card {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -789,8 +791,10 @@ code, pre { font-family: var(--font-mono); }
    整块的行高与首页右下那张「系统 / 版本」表统一为 34px（原来这里是 28、
    那张表是 33.6，两套节奏并排放在一起，越往下越错行）。 */
 .rail-status {
-  margin: auto -8px -10px;
-  padding: 4px 8px 10px;
+  /* 12px：紧接导航列表，不再用 margin-top:auto 贴到窗口底。
+     上下内边距都取 10px，绿色状态条不再紧贴分隔线（原来上 4 / 下 10）。 */
+  margin: 12px -8px -10px;
+  padding: 10px 8px 10px;
   border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   display: flex;
   flex-direction: column;

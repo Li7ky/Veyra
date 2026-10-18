@@ -40,6 +40,7 @@ import {
   SlidersHorizontal,
   Square,
   Terminal,
+  Trash2,
   X,
   Zap,
   RefreshCw,
@@ -77,7 +78,6 @@ import ConnectionsPage from "./ConnectionsPage";
 import RulesPage from "./RulesPage";
 import TestsPage from "./TestsPage";
 import WaveChart from "./WaveChart";
-import { BRAND_PATHS } from "./brandIcons";
 import Sparkline from "./Sparkline";
 // Monaco 体积占主包的绝大部分（约 4.4MB）；改为懒加载，首屏 JS 解析时间大幅下降，
 // 只有用户首次切到「YAML」子标签时才加载编辑器 chunk。
@@ -90,6 +90,21 @@ import { getLocale, setLocale, t } from "./i18n";
 
 type Tab = "home" | "proxies" | "profiles" | "connections" | "rules" | "logs" | "tests" | "settings";
 type EnhanceKind = "merge" | "script" | "rules" | "proxies" | "groups";
+type ExitIpInfo = {
+  ip: string | null;
+  /** true = 经系统代理检测，false = 直连检测（主进程按实际系统代理状态决定） */
+  viaProxy?: boolean;
+  country?: string;
+  countryCode?: string;
+  city?: string;
+  region?: string;
+  isp?: string;
+  org?: string;
+  as?: string;
+  timezone?: string;
+  lat?: number;
+  lon?: number;
+};
 
 const GROUP_TYPES = new Set([
   "Selector",
@@ -108,12 +123,36 @@ const GROUP_TYPES = new Set([
 const PX_NODE_FIRST = 30;
 const PX_NODE_BATCH = 60;
 
+// 国家码规范化：只接受两位字母，其它一律返回空（不渲染徽标）
+// 注意：不要用 flag emoji —— Windows 的 Segoe UI Emoji 不含国旗字形，
+// 区域指示符会退回成两个字母方块，看起来就是乱码。
+function countryBadge(code?: string) {
+  const c = (code || "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(c) ? c : "";
+}
+
 function formatBytes(n = 0) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(2)} MB`;
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
+
+/** 订阅页顶部概览：所有订阅的剩余流量之和（没有流量信息的订阅跳过） */
+function subsRemainingBytes(
+  subs: { userinfo?: { upload: number; download: number; total: number } }[]
+) {
+  return subs.reduce((acc, s) => {
+    const total = s.userinfo?.total || 0;
+    if (!total) return acc;
+    const used = (s.userinfo?.upload || 0) + (s.userinfo?.download || 0);
+    return acc + Math.max(0, total - used);
+  }, 0);
+}
+
+// 订阅卡片右侧的用量环（r=18）
+const SUB_RING_R = 18;
+const SUB_RING_C = 2 * Math.PI * SUB_RING_R;
 
 function formatRate(bps: number) {
   if (bps < 1024) return `${Math.max(0, Math.round(bps))} B/s`;
@@ -146,15 +185,26 @@ function formatUptime(ms: number) {
   return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
-// v12：侧栏窄轨道专用时长——把 8 字符「12:34:56」压到 ≤5 字符
-// （<1h 显示 m:ss，≥1h 显示 12h34），保证状态行 98px 内不换行、不截断
-function formatUptimeRail(ms: number) {
-  const s = Math.max(0, Math.floor(ms / 1000));
+function RailUptime({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const s = Math.max(0, Math.floor((now - startedAt) / 1000));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
-  if (h > 0) return `${h}h${String(m).padStart(2, "0")}`;
-  return `${m}:${String(sec).padStart(2, "0")}`;
+  const text =
+    h > 0
+      ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
+      : `${m}:${String(sec).padStart(2, "0")}`;
+  return (
+    <span className="rail-uptime" title="已运行时长">
+      <Clock size={11} aria-hidden="true" />
+      <span className="rail-uptime-num">{text}</span>
+    </span>
+  );
 }
 
 function relativeTime(ts?: number) {
@@ -173,6 +223,18 @@ function expiryText(ts?: number) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** 未来时间（订阅的下次更新时间），和 relativeTime 的方向相反 */
+function untilText(ts?: number) {
+  if (!ts) return "";
+  const diff = ts - Date.now();
+  if (diff <= 0) return t("time.dueNow", "即将");
+  const min = Math.round(diff / 60000);
+  if (min < 60) return t("time.inMinutes", "{n} 分钟后").replace("{n}", String(min));
+  const h = Math.round(diff / 3600000);
+  if (h < 24) return t("time.inHours", "{n} 小时后").replace("{n}", String(h));
+  return t("time.inDays", "{n} 天后").replace("{n}", String(Math.round(h / 24)));
 }
 
 function delayClass(d?: number) {
@@ -472,61 +534,6 @@ function delayDotClass(ms: number | null | undefined): string {
   return DELAY_DOT[delayClass(ms ?? undefined)];
 }
 
-// 右栏「解锁状态」展示项（v17）：全 12 项聚合在此，分 4 组 × 3 项——
-// 正好 3 列 × 4 行，组内一行放满：既保留分组语义，又比 6 项版只高约一行（约 330px，
-// 与「网络状态」卡合计仍在右栏一屏内，不需要滚动）。
-// id 与测试页严格一致，直接复用 unlockMap；名称取短名以适配 3 列宽度。
-const RAIL_UNLOCK_GROUPS: { key: string; label: string; ids: [string, string][] }[] = [
-  {
-    key: "ai",
-    label: "AI",
-    ids: [
-      ["chatgpt", "ChatGPT"],
-      ["claude", "Claude"],
-      ["gemini", "Gemini"],
-    ],
-  },
-  {
-    key: "film",
-    label: "影视",
-    ids: [
-      ["netflix", "Netflix"],
-      ["disney", "Disney+"],
-      ["prime", "Prime"],
-    ],
-  },
-  {
-    key: "media",
-    label: "影音",
-    ids: [
-      ["youtube", "YouTube"],
-      ["spotify", "Spotify"],
-      ["bahamut", "Bahamut"],
-    ],
-  },
-  {
-    key: "social",
-    label: "社区",
-    ids: [
-      ["tiktok", "TikTok"],
-      ["bilibili-cn", "B站大陆"],
-      ["bilibili-hk", "B站港澳台"],
-    ],
-  },
-];
-
-/* 品牌标识：真实矢量路径见 ./brandIcons.ts（源自 simple-icons，CC0 1.0）。
-   外层是品牌色磁贴 + 白色填充；未测试时整块去饱和——颜色本身就是状态信号。 */
-function BrandMark({ id }: { id: string }) {
-  const d = BRAND_PATHS[id];
-  if (!d) return null;
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path d={d} fill="#fff" />
-    </svg>
-  );
-}
-
 // 首页卡片信息行：图标点缀 + 标签/值居中 + 明显描边框
 function InfoRow({
   icon: Icon,
@@ -567,8 +574,11 @@ export default function App() {
   const [pfSeen, setPfSeen] = useState<Record<string, boolean>>({ sub: true });
   const [running, setRunning] = useState(false);
   const [coreVersion, setCoreVersion] = useState("");
-  // 首屏就绪：数据加载完成后才渲染主体，避免显示一堆"—"占位符让人困惑
+  // 首屏就绪：启动进度走完后再进主界面。时长固定，进度条和剩余时间才能对上。
   const [bootReady, setBootReady] = useState(false);
+  const BOOT_MS = 1600;
+  const bootAtRef = useRef(Date.now());
+  const [bootLeft, setBootLeft] = useState(BOOT_MS);
   const [coreType, setCoreType] = useState("mihomo");
   const [coreStartTime, setCoreStartTime] = useState<number | null>(null);
   const appStartTime = useRef(Date.now());
@@ -602,7 +612,93 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [profileText, setProfileText] = useState("");
   const [profileName, setProfileName] = useState("subscription.yaml");
-  const [subUrl, setSubUrl] = useState("");
+  // 记住上次粘贴的订阅链接：重启后输入框不再是空的
+  const [subUrl, setSubUrl] = useState(() => {
+    try {
+      return localStorage.getItem("veyra:lastSubUrl") || "";
+    } catch {
+      return "";
+    }
+  });
+  const subUrlInputRef = useRef<HTMLInputElement | null>(null);
+  // 无边框窗口拖动：部分 Windows 环境下 -webkit-app-region: drag 会失效，这里自己做一份
+  const winDragRef = useRef(false);
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      if (!winDragRef.current) return;
+      window.veyra?.windowDragMove?.(e.screenX, e.screenY);
+    };
+    const up = () => {
+      if (!winDragRef.current) return;
+      winDragRef.current = false;
+      window.veyra?.windowDragEnd?.();
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+  }, []);
+
+  /** 顶栏按下即开始拖窗；按钮 / 输入框 / 搜索区不参与 */
+  const onHeaderMouseDown = (e: React.MouseEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
+    const el = e.target as HTMLElement;
+    if (el.closest("button, input, a, select, textarea, [contenteditable='true'], .header-search, .header-icons")) {
+      return;
+    }
+    winDragRef.current = true;
+    window.veyra?.windowDragStart?.(e.screenX, e.screenY);
+  };
+  // 订阅导入的进度（下载 / 解析），只在订阅页的导入条下方显示，不占全局横幅
+  const [subProgress, setSubProgress] = useState<{ pct: number; label: string } | null>(null);
+  // 「配置文件」列表默认收起，避免和订阅卡片重复占屏
+  // 订阅卡片右键菜单
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; url: string; name: string } | null>(null);
+  // 版本更新后弹一次的「本次更新内容」
+  const [updateNotes, setUpdateNotes] = useState<{
+    version: string;
+    date?: string;
+    title?: string;
+    channel?: string;
+    items: string[];
+  } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    window.veyra
+      ?.updateNotes?.()
+      .then((r) => {
+        if (!alive) return;
+        if (r?.isNew && r.entry) {
+          setUpdateNotes({
+            version: r.entry.version,
+            date: r.entry.date,
+            title: r.entry.title,
+            channel: r.entry.channel,
+            items: r.entry.items || [],
+          });
+        } else if (r) {
+          window.veyra?.markVersionSeen?.().catch(() => {});
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const closeUpdateNotes = () => {
+    setUpdateNotes(null);
+    window.veyra?.markVersionSeen?.().catch(() => {});
+  };
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCtxMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ctxMenu]);
   const [profiles, setProfiles] = useState<
     {
       name: string;
@@ -632,27 +728,9 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   const [pxNodeLimit, setPxNodeLimit] = useState(PX_NODE_FIRST);
   const [enhanceLog, setEnhanceLog] = useState<string[]>([]);
   const [editUid, setEditUid] = useState<string | null>(null);
-  const [exitIp, setExitIp] = useState<{
-    ip: string | null;
-    country?: string;
-    countryCode?: string;
-    city?: string;
-    region?: string;
-    isp?: string;
-    org?: string;
-    as?: string;
-    timezone?: string;
-    lat?: number;
-    lon?: number;
-  } | null>(null);
+  const [exitIp, setExitIp] = useState<ExitIpInfo | null>(null);
   const [exitIpLoading, setExitIpLoading] = useState(false);
 
-  // 右栏「解锁状态」：只放 AI + 主流流媒体的代表项（全量 12 项在测试页）。
-  // runUnlockChecks 是串行外网探测，耗时可达数十秒，故仅手动触发，不随 tab 自动跑。
-  const [unlockMap, setUnlockMap] = useState<
-    Record<string, { ok: boolean; fail?: boolean; region?: string | null; note: string; testedAt?: number }>
-  >({});
-  const [unlockBusy, setUnlockBusy] = useState<string | null>(null);
   const [nodeUri, setNodeUri] = useState("");
   const [providers, setProviders] = useState<{ proxies: string[]; rules: string[] }>({
     proxies: [],
@@ -685,6 +763,46 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   });
   // 内存显示文本：抽出来避免 JSX 表达式内嵌模板字面量导致解析歧义。
   const memText = typeof coreMemMB === "number" ? coreMemMB + " MB" : "—";
+  // 规则数量：内核运行时从 /rules 取真实条数（之前只会在断开时置 null，从来没赋过值，
+  // 所以首页永远显示 0）。切换订阅后 activeProfileUid 变化也会重新统计。
+  const activeProfileUid = useMemo(
+    () => richProfiles.find((p) => p.active)?.uid || "",
+    [richProfiles]
+  );
+  useEffect(() => {
+    if (!running) {
+      setRuleCount(null);
+      return;
+    }
+    let alive = true;
+    window.veyra
+      ?.listRules?.()
+      .then((r) => {
+        if (!alive) return;
+        setRuleCount(Array.isArray(r?.rules) ? r.rules.length : 0);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [running, activeProfileUid]);
+
+  // 订阅总用量：把每条订阅的 (上行+下行)/总量 汇总。
+  // 首页订阅卡要把「已用」和「剩余」分开显示，所以这里同时给出三个数。
+  const subUsage = (() => {
+    let used = 0;
+    let total = 0;
+    for (const s of subs) {
+      const u = s.userinfo;
+      if (u && u.total > 0) {
+        used += u.upload + u.download;
+        total += u.total;
+      }
+    }
+    return { used, total, left: Math.max(0, total - used) };
+  })();
+  const subUsagePct =
+    subUsage.total > 0 ? Math.min(100, Math.round((subUsage.used / subUsage.total) * 100)) : null;
   // 「有真实流量」守卫：零流量时平线与贴底直线在视觉上都等同于「图表故障」。
   // 此前名 railHasTraffic 且只在侧栏版本使用，侧栏改版后成了死变量——
   // 首页流量图因此漏掉守卫，零流量画出贴底绿线。现统一由它兜底。
@@ -708,6 +826,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   // 首页系统信息卡的真实数据（此前版本硬编码「未启用 / v1.1 / Windows 10/11」）
   const [appVersion, setAppVersion] = useState("");
   const [platformLabel, setPlatformLabel] = useState("Windows");
+  const [systemMem, setSystemMem] = useState(0);
+  const [electronVersion, setElectronVersion] = useState("");
   const [startWithWindows, setStartWithWindows] = useState(false);
   const [mihomoChannel, setMihomoChannel] = useState("stable");
 
@@ -753,13 +873,18 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   groupsRef.current = groups;
   tabRef.current = tab;
 
-  // 首屏就绪：核心数据到达后渲染主体；或兜底 1.6s 后也要显示主体，避免永远白屏
+  // 启动页固定停留 BOOT_MS，进度和「还需几秒」按同一时钟走。
   useEffect(() => {
-    if (groups.length > 0 || coreVersion || version !== "-") {
-      const t = window.setTimeout(() => setBootReady(true), 150);
-      return () => window.clearTimeout(t);
-    }
-  }, [groups.length, coreVersion, version]);
+    const started = bootAtRef.current;
+    const tick = () => {
+      const left = Math.max(0, BOOT_MS - (Date.now() - started));
+      setBootLeft(left);
+      if (left <= 0) setBootReady(true);
+    };
+    tick();
+    const id = window.setInterval(tick, 50);
+    return () => window.clearInterval(id);
+  }, []);
 
   // 弹窗：打开时把焦点移入弹窗；Esc 或按钮关闭后统一把焦点还给入口按钮，
   // 避免焦点掉回 body（键盘用户会「丢失位置」）
@@ -791,11 +916,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       alive = false;
       off?.();
     };
-  }, []);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setBootReady(true), 1600);
-    return () => window.clearTimeout(t);
   }, []);
 
   const showToast = useCallback((msg: string, ms = 2400) => {
@@ -1064,9 +1184,16 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       setSysProxy(!!(d as { enabled?: boolean }).enabled);
     });
     const off5 = window.veyra.onCoreProgress?.((d: { phase: string; pct: number; label: string }) => {
+      // 订阅下载/解析单独走「导入条下方的细进度」，不再占用顶部的红色告警横幅
+      // （红色横幅是给冲突/错误用的，正常导入时挂一条红条既吵又像出错）
+      if (d.phase === "sub:download") {
+        setSubProgress(d.pct >= 100 ? null : { pct: d.pct, label: d.label });
+        return;
+      }
       if (d.pct >= 100) {
+        // 100% 是收尾事件：label 为空表示「只清横幅，别弹空 toast」（失败路径会自己弹错误 toast）
         setBanner("");
-        showToast(d.label, 2000);
+        if (d.label) showToast(d.label, 2000);
       } else {
         setBanner(`${d.label} (${d.pct}%)`);
       }
@@ -1092,6 +1219,14 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         .catch(() => {});
     };
     reloadProfiles();
+    // 存量订阅补流量：早期版本读不到响应头，老数据的 userinfo 是空的；
+    // 启动时静默补一次，用户打开订阅页就能看到流量/到期，不用手动点刷新。
+    window.veyra
+      ?.refreshMissingSubInfo?.()
+      .then((list) => {
+        if (Array.isArray(list) && list.length) setSubs(list);
+      })
+      .catch(() => {});
     window.veyra
       .systemProxyStatus()
       .then((s) => setSysProxy(!!s.enabled))
@@ -1107,8 +1242,20 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       .appInfo?.()
       .then((a) => {
         setAppVersion(a?.version || "");
-        const osName = a?.platform === "win32" ? "Windows" : a?.platform === "darwin" ? "macOS" : "Linux";
-        setPlatformLabel(`${osName} · ${a?.arch || ""}`.trim());
+        setElectronVersion(a?.electron || "");
+        setSystemMem(a?.totalMem || 0);
+        const rel = String(a?.osRelease || "");
+        const build = Number(rel.split(".").pop()) || 0;
+        const osName =
+          a?.platform === "win32"
+            ? build >= 22000
+              ? "Windows 11"
+              : "Windows 10"
+            : a?.platform === "darwin"
+              ? "macOS"
+              : "Linux";
+        const buildTag = a?.platform === "win32" && build ? ` ${build}` : "";
+        setPlatformLabel(`${osName}${buildTag} · ${a?.arch || ""}`.trim());
       })
       .catch(() => {});
     window.veyra
@@ -1416,100 +1563,70 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   );
 
   // 出口 IP 检测的唯一入口：首屏自动调用一次，右栏卡片刷新按钮也复用它。
-  // 加 loading 守卫避免并发重复请求（快速点刷新时）。
-  const refreshExitIp = useCallback(async () => {
-    const api = window.veyra?.exitIp;
-    if (!api) return;
-    setExitIpLoading((busy) => {
-      if (busy) return busy;
-      return true;
-    });
-    try {
-      const r = await api();
-      setExitIp(r || { ip: null });
-      if (!r?.ip) showToast("IP 检测失败，请点击重试");
-    } catch {
-      setExitIp({ ip: null });
-      showToast("IP 检测失败，请点击重试");
-    } finally {
-      setExitIpLoading(false);
-    }
-  }, [showToast]);
-
-  useEffect(() => {
-    if (!running) return;
-    // 服务启动时自动检测出口 IP（真实检测）
-    void refreshExitIp();
-  }, [running, refreshExitIp]);
-
-  // 右栏解锁状态：全量测试（串行，耗时长）。切换内核后结果即失效，由调用方决定何时重跑。
-  const testAllUnlock = useCallback(async () => {
-    const api = window.veyra?.streamingUnlock;
-    if (!api) {
-      showToast("解锁检测接口不可用");
-      return;
-    }
-    setUnlockBusy("__all__");
-    try {
-      const list = (await api()) || [];
-      const next: typeof unlockMap = {};
-      for (const it of list) {
-        next[it.id] = {
-          ok: !!it.ok,
-          fail: !!it.fail,
-          region: it.region ?? null,
-          note: it.note || "",
-          testedAt: it.testedAt,
-        };
-      }
-      setUnlockMap(next);
-      const okCount = list.filter((x) => x.ok).length;
-      showToast(`解锁检测完成：${okCount}/${list.length} 可用`);
-    } catch (e) {
-      showToast(`解锁检测失败：${(e as Error).message || e}`);
-    } finally {
-      setUnlockBusy(null);
-    }
-  }, [showToast]);
-
-  // 单项重测：在右栏点某一项时不跑全量，避免动辄几十秒的等待
-  const testOneUnlock = useCallback(
-    async (id: string) => {
-      const api = window.veyra?.streamingUnlockOne;
-      if (!api) {
-        showToast("解锁检测接口不可用");
-        return;
-      }
-      setUnlockBusy(id);
+  // 启动瞬间内核 / url-test 组还没选出可用节点，第一次探测经常失败，
+  // 所以自动检测带重试；手动刷新单次失败就如实提示。
+  // 用「代号」而不是 busy 锁：切系统代理时要立即用新网络重测，
+  // 旧请求的结果直接作废，避免旧网络的结果覆盖新结果。
+  const exitIpGenRef = useRef(0);
+  const refreshExitIp = useCallback(
+    async (opts: { retries?: number; silent?: boolean; reset?: boolean } = {}) => {
+      const api = window.veyra?.exitIp;
+      if (!api) return;
+      const gen = ++exitIpGenRef.current;
+      const retries = Math.max(0, opts.retries ?? 0);
+      setExitIpLoading(true);
+      // 路径变化时先清空旧值：渲染层会显示「正在检测…」而不是上一张网络的 IP
+      if (opts.reset) setExitIp(null);
+      let result: ExitIpInfo = { ip: null };
       try {
-        const r = await api(id);
-        setUnlockMap((prev) => ({
-          ...prev,
-          [id]: {
-            ok: !!r.ok,
-            fail: !!r.fail,
-            region: r.region ?? null,
-            note: r.note || "",
-            testedAt: r.testedAt,
-          },
-        }));
-      } catch (e) {
-        setUnlockMap((prev) => ({
-          ...prev,
-          [id]: {
-            ok: false,
-            fail: true,
-            region: null,
-            note: String((e as Error).message || e),
-            testedAt: Date.now(),
-          },
-        }));
+        for (let attempt = 0; attempt <= retries; attempt++) {
+          if (attempt > 0) {
+            // 2.5s 后第一次重试，之后每 4s 一次：覆盖机场 url-test 组启动测速的窗口
+            await new Promise((r) => window.setTimeout(r, attempt === 1 ? 2500 : 4000));
+          }
+          if (gen !== exitIpGenRef.current) return;
+          try {
+            const r = await api();
+            if (r?.ip) {
+              result = r;
+              break;
+            }
+            if (r) result = r;
+          } catch {
+            /* 单次失败交给下一轮 */
+          }
+        }
+        if (gen !== exitIpGenRef.current) return;
+        setExitIp(result);
+        if (!result.ip && !opts.silent) showToast("IP 检测失败，请点击重试");
       } finally {
-        setUnlockBusy(null);
+        if (gen === exitIpGenRef.current) setExitIpLoading(false);
       }
     },
     [showToast]
   );
+
+  useEffect(() => {
+    if (!running) return;
+    // 等内核把配置/节点加载完再探；失败由 refreshExitIp 内部重试兜底
+    const timer = window.setTimeout(() => {
+      void refreshExitIp({ retries: 2, silent: true, reset: true });
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [running, refreshExitIp]);
+
+  // 系统代理开/关会改变「当前网络」：切换后静默重测，避免卡片一直显示切换前的出口。
+  const lastSysProxyRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (lastSysProxyRef.current === null) {
+      lastSysProxyRef.current = sysProxy;
+      return;
+    }
+    if (lastSysProxyRef.current === sysProxy) return;
+    lastSysProxyRef.current = sysProxy;
+    if (!running) return;
+    void refreshExitIp({ silent: true, reset: true });
+  }, [sysProxy, running, refreshExitIp]);
 
   useEffect(() => {
     if (!window.veyra) return;
@@ -1641,6 +1758,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     const u = url.trim();
     if (!u) return showToast("请粘贴订阅链接");
     setBusy(true);
+    setSubProgress({ pct: 3, label: "正在连接订阅地址…" });
     try {
       const r = await window.veyra.importProfileUrl({ url: u, name: profileName });
       if (r.mixedPort) setMixedPort(r.mixedPort);
@@ -1648,14 +1766,20 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       setProfileText(await window.veyra.readActiveProfile());
       await reloadProfileLists();
       setSubUrl(u);
+      try {
+        localStorage.setItem("veyra:lastSubUrl", u);
+      } catch {
+        // The imported subscription remains usable when browser storage is unavailable.
+      }
       setEditUid(null);
       setEnhanceLog(r.warnings || []);
-      showToast(`链接导入成功（${r.bytes || 0} 字节）`);
+      showToast(`已导入「${r.name || "订阅"}」（${formatBytes(r.bytes || 0)}）`);
       await refresh();
     } catch (e) {
       showToast(String((e as Error).message || e));
     } finally {
       setBusy(false);
+      setSubProgress(null);
     }
   }
 
@@ -1718,7 +1842,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       t("nav.proxies", "代理"),
       nodes.length || groups.reduce((a, g) => a + (g.all?.length || 0), 0) || null,
     ],
-    ["profiles", NavProfilesIcon, t("nav.profiles", "订阅"), subs.length + profiles.length || null],
+    ["profiles", NavProfilesIcon, t("nav.profiles", "订阅"), subs.length || null],
     ["connections", NavConnectionsIcon, t("nav.connections", "连接"), connCount || null],
     ["rules", NavRulesIcon, t("nav.rules", "规则"), null],
     ["logs", NavLogsIcon, t("nav.logs", "日志"), null],
@@ -1726,25 +1850,58 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     ["settings", NavSettingsIcon, t("nav.settings", "设置"), null],
   ] as const;
 
+  // 侧栏导航项渲染：图标 / 文字 / 计数徽标三段式。
+  // 文字用 .nav-label 吃 flex 余量（min-width:0 + ellipsis），徽标 flex:none 定宽，
+  // 这样窄栏下宁可截断文字也不会把两个字拆成上下两行。
+  const renderNavItem = ([id, Icon, label, badge]: (typeof navItems)[number]) => (
+    <button
+      key={id}
+      type="button"
+      className={`nav-item${tab === id ? " active" : ""}`}
+      aria-current={tab === id ? "page" : undefined}
+      onClick={() => goTab(id)}
+    >
+      <Icon />
+      <span className="nav-label">{label}</span>
+      {typeof badge === "number" && badge > 0 ? (
+        <span className="badge badge-count">{badge > 99 ? "99+" : badge}</span>
+      ) : null}
+    </button>
+  );
+
   // Before anything renders — show splash while booting
   if (!bootReady) {
     return (
-      <div className="app boot-splash">
-        <div className="container">
-          <header className="header">
-            <div className="logo">Veyra-omini</div>
-          </header>
-          <div className="boot-skeleton">
-            <div className="sk sk-bar w30" />
-            <div className="sk sk-bar w60" />
-            <div className="sk-grid">
-              <div className="sk sk-card" />
-              <div className="sk sk-card" />
-              <div className="sk sk-card" />
-              <div className="sk sk-card" />
-              <div className="sk sk-card" />
-              <div className="sk sk-card" />
-            </div>
+      <div className="app boot-splash" onMouseDown={onHeaderMouseDown}>
+        <div className="boot-stage">
+          <div className="boot-mark">
+            <span className="boot-glow" aria-hidden="true" />
+            <svg
+              viewBox="0 0 24 24"
+              className="boot-logo"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polygon pathLength="1" points="12 2 21.5 8 21.5 16 12 22 2.5 16 2.5 8" />
+              <polyline pathLength="1" points="7.6 10 12 14.6 16.4 10" />
+              <circle cx="7.6" cy="10" r="1.9" fill="currentColor" stroke="none" />
+              <circle cx="16.4" cy="10" r="1.9" fill="currentColor" stroke="none" />
+              <circle cx="12" cy="14.6" r="1.9" fill="currentColor" stroke="none" />
+            </svg>
+          </div>
+          <div className="boot-name">Veyra-omini</div>
+          <div
+            className="boot-bar"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(((BOOT_MS - bootLeft) / BOOT_MS) * 100)}
+            aria-label="启动进度"
+          >
+            <i className="boot-fill" style={{ width: `${((BOOT_MS - bootLeft) / BOOT_MS) * 100}%` }} />
           </div>
         </div>
       </div>
@@ -1755,33 +1912,33 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     <div className={`app ${busy ? "busy" : ""} ${running ? "is-on" : ""} ${sysProxy ? "proxy-on" : ""}`}>
       <div className="container">
         {/* Header */}
-        <header className="header">
+        <header className="header" onMouseDown={onHeaderMouseDown} onDoubleClick={() => window.veyra?.maximize()}>
           <div className="header-brand">
             <svg
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
-              strokeWidth="2"
+              strokeWidth="1.9"
               strokeLinecap="round"
               strokeLinejoin="round"
-              width="32"
-              height="32"
+              width="30"
+              height="30"
               style={{ color: "var(--cyan-500)" }}
             >
-              <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2" />
-              <line x1="12" y1="22" x2="12" y2="15.5" />
-              <polyline points="22 8.5 12 15.5 2 8.5" />
-              <polyline points="2 15.5 12 8.5 22 15.5" />
-              <line x1="12" y1="2" x2="12" y2="8.5" />
+              <polygon points="12 2 21.5 8 21.5 16 12 22 2.5 16 2.5 8" />
+              <polyline points="7.6 10 12 14.6 16.4 10" strokeWidth="1.5" />
+              <circle cx="7.6" cy="10" r="1.9" fill="currentColor" stroke="none" />
+              <circle cx="16.4" cy="10" r="1.9" fill="currentColor" stroke="none" />
+              <circle cx="12" cy="14.6" r="1.9" fill="currentColor" stroke="none" />
             </svg>
             <span className="brand-text">Veyra-omini</span>
             {/* 用真实应用版本；之前硬编码 v1.1.2，升级后会与设置页显示的版本矛盾 */}
             <span className="brand-ver">{appVersion ? `v${appVersion.replace(/^v/, "")}` : "—"}</span>
+            <span className="brand-beta">测试版</span>
           </div>
           <div className="header-actions">
             {/* v13：系统时间从右栏卡片收进顶栏——时间属窗口级信息，
                 不值得在右栏独占一张卡（那会让右栏超出一屏）。 */}
-            <LiveClock compact />
             <div className="header-search">
               <svg
                 viewBox="0 0 24 24"
@@ -1861,59 +2018,53 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         >
           {/* Left Sidebar */}
           <div className="col-sidebar">
-            <div className="card">
+            {/* 一张连续的侧栏面板：上部导航、下部状态页脚，中间一条通栏 hairline。
+                两张卡叠在一起会读成「两个通用组件」；合成一张后它才像一条侧栏。 */}
+            <div className="card side-nav">
               <div className="card-body tight">
+                {/* 主功能 4 项 + 工具 4 项，中间一条细线分组。
+                    156px 窄栏下「代理」曾被两位数字徽标挤成「代/理」两行。 */}
                 <nav className="nav-list">
-                  {navItems.map(([id, Icon, label, badge]) => (
-                    <button
-                      key={id}
-                      type="button"
-                      className={`nav-item ${tab === id ? "active" : ""}`}
-                      aria-current={tab === id ? "page" : undefined}
-                      onClick={() => goTab(id)}
-                    >
-                      <Icon />
-                      <span>{label}</span>
-                      {typeof badge === "number" && badge > 0 ? (
-                        <span className="badge badge-count" style={{ marginLeft: "auto" }}>
-                          {badge > 99 ? "99+" : badge}
-                        </span>
-                      ) : null}
-                    </button>
-                  ))}
+                  {navItems.slice(0, 4).map(renderNavItem)}
+                  <div className="nav-sep" aria-hidden="true" />
+                  {navItems.slice(4).map(renderNavItem)}
                 </nav>
-                <section className="rail-status-panel" aria-label={t("nav.sysStatus", "System status")}>
-                  <div className="nav-section-title">{t("nav.sysStatus", "System status")}</div>
-                  {/* v8：状态行——绿点 + 状态粗字 + 时长右对齐 */}
-                  <div className="rail-state">
-                    <span className={`rail-status-dot${running ? " on" : ""}`} aria-hidden="true" />
+
+                {/* 状态页脚：点 + 状态字 + 右对齐运行时长。卡片里就这一件「实时」的事，
+                    不再要「系统状态」这种冗余标题。 */}
+                <section
+                  className={`rail-status${running ? " is-on" : ""}`}
+                  aria-label={t("nav.sysStatus", "System status")}
+                >
+                  <div className="rail-status-head">
+                    <i className="rail-status-dot" aria-hidden="true" />
                     <b>{running ? t("status.heroRunning", "运行中") : t("status.heroStopped", "已停止")}</b>
-                    <small>{running && coreStartTime ? formatUptimeRail(Date.now() - coreStartTime) : "—"}</small>
+                    {running && coreStartTime ? <RailUptime startedAt={coreStartTime} /> : null}
                   </div>
-                  {/* P1 去重：速率双卡与趋势图带删除（主区 KPI 卡已有更大更全的速率+曲线），
-                      左栏回归「导航附属」——只保留运行状态 + 代理/连接/内存 */}
-                  <div className="rail-facts">
-                    <div className="rail-fact">
+                  <ul className="rail-metrics">
+                    <li>
+                      <Globe size={13} aria-hidden="true" />
                       <span>{t("nav.proxy", "代理")}</span>
                       <strong className={sysProxy ? "on" : ""}>
                         {sysProxy ? t("nav.on", "开启") : t("nav.off", "关闭")}
                       </strong>
-                    </div>
-                    <div className="rail-fact">
+                    </li>
+                    <li>
+                      <Cable size={13} aria-hidden="true" />
                       <span>{t("nav.connections", "连接")}</span>
                       <strong className={connCount > 0 ? "on" : ""}>{connCount}</strong>
-                    </div>
-                    <div className="rail-fact">
+                    </li>
+                    <li>
+                      <HardDrive size={13} aria-hidden="true" />
                       <span>{t("nav.memory", "内存")}</span>
                       <strong>{memText}</strong>
-                    </div>
-                    {/* 内核名此前只出现在 hero 的一行小字里；状态卡补上它，
-                        让左栏这张卡的信息自成一体（代理/连接/内存/内核） */}
-                    <div className="rail-fact">
+                    </li>
+                    <li>
+                      <Cpu size={13} aria-hidden="true" />
                       <span>{t("nav.core", "内核")}</span>
                       <strong>{activeCore === "singbox" ? "sing-box" : "Mihomo"}</strong>
-                    </div>
-                  </div>
+                    </li>
+                  </ul>
                 </section>
               </div>
             </div>
@@ -1937,13 +2088,13 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       const g = groups.find((x) => x.all?.includes(currentNode));
                       if (g?.name) setSelectedGroup(g.name);
                     }}
+                    showNodeBlock={homeCards.node}
+                    delay={currentNodeInfo.delay}
+                    nodeCount={nodes.length}
+                    nodeType={currentNodeInfo.type}
                     meta={
                       running ? (
-                        <>
-                          <span>{activeCore === "singbox" ? "sing-box" : "Mihomo"}</span>
-                          <span className="hero-run-sep">·</span>
-                          <LiveUptime since={coreStartTime ?? appStartTime.current} />
-                        </>
+                        <span>{activeCore === "singbox" ? "sing-box" : "Mihomo"}</span>
                       ) : null
                     }
                   />
@@ -1952,7 +2103,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       合并原「上传速率 / 下载速率 / 活跃连接」三张指标卡 + 独立流量图。
                       理由：四者语义上就是同一件事，拆成四块会让中栏失去视觉焦点，
                       并把最大面积给了最空的内容。速率现在是全页最大的数据。 */}
-                  <div className="glass-tile tf-panel" style={{ marginBottom: 14 }}>
+                  <div className="glass-tile tf-panel">
                     <div className="tf-head">
                       <div className="tf-head-l">
                         <span className="tf-title">{t("home.realtimeTraffic", "实时流量")}</span>
@@ -1991,7 +2142,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       </div>
                       <div className="tf-rate">
                         <span className="tf-rate-k">↑ {t("home.upload", "上传")}</span>
-                        <span className={`tf-rate-v sm${upRate > 0 ? " up" : " is-zero"}`}>
+                        <span className={`tf-rate-v${upRate > 0 ? " up" : " is-zero"}`}>
                           {formatRate(upRate)}
                         </span>
                       </div>
@@ -2005,263 +2156,75 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       </div>
                     </div>
 
+                    {/* 图表区：无论有没有数据都画成「一张图」——网格 + 0 基线 + 时间刻度。
+                        此前零流量时中间塞一块居中的图标+两行字，四周全空，读起来像
+                        「图表加载失败」；现在空态只是一条贴着基线的平线，左上角一个
+                        「监听中」的小标签，空的地方本身就是图的一部分。 */}
                     <div className="home-chart-wrap">
-                      <span className="tf-window">{t("home.window60s", "最近 60 秒")}</span>
-                      {hasTraffic ? (
-                        <WaveChart up={rateHistory.up} down={rateHistory.down} />
-                      ) : (
-                        <>
-                          {/* 零流量：只留网格底，不画数据线；给明确引导而非留一片空白 */}
-                          <WaveChart up={[]} down={[]} empty />
-                          <div className="home-chart-empty">
-                            <svg
-                              viewBox="0 0 24 24"
-                              width="20"
-                              height="20"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.6"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              aria-hidden="true"
-                            >
-                              <path d="M3 12h4l2.5-6 4 12L16 12h5" />
-                            </svg>
-                            <p>
-                              {running
-                                ? t("home.noTraffic", "暂无流量数据")
-                                : t("nav.serviceNotRunning", "服务未运行")}
-                            </p>
-                            {/* 空态 = 原因 + 下一步，不能只说「没有」 */}
-                            <small>
-                              {running
-                                ? t("home.noTrafficHint", "有流量经过时会自动记录")
-                                : t("home.startHint", "启动内核后开始记录")}
-                            </small>
-                          </div>
-                        </>
-                      )}
+                      <WaveChart
+                        up={hasTraffic ? rateHistory.up : []}
+                        down={hasTraffic ? rateHistory.down : []}
+                        empty={!hasTraffic}
+                      />
+                      {!hasTraffic ? (
+                        <span className={`chart-live${running ? " on" : ""}`}>
+                          <i aria-hidden="true" />
+                          {running
+                            ? t("home.listening", "监听中 · 暂无流量")
+                            : t("nav.serviceNotRunning", "服务未运行")}
+                        </span>
+                      ) : null}
+                      <div className="chart-axis" aria-hidden="true">
+                        <span>60s</span>
+                        <span>45s</span>
+                        <span>30s</span>
+                        <span>15s</span>
+                        <span>{t("home.now", "现在")}</span>
+                      </div>
                     </div>
                   </div>
 
-                  {/* 区段 3: 订阅状态 */}
-                  {homeCards.subscription && subs.length > 0 && (
-                    <div style={{ marginBottom: 14 }}>
-                      <div
-                        style={{ fontSize: 14, fontWeight: 600, color: "var(--text-100)", marginBottom: 8 }}
-                      >
-                        {t("home.subscriptions", "订阅")}{" "}
-                        <span style={{ fontSize: 11, color: "var(--text-500)", fontWeight: 400 }}>
-                          {subs.length}
-                        </span>
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                        {subs.slice(0, 3).map((sub, i) => (
-                          <div
-                            key={i}
-                            className="glass-tile"
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 10,
-                              padding: "8px 12px",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: 6,
-                                height: 6,
-                                borderRadius: 50,
-                                background:
-                                  sub.userinfo && sub.userinfo.total > 0
-                                    ? "var(--green-500)"
-                                    : "var(--text-500)",
-                                flexShrink: 0,
-                              }}
-                            />
-                            <span
-                              style={{
-                                fontSize: 12,
-                                color: "var(--text-100)",
-                                flex: 1,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                              title={sub.name}
-                            >
-                              {/* 订阅名常是 55 字符的 UUID 文件名：首尾可辨、中段无信息量。
-                                  中间省略比尾部省略更能保住识别度（完整值走 title）。 */}
-                              {sub.name.length > 34
-                                ? `${sub.name.slice(0, 20)}…${sub.name.slice(-11)}`
-                                : sub.name}
-                            </span>
-                            {sub.userinfo ? (
-                              <span
-                                style={{
-                                  fontSize: 10.5,
-                                  color: "var(--green-500)",
-                                  fontFamily: "var(--font-mono)",
-                                }}
-                              >
-                                {(() => {
-                                  const pct =
-                                    sub.userinfo.total > 0
-                                      ? Math.min(
-                                          100,
-                                          Math.round(
-                                            ((sub.userinfo.upload + sub.userinfo.download) /
-                                              sub.userinfo.total) *
-                                              100
-                                          )
-                                        )
-                                      : 0;
-                                  return pct + "%";
-                                })()}
-                              </span>
-                            ) : (
-                              <span style={{ fontSize: 10.5, color: "var(--text-500)" }}>—</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 区段 4: 内核信息——「内核 / 运行时长」两块与右栏 mini 卡完全重复
-                     （还差 1 秒显得像 bug），P1 去重后只保留右栏没有的「规则数量」 */}
-                  {homeCards.core && (
-                    <div style={{ display: "flex", gap: 10 }}>
-                      <div
-                        className="glass-tile"
-                        style={{
-                          flex: 1,
-                          padding: "12px 14px",
-                        }}
-                      >
-                        <div className="tile-head">
-                          <span className="tile-title">{t("home.rules", "规则数量")}</span>
-                          <span className={`tile-num${ruleCount != null ? "" : " is-zero"}`}>
-                            {ruleCount != null ? ruleCount : 0}
-                          </span>
-                        </div>
-                        {ruleCount != null ? (
-                          <div className="tile-hint">{t("home.ruleCount", "条规则")}</div>
-                        ) : (
-                          /* 空态 = 原因 + 下一步：只说「暂无」用户不知道要做什么 */
-                          <div className="tile-empty">
-                            <span>{t("home.noRulesHint", "还没有加载规则集，当前为直连模式")}</span>
+                  {/* 三列：规则 / 模式 / 订阅
+                      原来「规则 / 当前节点 / 网络+模式 / 系统 / 累计流量」五块各占一整行，
+                      首屏 650px 装不下 1067px 内容，用户要滚动才能看到「当前节点」。
+                      现在节点并入 hero 右侧，其余压成一行三列。 */}
+                  {(homeCards.core || homeCards.mode || homeCards.subscription) && (
+                    <div className="home-tiles">
+                      {homeCards.core && (
+                        <div className="glass-tile home-tile">
+                          <div className="home-tile-hd">
+                            <span className="home-tile-k">{t("home.rules", "规则数量")}</span>
                             <button
                               type="button"
                               className="link-btn"
                               onClick={() => goTab("rules")}
                             >
-                              {t("home.goAddRules", "去添加规则集")} →
+                              {ruleCount != null ? t("home.view", "查看") : t("home.goAdd", "去添加")} →
                             </button>
                           </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 区段 5: 当前节点（原 homeCards.node 开关无效，此处补齐） */}
-                  {homeCards.node && (
-                    <div style={{ marginTop: 14 }}>
-                      <div
-                        style={{
-                          fontSize: 14,
-                          fontWeight: 600,
-                          color: "var(--text-100)",
-                          marginBottom: 8,
-                        }}
-                      >
-                        {t("home.currentNode", "当前节点")}
-                      </div>
-                      <div style={{ display: "flex", gap: 10 }}>
-                        <div style={HOME_TILE}>
-                          <div style={HOME_TILE_LABEL}>{t("home.nodeName", "节点")}</div>
-                          {/* currentNode 在无选中时取值是 "—" 而非空串（见 currentNodeInfo 的同一判断），
-                              只判真值会让空态分支永远不触发 */}
-                          {currentNode && currentNode !== "—" ? (
-                            <>
-                              <div style={HOME_TILE_VALUE} title={currentNode}>
-                                {currentNode}
-                              </div>
-                              <div
-                                style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}
-                              >
-                                {currentNodeInfo.type || "—"}
-                                {currentNodeInfo.udp ? " · UDP" : ""}
-                              </div>
-                            </>
-                          ) : (
-                            /* 空态给出口：未选节点时告诉用户去哪里选 */
-                            <div className="tile-empty">
-                              <span>{t("home.noNode", "还没有选择节点")}</span>
-                              <button
-                                type="button"
-                                className="link-btn"
-                                onClick={() => goTab("proxies")}
-                              >
-                                {t("home.goSelectNode", "去选择节点")} →
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                        <div style={HOME_TILE}>
-                          <div style={HOME_TILE_LABEL}>{t("home.delay", "延迟")}</div>
-                          <div
-                            style={{
-                              ...HOME_TILE_VALUE,
-                              color: delayColor(currentNodeInfo.delay),
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            {currentNodeInfo.delay != null ? `${currentNodeInfo.delay} ms` : "—"}
+                          <div className={`home-tile-v${ruleCount != null ? "" : " is-zero"}`}>
+                            {ruleCount != null ? ruleCount : 0}
                           </div>
-                          <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
-                            {t("home.availableNodes")} {nodes.length}
+                          <div className="home-tile-sub">
+                            {ruleCount != null
+                              ? t("home.ruleCount", "条规则（来自当前订阅）")
+                              : t("home.noRulesHint", "未连接内核，暂无法统计")}
                           </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 区段 6: 网络设置 + 代理模式（原 homeCards.network / mode 开关无效，此处补齐） */}
-                  {(homeCards.network || homeCards.mode) && (
-                    <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-                      {homeCards.network && (
-                        <div style={{ ...HOME_TILE, flex: 1 }}>
-                          <div style={HOME_TILE_LABEL}>{t("home.sysProxy", "系统代理")}</div>
-                          <div
-                            style={{
-                              ...HOME_TILE_VALUE,
-                              color: sysProxy ? "var(--green-500)" : "var(--text-400)",
-                            }}
-                          >
-                            {sysProxy ? t("home.on", "已开启") : t("home.off", "已关闭")}
-                          </div>
-                          <button
-                            type="button"
-                            className="btn ghost btn-xs"
-                            style={{ marginTop: 6 }}
-                            onClick={toggleSysProxy}
-                            disabled={!running}
-                          >
-                            {sysProxy ? t("home.turnOff", "关闭") : t("home.turnOn", "开启")}
-                          </button>
                         </div>
                       )}
+
                       {homeCards.mode && (
-                        <div style={{ ...HOME_TILE, flex: 1 }}>
-                          <div style={HOME_TILE_LABEL}>{t("home.mode", "代理模式")}</div>
-                          <div style={HOME_TILE_VALUE}>{MODE_LABEL(mode)}</div>
-                          <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                        <div className="glass-tile home-tile">
+                          <div className="home-tile-hd">
+                            <span className="home-tile-k">{t("home.mode", "代理模式")}</span>
+                          </div>
+                          <div className="home-tile-v">{MODE_LABEL(mode)}</div>
+                          <div className="home-tile-seg">
                             {(["rule", "global", "direct"] as const).map((m) => (
                               <button
                                 key={m}
                                 type="button"
-                                className={`btn ghost btn-xs${mode === m ? " on" : ""}`}
+                                className={`home-seg-btn${mode === m ? " on" : ""}`}
                                 onClick={() => changeMode(m)}
                                 disabled={!running}
                               >
@@ -2271,45 +2234,107 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           </div>
                         </div>
                       )}
+
+                      {homeCards.subscription && (
+                        <div className="glass-tile home-tile">
+                          <div className="home-tile-hd">
+                            <span className="home-tile-k">{t("home.subscriptions", "订阅")}</span>
+                            <button
+                              type="button"
+                              className="link-btn"
+                              onClick={() => goTab("profiles")}
+                            >
+                              {t("home.manage", "管理")} →
+                            </button>
+                          </div>
+                          <div className={`home-tile-v${subs.length ? "" : " is-zero"}`}>
+                            {subs.length}
+                            <em className="home-tile-unit">{t("home.subsUnit", "个订阅")}</em>
+                          </div>
+                          {subUsage.total > 0 ? (
+                            /* 已用/剩余 + 进度条合成「第三行」一格：三张卡的最后一行同高、同一条底边。
+                               之前进度条单独占一行，订阅卡比旁边两张高 5px，条子吊在下面。 */
+                            <div className="home-tile-quota">
+                              <div className="home-tile-split">
+                                <span>
+                                  <i>{t("home.usedLabel", "已用")}</i>
+                                  {formatBytes(subUsage.used)}
+                                </span>
+                                <span>
+                                  <i>{t("home.leftLabel", "剩余")}</i>
+                                  {formatBytes(subUsage.left)}
+                                </span>
+                              </div>
+                              <div className="home-tile-bar" aria-hidden="true">
+                                <i style={{ width: `${subUsagePct}%` }} />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="home-tile-sub">
+                              {subs.length
+                                ? t("home.noQuota", "未返回流量信息")
+                                : t("home.noSubs", "还没有订阅")}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {/* 区段 7: 系统信息（原 homeCards.system 开关无效，此处补齐） */}
-                  {homeCards.system && (
-                    <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-                      <div style={{ ...HOME_TILE, flex: 1 }}>
-                        <div style={HOME_TILE_LABEL}>{t("home.platform", "系统")}</div>
-                        <div style={HOME_TILE_VALUE}>{platformLabel || "—"}</div>
-                      </div>
-                      <div style={{ ...HOME_TILE, flex: 1 }}>
-                        <div style={HOME_TILE_LABEL}>{t("home.version", "版本")}</div>
-                        <div style={{ ...HOME_TILE_VALUE, fontFamily: "var(--font-mono)" }}>
-                          {appVersion ? `v${appVersion.replace(/^v/, "")}` : "—"}
+                  {/* meta 行：系统 / 版本 / 内核 / 累计流量
+                      这四项原来各占一整行（89 + 68 = 157px），是最低频的信息，
+                      压成一行小字即可，把首屏让给状态、流量、节点。 */}
+                  {(homeCards.system || homeCards.traffic) && (
+                    <div className="home-sysinfo">
+                      {homeCards.system && platformLabel ? (
+                        <div className="sysinfo-item">
+                          <span>{t("home.sysOs", "系统")}</span>
+                          <b title={platformLabel}>{platformLabel}</b>
                         </div>
-                        <div style={{ fontSize: 11, color: "var(--text-400)", marginTop: 3 }}>
-                          {mihomoChannel}
+                      ) : null}
+                      {homeCards.system && systemMem > 0 ? (
+                        <div className="sysinfo-item">
+                          <span>{t("home.sysMem", "内存")}</span>
+                          <b>{formatBytes(systemMem)}</b>
                         </div>
-                      </div>
+                      ) : null}
+                      {homeCards.system && appVersion ? (
+                        <div className="sysinfo-item">
+                          <span>{t("home.sysApp", "Veyra")}</span>
+                          <b title={`v${appVersion.replace(/^v/, "")}`}>
+                            v{appVersion.replace(/^v/, "")}
+                            {appVersion.includes("beta") ? (
+                              <em className="sysinfo-tag">{t("home.betaTag", "测试版")}</em>
+                            ) : null}
+                          </b>
+                        </div>
+                      ) : null}
+                      {homeCards.system && electronVersion ? (
+                        <div className="sysinfo-item">
+                          <span>{t("home.sysRuntime", "运行环境")}</span>
+                          <b>Electron {electronVersion}</b>
+                        </div>
+                      ) : null}
+                      {homeCards.system && mihomoChannel ? (
+                        <div className="sysinfo-item">
+                          <span>{t("home.sysCore", "代理内核")}</span>
+                          <b>
+                            Mihomo {mihomoChannel === "alpha" ? "alpha" : "stable"}
+                            {running ? t("home.sysCoreOn", " · 运行中") : t("home.sysCoreOff", " · 已停止")}
+                          </b>
+                        </div>
+                      ) : null}
+                      {homeCards.traffic ? (
+                        <div className="sysinfo-item">
+                          <span>{t("home.sysTraffic", "实时流量")}</span>
+                          <b>
+                            ↓ {formatBytes(download)} · ↑ {formatBytes(upload)}
+                          </b>
+                        </div>
+                      ) : null}
                     </div>
                   )}
 
-                  {/* 区段 8: 累计流量（原 homeCards.traffic 开关无效，此处补齐） */}
-                  {homeCards.traffic && (
-                    <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-                      <div style={{ ...HOME_TILE, flex: 1 }}>
-                        <div style={HOME_TILE_LABEL}>{t("home.totalDown", "累计下行")}</div>
-                        <div style={{ ...HOME_TILE_VALUE, fontFamily: "var(--font-mono)" }}>
-                          {formatBytes(download)}
-                        </div>
-                      </div>
-                      <div style={{ ...HOME_TILE, flex: 1 }}>
-                        <div style={HOME_TILE_LABEL}>{t("home.totalUp", "累计上行")}</div>
-                        <div style={{ ...HOME_TILE_VALUE, fontFamily: "var(--font-mono)" }}>
-                          {formatBytes(upload)}
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
               <div className="pane px" hidden={tab !== "proxies"}>
@@ -2548,11 +2573,32 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
                   {(pfSeen.sub || pfTab === "sub") ? (
                     <div className="pf-pane" hidden={pfTab !== "sub"}>
-                      <section className="import-hero">
-                        <h3><Globe size={15} /> {t("profiles.importSub", "Import subscription")}</h3>
-                        <p>{t("profiles.importDesc", "Paste a Clash/Meta subscription URL, import will auto-enhance and apply.")}</p>
-                        <div className="import-bar">
+                      <div className="subs-page">
+                      {/* ── 顶部 Hero：概览 + 导入 ─────────────────────── */}
+                      <section className="subs-hero">
+                        <span className="subs-hero-orb subs-hero-orb-a" aria-hidden="true" />
+                        <span className="subs-hero-orb subs-hero-orb-b" aria-hidden="true" />
+                        <div className="subs-hero-body">
+                          <div className="subs-hero-copy">
+                            <h2>{t("profiles.heroTitle", "订阅")}</h2>
+                            <p>{t("profiles.importDesc", "粘贴 Clash / Meta 订阅链接，导入后自动增强并应用。")}</p>
+                          </div>
+                          <div className="subs-hero-stats">
+                            <div className="subs-stat">
+                              <b>{subs.length}</b>
+                              <span>{t("profiles.subCountUnit", "个订阅")}</span>
+                            </div>
+                            <span className="subs-stat-div" aria-hidden="true" />
+                            <div className="subs-stat">
+                              <b>{subsRemainingBytes(subs) > 0 ? formatBytes(subsRemainingBytes(subs)) : "—"}</b>
+                              <span>{t("profiles.totalLeft", "剩余流量")}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="subs-importbar">
+                          <Link2 size={15} className="subs-importbar-ico" />
                           <input
+                            ref={subUrlInputRef}
                             value={subUrl}
                             onChange={(e) => setSubUrl(e.target.value)}
                             onKeyDown={(e) => {
@@ -2563,282 +2609,527 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                           />
                           <button
                             type="button"
-                            className="btn primary btn-sm"
+                            className="btn primary"
                             disabled={busy}
                             onClick={() => void importFromUrl()}
                           >
-                            {t("profiles.importBtn", "Import")}
+                            {busy ? t("profiles.importing", "导入中…") : t("profiles.importBtn", "导入")}
                           </button>
                         </div>
+                        {subProgress && (
+                          <div className="subs-progress" role="status" aria-live="polite">
+                            <span className="subs-progress-dot" aria-hidden="true" />
+                            <span className="subs-progress-label">{subProgress.label}</span>
+                            <span className="subs-progress-track">
+                              <i style={{ width: `${Math.max(6, subProgress.pct)}%` }} />
+                            </span>
+                            <b className="subs-progress-pct">{subProgress.pct}%</b>
+                          </div>
+                        )}
                       </section>
 
-                      {/* 订阅链接区 — Clash Verge 风格流量卡片 */}
-                      <section className="pf-card" style={{ marginBottom: 14 }}>
-                    <div className="pf-card-hd">
-                      <h2>
-                        <Globe size={15} /> {t("profiles.subscriptions", "订阅")}
-                      </h2>
-                      <span className="hd-count">{subs.length}</span>
-                    </div>
-                    {!subs.length ? (
-                      <div className="empty slim">
-                        {t("profiles.noSubs", "暂无订阅 - 从顶部输入链接导入")}
-                      </div>
-                    ) : (
-                      <div className="sub-grid">
-                        {subs.map((s) => {
-                          const used = (s.userinfo?.upload || 0) + (s.userinfo?.download || 0);
-                          const total = s.userinfo?.total || 0;
-                          const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
-                          const expireDate = expiryText(s.userinfo?.expire);
-                          return (
-                            <div key={s.url} className="sub-card">
-                              <div className="sub-card-dot" />
-                              <div className="sub-card-body">
-                                <div className="sub-card-name">{s.name}</div>
-                                <div className="sub-card-domain">
-                                  {s.url.replace(/^https?:\/\//, "").split("/")[0]}
-                                </div>
-                                <div className="sub-card-meta">
-                                  <span>{relativeTime(s.updatedAt)}</span>
-                                  <span className="sub-card-sep">·</span>
-                                  <span>
-                                    {total > 0 ? `${formatBytes(used)} / ${formatBytes(total)}` : ""}
-                                  </span>
-                                </div>
-                                {total > 0 && (
-                                  <div className="sub-card-track">
-                                    <div className="sub-card-progress" style={{ width: `${pct}%` }} />
-                                  </div>
-                                )}
-                              </div>
-                              <div className="sub-card-side">
-                                {expireDate && <span className="sub-card-expire">{expireDate}</span>}
-                                <button
-                                  type="button"
-                                  className="sub-card-refresh"
-                                  onClick={() => {
-                                    setSubUrl(s.url);
-                                    importFromUrl(s.url);
-                                  }}
-                                  title="刷新"
-                                >
-                                  <RefreshCw size={13} />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </section>
-
-                  {/* 配置列表区 */}
-                  <section className="pf-card">
-                    <div className="pf-card-hd">
-                      <h2>
-                        <Layers3 size={15} /> {t("profiles.configs", "配置文件")}
-                      </h2>
-                      <span className="hd-count">{richProfiles.length || profiles.length}</span>
-                    </div>
-                    {!(richProfiles.length || profiles.length) ? (
-                      <div className="empty slim">
-                        {t("profiles.noConfigs", "暂无配置文件 - 点击上方添加_merge/script/rules")}
-                      </div>
-                    ) : (
-                      <div className="pf-list">
-                        {(richProfiles.length
-                          ? richProfiles.map((p) => ({
-                              key: p.uid,
-                              uid: p.uid,
-                              name: p.name,
-                              sub: `${p.type}${p.global ? " · " + t("profiles.global", "全局") : ""}`,
-                              size: p.size,
-                              enabled: p.enabled,
-                              type: p.type,
-                            }))
-                          : profiles.map((p) => ({
-                              key: p.uid || p.name,
-                              uid: p.uid,
-                              name: p.name,
-                              sub: p.type || "file",
-                              size: p.size,
-                              enabled: p.enabled !== false,
-                              type: (p.type as ProfileRich["type"]) || "local",
-                            }))
-                        ).map((p) => (
-                          <div key={p.key} className="pf-item">
-                            <span className="pf-item-ico">
-                              <Layers3 size={15} />
-                            </span>
-                            <div className="pf-item-body">
-                              <div className="pf-item-name">{p.name}</div>
-                              <div className="pf-item-sub">{p.sub}</div>
-                            </div>
-                            <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
-                              {p.uid && (p.type === "remote" || p.type === "local") ? (
-                                <button
-                                  type="button"
-                                  className="btn ghost btn-sm"
-                                  onClick={async () => {
-                                    await window.veyra?.activateProfile?.(p.uid!);
-                                    await applyEnhance();
-                                    showToast(t("profiles.activated", "已激活 ") + p.name);
-                                  }}
-                                >
-                                  {t("profiles.activate", "激活")}
-                                </button>
-                              ) : null}
-                              {p.uid ? (
-                                <button
-                                  type="button"
-                                  className="btn btn-sm primary"
-                                  onClick={async () => {
-                                    const t2 = await window.veyra?.readProfile?.(p.uid!);
-                                    if (t2 != null) {
-                                      setEditUid(p.uid!);
-                                      setProfileName(p.name);
-                                      setProfileText(t2);
-                                      setEditorMode("profile");
-                                      setPfTab("yaml");
-                                    }
-                                  }}
-                                >
-                                  {t("profiles.edit", "编辑")}
-                                </button>
-                              ) : null}
-                            </div>
+                      {/* ── 订阅列表 ───────────────────────────────────── */}
+                      <section className="subs-section">
+                        <div className="subs-section-hd">
+                          <h2>
+                            {t("profiles.subscriptions", "订阅")}
+                            <span className="subs-section-count">{subs.length}</span>
+                          </h2>
+                          <button
+                            type="button"
+                            className="btn ghost btn-sm"
+                            disabled={!subs.length || busy}
+                            onClick={() => void updateSubscriptions()}
+                          >
+                            <RefreshCw size={13} />
+                            {t("profiles.updateAll", "全部更新")}
+                          </button>
+                        </div>
+                        {!subs.length ? (
+                          <div className="subs-empty">
+                            <Globe size={22} />
+                            <p>{t("profiles.noSubs", "暂无订阅 · 在上面粘贴链接导入")}</p>
                           </div>
-                        ))}
+                        ) : (
+                          <div className="subs-grid">
+                            {subs.map((s) => {
+                              const upload = s.userinfo?.upload || 0;
+                              const download = s.userinfo?.download || 0;
+                              const used = upload + download;
+                              const total = s.userinfo?.total || 0;
+                              const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+                              const left = Math.max(0, total - used);
+                              const expireTs = s.userinfo?.expire || 0;
+                              const expireDate = expiryText(expireTs);
+                              const daysLeft =
+                                expireTs > 0
+                                  ? Math.max(0, Math.ceil((expireTs * 1000 - Date.now()) / 86400000))
+                                  : null;
+                              const tone = pct >= 90 ? " is-danger" : pct >= 70 ? " is-warn" : "";
+                              const host = s.url.replace(/^https?:\/\//, "").split("/")[0];
+                              const initial = (s.name || host || "S").trim().charAt(0).toUpperCase();
+                              // 关联到档案：拿 uid / 是否当前激活，用于卡片上直接切换
+                              const prof = richProfiles.find(
+                                (p) => p.type === "remote" && p.url === s.url
+                              );
+                              const isActive = !!prof?.active;
+                              return (
+                                <article
+                                  key={s.url}
+                                  className={`sub-card-x${tone}`}
+                                  onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    const x = Math.min(e.clientX, window.innerWidth - 224);
+                                    const y = Math.min(e.clientY, window.innerHeight - 272);
+                                    setCtxMenu({ x, y, url: s.url, name: s.name });
+                                  }}
+                                >
+                                  <div className="sub-card-x-top">
+                                    <span className="sub-card-x-avatar" aria-hidden="true">
+                                      {initial}
+                                    </span>
+                                    <div className="sub-card-x-id">
+                                      <h3 title={s.url}>{s.name}</h3>
+                                      <span title={s.url}>{s.url.replace(/^https?:\/\//, "")}</span>
+                                    </div>
+                                    <div className="sub-card-x-tools">
+                                      {isActive ? (
+                                        <span className="sub-card-x-active" title="当前正在使用的订阅">
+                                          <Check size={11} />
+                                          {t("profiles.inUse", "当前使用")}
+                                        </span>
+                                      ) : prof?.uid ? (
+                                        <button
+                                          type="button"
+                                          className="sub-card-x-switch"
+                                          title="切换到这个订阅"
+                                          onClick={async () => {
+                                            try {
+                                              await window.veyra?.activateProfile?.(prof.uid!);
+                                              await reloadProfileLists();
+                                              await refresh();
+                                              showToast(
+                                                `${t("profiles.switchedTo", "已切换到")}「${s.name}」`
+                                              );
+                                            } catch (e) {
+                                              showToast(String((e as Error).message || e));
+                                            }
+                                          }}
+                                        >
+                                          {t("profiles.switchTo", "切换")}
+                                        </button>
+                                      ) : null}
+                                      <button
+                                        type="button"
+                                        className="sub-card-x-icon"
+                                        title={t("profiles.refreshSub", "更新此订阅")}
+                                        aria-label={t("profiles.refreshSub", "更新此订阅")}
+                                        onClick={() => {
+                                          setSubUrl(s.url);
+                                          void importFromUrl(s.url);
+                                        }}
+                                      >
+                                        <RefreshCw size={14} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="sub-card-x-icon is-danger"
+                                        title={t("profiles.deleteSub", "删除订阅")}
+                                        aria-label={t("profiles.deleteSub", "删除订阅")}
+                                        onClick={() =>
+                                          setConfirmReq({
+                                            title: t("profiles.deleteSub", "删除订阅"),
+                                            message: `将删除「${s.name}」及其配置文件，此操作不可撤销。`,
+                                            confirmText: "删除",
+                                            danger: true,
+                                            onConfirm: async () => {
+                                              await window.veyra?.removeSubscription?.(s.url);
+                                              // 删掉的正好是输入框里那条 → 一起清掉，别留个失效链接
+                                              if (subUrl.trim() === s.url) {
+                                                setSubUrl("");
+                                                try {
+                                                  localStorage.removeItem("veyra:lastSubUrl");
+                                                } catch {
+                                                  // The subscription has already been removed from the app.
+                                                }
+                                              }
+                                              await reloadProfileLists();
+                                              await refresh();
+                                              showToast(`已删除「${s.name}」`);
+                                            },
+                                          })
+                                        }
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="sub-card-x-metrics">
+                                    <div className="sub-card-x-used">
+                                      {total > 0 ? formatBytes(used) : "—"}
+                                      <span>/ {total > 0 ? formatBytes(total) : "—"}</span>
+                                    </div>
+                                    <span className={`sub-card-x-pct${tone}`}>
+                                      {total > 0 ? Math.round(pct) : "—"}
+                                      <i>%</i>
+                                    </span>
+                                  </div>
+
+                                  <div className={`sub-card-x-rail${total > 0 ? "" : " is-empty"}`}>
+                                    <i style={{ width: `${pct}%` }} />
+                                  </div>
+
+                                  <div className="sub-card-x-stats">
+                                    {total > 0 ? (
+                                      <>
+                                        <span title={t("profiles.upload", "上传")}>
+                                          <ArrowUp size={11} />
+                                          {formatBytes(upload)}
+                                        </span>
+                                        <span title={t("profiles.download", "下载")}>
+                                          <ArrowDown size={11} />
+                                          {formatBytes(download)}
+                                        </span>
+                                        <span className="sub-card-x-gap" />
+                                        <span>
+                                          {t("profiles.remaining", "剩余")} {formatBytes(left)}
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <span className="is-muted">
+                                        {t("profiles.noTraffic", "未提供流量信息")}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="sub-card-x-foot">
+                                    <span>
+                                      {t("profiles.updatedAt", "更新于")} {relativeTime(s.updatedAt)}
+                                    </span>
+                                    {s.nextUpdateAt ? (
+                                      <span>
+                                        {t("profiles.nextUpdate", "下次")} {untilText(s.nextUpdateAt)}
+                                      </span>
+                                    ) : null}
+                                    {expireDate ? (
+                                      <span
+                                        className={`sub-card-x-expire${
+                                          daysLeft !== null && daysLeft <= 7 ? " is-soon" : ""
+                                        }`}
+                                      >
+                                        {t("profiles.expires", "到期")} {expireDate}
+                                        {daysLeft !== null
+                                          ? ` · ${t("profiles.daysLeft", "剩 {n} 天").replace("{n}", String(daysLeft))}`
+                                          : ""}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </section>
+
                       </div>
-                    )}
-                  </section>
                     </div>
                   ) : null}
 
                   {(pfSeen.enhance || pfTab === "enhance") ? (
                     <div className="pf-pane" hidden={pfTab !== "enhance"}>
-                      <section className="pf-card pf-enhance-tools">
-                        <div className="pf-card-hd">
-                          <h2><Layers3 size={15} /> 增强配置</h2>
-                          <span className="hd-count">{richProfiles.filter((p) => p.type !== "remote" && p.type !== "local").length}</span>
-                        </div>
-                        <div className="pf-enhance-actions">
-                          {(["merge", "script", "rules", "proxies", "groups"] as const).map((kind) => (
+                      <section className="pf-sec">
+                        <div className="pf-sec-hd">
+                          <h2>
+                            <Layers3 size={15} />
+                            增强配置
+                            <span className="pf-sec-count">
+                              {richProfiles.filter((p) => p.type !== "remote" && p.type !== "local").length}
+                            </span>
+                          </h2>
+                          <div className="pf-sec-actions">
                             <button
-                              key={kind}
                               type="button"
-                              className="btn ghost btn-sm"
+                              className="btn primary btn-sm"
                               disabled={busy}
-                              onClick={() => void createEnhance(kind)}
+                              onClick={() => void applyEnhance()}
                             >
-                              + {kind}
+                              应用增强
                             </button>
-                          ))}
-                          <button type="button" className="btn ghost btn-sm" disabled={busy} onClick={() => void createEnhance("merge", true)}>
-                            + 全局 Merge
-                          </button>
-                          <button type="button" className="btn primary btn-sm" disabled={busy} onClick={() => void applyEnhance()}>
-                            应用增强
-                          </button>
-                          <button type="button" className="btn ghost btn-sm" onClick={() => void reloadProviders()}>
-                            刷新 Provider
-                          </button>
+                            <button type="button" className="btn ghost btn-sm" onClick={() => void reloadProviders()}>
+                              刷新 Provider
+                            </button>
+                          </div>
+                        </div>
+                        <div className="pf-sec-body">
+                          <p className="pf-sec-desc">
+                            增强文件在内核启动或「应用增强」时叠加到当前订阅：merge 合并字段、script 脚本改写、
+                            rules 追加规则、proxies / groups 追加节点与分组。
+                          </p>
+                          <div className="pf-create">
+                            <span className="pf-create-label">新建</span>
+                            {(["merge", "script", "rules", "proxies", "groups"] as const).map((kind) => (
+                              <button
+                                key={kind}
+                                type="button"
+                                className="pf-chip-btn"
+                                disabled={busy}
+                                onClick={() => void createEnhance(kind)}
+                              >
+                                <Plus size={12} />
+                                {kind}
+                              </button>
+                            ))}
+                            <button
+                              type="button"
+                              className="pf-chip-btn"
+                              disabled={busy}
+                              onClick={() => void createEnhance("merge", true)}
+                            >
+                              <Plus size={12} />
+                              全局 Merge
+                            </button>
+                          </div>
+
+                          {richProfiles.filter((p) => p.type !== "remote" && p.type !== "local").length ? (
+                            <div className="pf-rows">
+                              {richProfiles
+                                .filter((p) => p.type !== "remote" && p.type !== "local")
+                                .map((p) => (
+                                  <div className="pf-row" key={p.uid}>
+                                    <span className={`pf-row-badge is-${p.type}`}>{p.type}</span>
+                                    <div className="pf-row-main">
+                                      <b>{p.name}</b>
+                                      <span>
+                                        {p.global ? "全局 · " : ""}
+                                        {p.enabled === false ? "已停用" : "启用中"}
+                                      </span>
+                                    </div>
+                                    <div className="pf-row-actions">
+                                      <button
+                                        type="button"
+                                        className="btn ghost btn-sm"
+                                        onClick={async () => {
+                                          const txt = await window.veyra?.readProfile?.(p.uid);
+                                          if (txt == null) return;
+                                          setEditUid(p.uid);
+                                          setProfileName(p.name);
+                                          setProfileText(txt);
+                                          setEditorMode("profile");
+                                          setPfTab("yaml");
+                                        }}
+                                      >
+                                        编辑
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="pf-row-icon"
+                                        title="删除"
+                                        aria-label="删除"
+                                        onClick={() =>
+                                          setConfirmReq({
+                                            title: "删除增强文件",
+                                            message: `将删除「${p.name}」，该文件不再参与增强。此操作不可撤销。`,
+                                            confirmText: "删除",
+                                            danger: true,
+                                            onConfirm: async () => {
+                                              await window.veyra?.deleteProfile?.(p.uid);
+                                              await reloadProfileLists();
+                                              // 正在编辑的正是这个文件时，清掉编辑器状态，
+                                              // 否则「保存」会往已删除的 uid 里写
+                                              if (editUid === p.uid) {
+                                                setEditUid(null);
+                                                setProfileName("subscription.yaml");
+                                                setProfileText("");
+                                              }
+                                              showToast(`已删除 ${p.name}`);
+                                            },
+                                          })
+                                        }
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                            </div>
+                          ) : (
+                            <div className="pf-empty">
+                              <Layers3 size={18} />
+                              <p>还没有增强文件 · 用上面的按钮创建 merge / script / rules 等</p>
+                            </div>
+                          )}
                         </div>
                       </section>
                   {bindTarget ? (
-                    <section className="block pf-enhance" style={{ marginTop: 12 }}>
-                      <div className="block-hd">
+                    <section className="pf-sec">
+                      <div className="pf-sec-hd">
                         <h2>订阅绑定扩展</h2>
-                        <span className="pill dim">{bindTarget.slice(0, 8)}</span>
+                        <span className="pf-sec-tag">{bindTarget.slice(0, 8)}</span>
                       </div>
-                      <p className="s-muted">
-                        为该 Remote/Local 指定专用 Merge / Script / Rules / Proxies / Groups
-                      </p>
-                      <div className="s-fields">
-                        {(["merge", "script", "rules", "proxies", "groups"] as const).map((k) => (
-                          <label key={k}>
-                            {k}
-                            <select
-                              className="s-input"
-                              defaultValue={richProfiles.find((x) => x.uid === bindTarget)?.binds?.[k] || ""}
-                              onChange={async (e) => {
-                                const cur = richProfiles.find((x) => x.uid === bindTarget);
-                                const binds = { ...(cur?.binds || {}), [k]: e.target.value || null };
-                                await window.veyra?.setProfileBinds?.(bindTarget, binds);
-                                await reloadProfileLists();
-                                showToast(`已绑定 ${k}`);
-                              }}
-                            >
-                              <option value="">（无）</option>
-                              {richProfiles
-                                .filter((x) => x.type === k || (k === "merge" && x.type === "merge"))
-                                .map((x) => (
-                                  <option key={x.uid} value={x.uid}>
-                                    {x.name}
-                                  </option>
-                                ))}
-                            </select>
-                          </label>
-                        ))}
+                      <div className="pf-sec-body">
+                        <p className="pf-sec-desc">
+                          为该 Remote/Local 指定专用 Merge / Script / Rules / Proxies / Groups
+                        </p>
+                        <div className="s-fields">
+                          {(["merge", "script", "rules", "proxies", "groups"] as const).map((k) => (
+                            <label key={k}>
+                              {k}
+                              <select
+                                className="s-input"
+                                defaultValue={richProfiles.find((x) => x.uid === bindTarget)?.binds?.[k] || ""}
+                                onChange={async (e) => {
+                                  const cur = richProfiles.find((x) => x.uid === bindTarget);
+                                  const binds = { ...(cur?.binds || {}), [k]: e.target.value || null };
+                                  await window.veyra?.setProfileBinds?.(bindTarget, binds);
+                                  await reloadProfileLists();
+                                  showToast(`已绑定 ${k}`);
+                                }}
+                              >
+                                <option value="">（无）</option>
+                                {richProfiles
+                                  .filter((x) => x.type === k || (k === "merge" && x.type === "merge"))
+                                  .map((x) => (
+                                    <option key={x.uid} value={x.uid}>
+                                      {x.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            </label>
+                          ))}
+                        </div>
                       </div>
                     </section>
                   ) : null}
 
                   {providers.proxies.length || providers.rules.length ? (
-                    <section className="block pf-enhance" style={{ marginTop: 12 }}>
-                      <div className="block-hd">
+                    <section className="pf-sec">
+                      <div className="pf-sec-hd">
                         <h2>远程配置</h2>
+                        <span className="pf-sec-count">{providers.proxies.length + providers.rules.length}</span>
                       </div>
-                      <div className="pf-list">
-                        {providers.proxies.map((n) => (
-                          <div key={`pp-${n}`} className="pf-item">
-                            <div className="pf-item-body">
-                              <div className="pf-item-name">{n}</div>
-                              <div className="pf-item-sub">proxy-provider</div>
+                      <div className="pf-sec-body">
+                        <div className="pf-rows">
+                          {providers.proxies.map((n) => (
+                            <div key={`pp-${n}`} className="pf-row">
+                              <span className="pf-row-badge is-proxies">proxy</span>
+                              <div className="pf-row-main">
+                                <b>{n}</b>
+                                <span>proxy-provider</span>
+                              </div>
+                              <div className="pf-row-actions">
+                                <button
+                                  type="button"
+                                  className="btn ghost btn-sm"
+                                  onClick={async () => {
+                                    await window.veyra?.updateProvider?.("proxies", n);
+                                    showToast(`已更新 ${n}`);
+                                  }}
+                                >
+                                  更新
+                                </button>
+                              </div>
                             </div>
-                            <button
-                              type="button"
-                              className="btn ghost btn-sm"
-                              onClick={async () => {
-                                await window.veyra?.updateProvider?.("proxies", n);
-                                showToast(`已更新 ${n}`);
-                              }}
-                            >
-                              更新
-                            </button>
-                          </div>
-                        ))}
-                        {providers.rules.map((n) => (
-                          <div key={`rp-${n}`} className="pf-item">
-                            <div className="pf-item-body">
-                              <div className="pf-item-name">{n}</div>
-                              <div className="pf-item-sub">rule-provider</div>
+                          ))}
+                          {providers.rules.map((n) => (
+                            <div key={`rp-${n}`} className="pf-row">
+                              <span className="pf-row-badge is-rules">rule</span>
+                              <div className="pf-row-main">
+                                <b>{n}</b>
+                                <span>rule-provider</span>
+                              </div>
+                              <div className="pf-row-actions">
+                                <button
+                                  type="button"
+                                  className="btn ghost btn-sm"
+                                  onClick={async () => {
+                                    await window.veyra?.updateProvider?.("rules", n);
+                                    showToast(`已更新 ${n}`);
+                                  }}
+                                >
+                                  更新
+                                </button>
+                              </div>
                             </div>
-                            <button
-                              type="button"
-                              className="btn ghost btn-sm"
-                              onClick={async () => {
-                                await window.veyra?.updateProvider?.("rules", n);
-                                showToast(`已更新 ${n}`);
-                              }}
-                            >
-                              更新
-                            </button>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
                     </section>
                   ) : null}
 
                   {enhanceLog.length ? (
-                    <section className="block pf-enhance" style={{ marginTop: 12 }}>
-                      <div className="block-hd">
+                    <section className="pf-sec">
+                      <div className="pf-sec-hd">
                         <h2>增强日志</h2>
+                        <span className="pf-sec-count">{enhanceLog.length}</span>
                       </div>
-                      <pre className="term-body" style={{ maxHeight: 120 }}>
-                        {enhanceLog.join("\n")}
-                      </pre>
+                      <div className="pf-sec-body">
+                        <pre className="term-body" style={{ maxHeight: 160 }}>
+                          {enhanceLog.join("\n")}
+                        </pre>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {/* 本地配置（type=local）不是订阅，订阅页不再列「配置文件」，
+                      挪到这里保留入口：激活 / 编辑 YAML */}
+                  {richProfiles.some((p) => p.type === "local") ? (
+                    <section className="pf-sec">
+                      <div className="pf-sec-hd">
+                        <h2>
+                          <Layers3 size={15} />
+                          本地配置
+                          <span className="pf-sec-count">
+                            {richProfiles.filter((p) => p.type === "local").length}
+                          </span>
+                        </h2>
+                      </div>
+                      <div className="pf-sec-body">
+                        <div className="pf-rows">
+                          {richProfiles
+                            .filter((p) => p.type === "local")
+                            .map((p) => (
+                              <div className="pf-row" key={p.uid}>
+                                <span className="pf-row-badge is-local">local</span>
+                                <div className="pf-row-main">
+                                  <b>{p.name}</b>
+                                  <span>{p.active ? "当前使用" : "本地 YAML 配置"}</span>
+                                </div>
+                                <div className="pf-row-actions">
+                                  {!p.active ? (
+                                    <button
+                                      type="button"
+                                      className="btn ghost btn-sm"
+                                      onClick={async () => {
+                                        await window.veyra?.activateProfile?.(p.uid);
+                                        await applyEnhance();
+                                        await reloadProfileLists();
+                                        showToast(`已激活「${p.name}」`);
+                                      }}
+                                    >
+                                      激活
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="btn ghost btn-sm"
+                                    onClick={async () => {
+                                      const txt = await window.veyra?.readProfile?.(p.uid);
+                                      if (txt == null) return;
+                                      setEditUid(p.uid);
+                                      setProfileName(p.name);
+                                      setProfileText(txt);
+                                      setEditorMode("profile");
+                                      setPfTab("yaml");
+                                    }}
+                                  >
+                                    编辑
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
                     </section>
                   ) : null}
                     </div>
@@ -2846,81 +3137,88 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
                   {pfSeen.nodes ? (
                     <div className="pf-pane" hidden={pfTab !== "nodes"}>
-                      <section className="block pf-nodes" style={{ marginTop: 12 }}>
-                        <ProxiesVisualEditor onToast={showToast} onBusy={setBusy} />
-                      </section>
-                      <section className="block pf-nodes" style={{ marginTop: 12 }}>
-                        <GroupsVisualEditor onToast={showToast} onBusy={setBusy} />
-                      </section>
+                      <ProxiesVisualEditor onToast={showToast} onBusy={setBusy} />
+                      <GroupsVisualEditor onToast={showToast} onBusy={setBusy} />
                     </div>
                   ) : null}
 
                   {pfSeen.yaml ? (
-                    <section className="editor-card pf-yaml" hidden={pfTab !== "yaml"}>
-                      <div className="editor-bar">
-                        <input
-                          value={profileName}
-                          onChange={(e) => setProfileName(e.target.value)}
-                          placeholder={
-                            editorMode === "runtime"
-                              ? "runtime.yaml"
-                              : editUid
-                                ? "正在编辑已有配置"
-                                : "文件名"
-                          }
-                        />
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          disabled={busy}
-                          onClick={async () => {
-                            if (editorMode === "runtime") {
-                              setBusy(true);
-                              try {
-                                await window.veyra?.writeRuntime?.(profileText);
-                                showToast("运行时配置已写入并重载");
-                                await refresh();
-                              } catch (e) {
-                                showToast(String((e as Error).message || e));
-                              } finally {
-                                setBusy(false);
-                              }
-                            } else {
-                              await saveProfile();
+                    <section className="pf-sec pf-yaml-card" hidden={pfTab !== "yaml"}>
+                      <div className="pf-sec-hd">
+                        <h2>
+                          <Terminal size={15} />
+                          YAML 编辑器
+                          <span className="pf-sec-count">
+                            {editorMode === "runtime" ? "runtime" : editUid ? "编辑中" : "新建"}
+                          </span>
+                        </h2>
+                        <div className="yaml-bar">
+                          <input
+                            value={profileName}
+                            onChange={(e) => setProfileName(e.target.value)}
+                            placeholder={
+                              editorMode === "runtime"
+                                ? "runtime.yaml"
+                                : editUid
+                                  ? "正在编辑已有配置"
+                                  : "文件名"
                             }
-                          }}
-                        >
-                          {editorMode === "runtime" ? "保存运行时" : editUid ? "保存并增强" : "保存 YAML"}
-                        </button>
+                          />
+                          <button
+                            type="button"
+                            className="btn primary btn-sm"
+                            disabled={busy}
+                            onClick={async () => {
+                              if (editorMode === "runtime") {
+                                setBusy(true);
+                                try {
+                                  await window.veyra?.writeRuntime?.(profileText);
+                                  showToast("运行时配置已写入并重载");
+                                  await refresh();
+                                } catch (e) {
+                                  showToast(String((e as Error).message || e));
+                                } finally {
+                                  setBusy(false);
+                                }
+                              } else {
+                                await saveProfile();
+                              }
+                            }}
+                          >
+                            {editorMode === "runtime" ? "保存运行时" : editUid ? "保存并增强" : "保存 YAML"}
+                          </button>
+                        </div>
                       </div>
-                      <Suspense
-                        fallback={
-                          <div className="yaml-editor monaco">
-                            <div
-                              style={{
-                                height: 320,
-                                display: "grid",
-                                placeItems: "center",
-                                color: "var(--text-400)",
-                                fontSize: 12,
-                              }}
-                            >
-                              编辑器加载中…
+                      <div className="pf-yaml-body">
+                        <Suspense
+                          fallback={
+                            <div className="yaml-editor monaco">
+                              <div
+                                style={{
+                                  height: 320,
+                                  display: "grid",
+                                  placeItems: "center",
+                                  color: "var(--text-400)",
+                                  fontSize: 12,
+                                }}
+                              >
+                                编辑器加载中…
+                              </div>
                             </div>
-                          </div>
-                        }
-                      >
-                        <YamlEditor
-                          value={profileText}
-                          onChange={setProfileText}
-                          placeholder="粘贴 YAML / Merge / Script…"
-                          hint={
-                            editorMode === "runtime"
-                              ? "运行时配置（增强产物，可直接改）· schema: Clash Meta"
-                              : "YAML 编辑器 · 支持 Merge delete-rules 等"
                           }
-                        />
-                      </Suspense>
+                        >
+                          <YamlEditor
+                            value={profileText}
+                            onChange={setProfileText}
+                            placeholder="粘贴 YAML / Merge / Script…"
+                            hint={
+                              editorMode === "runtime"
+                                ? "运行时配置（增强产物，可直接改）· schema: Clash Meta"
+                                : "YAML 编辑器 · 支持 Merge delete-rules 等"
+                            }
+                          />
+                        </Suspense>
+                      </div>
                     </section>
                   ) : null}
                 </div>
@@ -3025,172 +3323,98 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                   原「快捷操作」4 个按钮的跳转目标在左侧导航中均已一键可达，属纯重复，故移除。 */}
               <div className="card">
                 <div className="card-header no-border">
-                  <div className="card-title text-base">网络状态</div>
+                  <div className="card-title text-base">{t("exit.network", "网络状态")}</div>
                   <button
                     type="button"
                     className="btn ghost btn-xs"
-                    onClick={refreshExitIp}
+                    onClick={() => void refreshExitIp()}
                     disabled={!running || exitIpLoading}
-                    title="重新检测出口 IP"
+                    title={t("exit.refreshing", "重新检测出口 IP")}
                   >
-                    {exitIpLoading ? "检测中…" : "刷新"}
+                    {exitIpLoading ? t("exit.detecting", "检测中…") : t("common.refresh", "刷新")}
                   </button>
                 </div>
                 <div className="card-body tight">
                   {!running ? (
-                    <div className="text-xs text-muted">内核未运行</div>
+                    <div className="text-xs text-muted">{t("exit.coreDown", "内核未运行")}</div>
                   ) : exitIpLoading && !exitIp ? (
-                    <div className="text-xs text-muted">正在检测…</div>
+                    <div className="text-xs text-muted">{t("exit.detecting", "正在检测…")}</div>
                   ) : exitIp?.ip ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      {/* 统一成行式（标签左 / 值右），与下方归属、运营商同一套对齐逻辑。
-                          此前 IP 左对齐、下面两行右对齐，一张卡里两套对齐规则。 */}
-                      <div className="exit-ip-row">
-                        <span className="exit-ip-k">当前出口</span>
+                    <div className="exit-state">
+                      <div className="exit-state-loc">
+                        <span className="exit-dot" aria-hidden="true" />
+                        {countryBadge(exitIp.countryCode) ? (
+                          <span className="exit-flag">{countryBadge(exitIp.countryCode)}</span>
+                        ) : null}
+                        <span className="exit-loc" title={[exitIp.country, exitIp.city].filter(Boolean).join(" · ")}>
+                          {[exitIp.country, exitIp.city].filter(Boolean).join(" · ") || "—"}
+                        </span>
+                        {/* 标明这次检测走的是哪条网络：系统代理开=代理出口，关=直连出口 */}
+                        <span
+                          className={`exit-via${(exitIp.viaProxy ?? sysProxy) ? " on" : ""}`}
+                          title={
+                            (exitIp.viaProxy ?? sysProxy)
+                              ? t("exit.viaProxyHint", "经系统代理检测（当前出口为代理节点）")
+                              : t("exit.viaDirectHint", "系统代理未开启，当前显示直连出口")
+                          }
+                        >
+                          {(exitIp.viaProxy ?? sysProxy)
+                            ? t("exit.viaProxy", "系统代理")
+                            : t("exit.viaDirect", "直连")}
+                        </span>
+                      </div>
+                      <div className="exit-state-ip">
+                        <span className="exit-ip" title={exitIp.ip}>
+                          {exitIp.ip}
+                        </span>
                         <button
                           type="button"
-                          className="exit-ip-v is-ip"
+                          className="btn ghost btn-xs exit-copy"
                           onClick={() => {
                             navigator.clipboard?.writeText(exitIp.ip || "");
-                            showToast("已复制出口 IP");
+                            showToast(t("exit.copied", "已复制出口 IP"));
                           }}
-                          title="点击复制"
+                          title={t("exit.copy", "复制出口 IP")}
                         >
-                          {exitIp.ip}
+                          {t("exit.copy", "复制")}
                         </button>
                       </div>
-                      {/* 归属 / 运营商改为单列行式（label 左 · 值右）：窄轨道下两列各约 70px，
-                          「Japan · Tokyo」与「GSL Networks Pty LTD」断行位置不同，基线永远对不齐。
-                          行式与侧栏 facts 的语言一致，值走 ellipsis + title 保留全量。 */}
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        <div className="exit-ip-row">
-                          <span className="exit-ip-k">归属</span>
-                          <span
-                            className="exit-ip-v"
-                            title={[exitIp.country, exitIp.city].filter(Boolean).join(" · ")}
-                          >
-                            {[exitIp.country, exitIp.city].filter(Boolean).join(" · ") || "—"}
+                      <div className="exit-state-isp" title={exitIp.isp || exitIp.org || ""}>
+                        {exitIp.isp || exitIp.org || "—"}
+                      </div>
+                      <div className="exit-state-sep" />
+                      <div className="exit-state-rates">
+                        <div className="exit-state-rate">
+                          <span className="exit-rate-k">{t("home.download", "下载")}</span>
+                          <span className={`exit-rate-v${downRate > 0 ? " down" : ""}`}>
+                            {formatRate(downRate)}
                           </span>
                         </div>
-                        <div className="exit-ip-row">
-                          <span className="exit-ip-k">运营商</span>
-                          <span className="exit-ip-v" title={exitIp.isp || exitIp.org || ""}>
-                            {exitIp.isp || exitIp.org || "—"}
+                        <div className="exit-state-rate">
+                          <span className="exit-rate-k">{t("home.upload", "上传")}</span>
+                          <span className={`exit-rate-v${upRate > 0 ? " up" : ""}`}>
+                            {formatRate(upRate)}
                           </span>
                         </div>
                       </div>
-                      {exitIp.as && (
-                        <div className="text-xs text-muted" style={{ fontFamily: "var(--font-mono)" }}>
-                          {exitIp.as}
-                        </div>
-                      )}
+                      <div className="exit-state-total">
+                        <span className="exit-total-k">{t("exit.total", "累计")}</span>
+                        <span className="exit-total-v">
+                          ↓ {formatBytes(download)} · ↑ {formatBytes(upload)}
+                        </span>
+                      </div>
                     </div>
                   ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      <div className="text-xs text-muted">检测失败，请检查网络后重试</div>
-                      <button type="button" className="btn ghost btn-xs" onClick={refreshExitIp}>
-                        重试
+                    <div className="exit-state-fail">
+                      <div className="text-xs text-muted">{t("exit.failed", "检测失败，请检查网络后重试")}</div>
+                      <button type="button" className="btn ghost btn-xs" onClick={() => void refreshExitIp()}>
+                        {t("exit.retry", "重试")}
                       </button>
                     </div>
                   )}
-
-                  {/* 实时 + 累计流量：原为独立一张卡，并入后右栏少一张卡的高度 */}
-                  <div className="rail-sep" />
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div className="exit-ip-row">
-                      <span className="exit-ip-k">下载</span>
-                      <span className={`exit-ip-v${downRate > 0 ? " down" : ""}`}>
-                        {formatRate(downRate)}
-                      </span>
-                    </div>
-                    <div className="exit-ip-row">
-                      <span className="exit-ip-k">上传</span>
-                      <span className={`exit-ip-v${upRate > 0 ? " up" : ""}`}>
-                        {formatRate(upRate)}
-                      </span>
-                    </div>
-                    <div className="exit-ip-row">
-                      <span className="exit-ip-k">累计</span>
-                      <span className="exit-ip-v is-total">
-                        ↓ {formatBytes(download)} · ↑ {formatBytes(upload)}
-                      </span>
-                    </div>
-                  </div>
                 </div>
               </div>
 
-              {/* 解锁状态：AI + 流媒体各 3 项。点击单项重测，标题栏按钮跑全量。
-                  全量检测是串行外网探测，故不自动执行；结果随内核切换失效需手动重跑。 */}
-              <div className="card">
-                <div className="card-header no-border">
-                  <div className="card-title text-base">解锁状态</div>
-                  <button
-                    type="button"
-                    className="btn ghost btn-xs"
-                    onClick={testAllUnlock}
-                    disabled={!running || !!unlockBusy}
-                    title="测试全部 12 项（串行，耗时较长）"
-                  >
-                    {unlockBusy === "__all__" ? "测试中…" : "全部测试"}
-                  </button>
-                </div>
-                <div className="card-body tight">
-                  {!running ? (
-                    <div className="text-xs text-muted">内核未运行</div>
-                  ) : (
-                    /* v16 聚合式：品牌磁贴网格。原来 6 行「未测试」文字换成 6 个品牌图标，
-                       未测试时整块去饱和，测出结果恢复品牌色 + 状态角标——一眼扫完。 */
-                    <div className="unlock-grid">
-                      {RAIL_UNLOCK_GROUPS.map((g) => (
-                        <div key={g.key} className="unlock-row">
-                          <div className="unlock-row-label">{g.label}</div>
-                          <div className="unlock-tiles">
-                            {g.ids.map(([id, name]) => {
-                              const st = unlockMap[id];
-                              const busy = unlockBusy === id || unlockBusy === "__all__";
-                              const tested = !!(st && st.testedAt);
-                              const ok = tested && st.ok;
-                              const fail = tested && !st.ok && !!st.fail;
-                              // 三态：已解锁 / 不支持 / 检测失败；未测为去饱和
-                              const cls = busy ? "busy" : ok ? "ok" : fail ? "fail" : tested ? "no" : "idle";
-                              const note = busy
-                                ? "检测中"
-                                : !tested
-                                  ? "未测试"
-                                  : ok
-                                    ? st.region || st.note || "支持"
-                                    : fail
-                                      ? "检测失败"
-                                      : st.note || "不支持";
-                              return (
-                                <button
-                                  key={id}
-                                  type="button"
-                                  className={`unlock-tile ${cls}`}
-                                  data-brand={id}
-                                  onClick={() => testOneUnlock(id)}
-                                  disabled={busy}
-                                  title={`${name} · ${note}（点击检测）`}
-                                  aria-label={`${name} · ${note}`}
-                                >
-                                  <span className="unlock-tile-mark">
-                                    <BrandMark id={id} />
-                                  </span>
-                                  <span className="unlock-tile-name">{name}</span>
-                                  <i className={`unlock-tile-dot ${cls}`} aria-hidden="true" />
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                      <div className="unlock-foot">
-                        {t("unlock.footTip", "点图标单独检测 · 完整 12 项见「测试」页")}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
 
             </div>
           </div>
@@ -3203,7 +3427,172 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         </div>
       )}
 
+      {updateNotes && (
+        <div className="modal-mask" onClick={closeUpdateNotes}>
+          <div
+            className="modal-box update-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="本次更新"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="update-hd">
+              <div>
+                <div className="update-title">本次更新</div>
+                <div className="update-sub">
+                  v{updateNotes.version}
+                  {updateNotes.date ? ` · ${updateNotes.date}` : ""}
+                </div>
+              </div>
+              <button type="button" className="home-cfg-close" onClick={closeUpdateNotes} aria-label="关闭">
+                <X size={16} />
+              </button>
+            </div>
+            {updateNotes.title ? <div className="update-name">{updateNotes.title}</div> : null}
+            <ol className="update-list">
+              {updateNotes.items.map((it, i) => (
+                <li key={i}>{it}</li>
+              ))}
+            </ol>
+            <div className="update-actions">
+              <button type="button" className="btn primary" onClick={closeUpdateNotes}>
+                知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog req={confirmReq} onClose={() => setConfirmReq(null)} />
+
+      {ctxMenu &&
+        (() => {
+          const prof = richProfiles.find((p) => p.type === "remote" && p.url === ctxMenu.url);
+          const isActive = !!prof?.active;
+          return (
+            <div
+              className="ctx-backdrop"
+              onClick={() => setCtxMenu(null)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setCtxMenu(null);
+              }}
+            >
+              <div
+                className="ctx-menu"
+                style={{ left: ctxMenu.x, top: ctxMenu.y }}
+                role="menu"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="ctx-menu-title">{ctxMenu.name}</div>
+                {!isActive && prof?.uid ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={async () => {
+                      const uid = prof.uid!;
+                      setCtxMenu(null);
+                      try {
+                        await window.veyra?.activateProfile?.(uid);
+                        await reloadProfileLists();
+                        await refresh();
+                        showToast(`已切换到「${ctxMenu.name}」`);
+                      } catch (e) {
+                        showToast(String((e as Error).message || e));
+                      }
+                    }}
+                  >
+                    <Check size={13} />
+                    {t("profiles.switchTo", "切换到此订阅")}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    const url = ctxMenu.url;
+                    setCtxMenu(null);
+                    setSubUrl(url);
+                    void importFromUrl(url);
+                  }}
+                >
+                  <RefreshCw size={13} />
+                  {t("profiles.refreshSub", "更新订阅")}
+                </button>
+                {prof?.uid ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={async () => {
+                      const uid = prof.uid!;
+                      const name = prof.name;
+                      setCtxMenu(null);
+                      const txt = await window.veyra?.readProfile?.(uid);
+                      if (txt == null) return;
+                      setEditUid(uid);
+                      setProfileName(name);
+                      setProfileText(txt);
+                      setEditorMode("profile");
+                      setPfTab("yaml");
+                    }}
+                  >
+                    <Terminal size={13} />
+                    {t("profiles.editYaml", "编辑 YAML")}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(ctxMenu.url);
+                      showToast(t("profiles.copiedUrl", "订阅链接已复制"));
+                    } catch (e) {
+                      showToast(String((e as Error).message || "复制订阅链接失败"));
+                    }
+                    setCtxMenu(null);
+                  }}
+                >
+                  <Copy size={13} />
+                  {t("profiles.copyUrl", "复制订阅链接")}
+                </button>
+                <div className="ctx-menu-sep" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="is-danger"
+                  onClick={() => {
+                    const { url, name } = ctxMenu;
+                    setCtxMenu(null);
+                    setConfirmReq({
+                      title: t("profiles.deleteSub", "删除订阅"),
+                      message: `将删除「${name}」及其配置文件，此操作不可撤销。`,
+                      confirmText: "删除",
+                      danger: true,
+                      onConfirm: async () => {
+                        await window.veyra?.removeSubscription?.(url);
+                        if (subUrl.trim() === url) {
+                          setSubUrl("");
+                          try {
+                            localStorage.removeItem("veyra:lastSubUrl");
+                          } catch {
+                            // The subscription has already been removed from the app.
+                          }
+                        }
+                        await reloadProfileLists();
+                        await refresh();
+                        showToast(`已删除「${name}」`);
+                      },
+                    });
+                  }}
+                >
+                  <Trash2 size={13} />
+                  {t("profiles.deleteSub", "删除订阅")}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
       {blockStartupOpen && blockStartupData && (
         <div className="modal-mask" onClick={() => {}}>
@@ -3317,13 +3706,12 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
             </div>
             <div className="home-cfg-list">
               {[
-                ["subscription", "订阅卡", "管理订阅链接"],
-                ["node", "当前节点卡", "显示当前使用的节点"],
-                ["network", "网络设置卡", "系统代理与端口"],
-                ["mode", "代理模式卡", "规则/全局/直连切换"],
-                ["traffic", "流量统计卡", "累计上下行流量"],
-                ["core", "内核信息卡", "内核版本与运行状态"],
-                ["system", "系统信息卡", "操作系统与运行模式"],
+                ["subscription", "订阅", "订阅数量与总用量"],
+                ["node", "当前节点", "状态条右侧显示节点、延迟与可用数"],
+                ["mode", "代理模式", "规则 / 全局 / 直连切换"],
+                ["core", "规则数量", "规则条数与添加入口"],
+                ["traffic", "流量统计", "累计上下行（页脚小字）"],
+                ["system", "系统信息", "系统与版本（页脚小字）"],
               ].map(([key, label, desc]) => {
                 const on = !!(homeCfgDraft as any)[key];
                 return (
@@ -3396,14 +3784,4 @@ function LiveClock({ compact = false }: { compact?: boolean }) {
       <div className="time-date">{date}</div>
     </div>
   );
-}
-
-/** 运行时长实时显示：同样每秒刷新，避免只在其它 state 变化时才更新 */
-function LiveUptime({ since }: { since: number }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  return <div className="text-sm font-mono">{formatUptime(Math.max(0, now - since))}</div>;
 }

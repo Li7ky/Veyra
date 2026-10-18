@@ -1,111 +1,53 @@
-// 导航图标：线性几何风格，几何感、圆润收角。
-// 颜色一律走 currentColor，由容器决定（.nav-item = --text-400 中性 / .nav-item.active = --accent）。
-import type { ReactNode } from "react";
-
-function Ico({ children }: { children: ReactNode }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={22}
-      height={22}
-      aria-hidden="true"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2.2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {children}
-    </svg>
-  );
-}
-
-// 此前每个 tab 硬编码专属色（8 色相）：色彩不承载状态信息，只是噪音，
-// 且激活态的品牌蓝底会与紫 / 青图标撞色。现统一交给容器着色。
+// 导航图标：统一走 lucide-react（与顶栏窗口按钮同一套图标语言）。
+// 自绘的 8 个图标里，「代理 / 订阅」都是「两个堆叠矩形」，几乎无法区分；
+// 「设置」画成了太阳（圆 + 8 道射线）。图标辨识度和线宽一致性是侧栏质感的一半，
+// 这里直接换成语义明确、光学尺寸统一的现成图标集。
+// 颜色仍由容器决定（currentColor），线宽/尺寸由 .nav-item svg 统一控制。
+import {
+  House,
+  Waypoints,
+  Rss,
+  Globe,
+  ListFilter,
+  ScrollText,
+  FlaskConical,
+  Settings2,
+} from "lucide-react";
 
 export function NavHomeIcon() {
-  return (
-    <Ico>
-      <path d="M4 11.5 12 4l8 7.5" />
-      <path d="M6 10.5V20h12v-9.5" />
-      <path d="M10 20v-5h4v5" />
-    </Ico>
-  );
+  return <House aria-hidden="true" />;
 }
 
 export function NavProxiesIcon() {
-  // 重设计：服务器层叠 + 信号弧线，代表代理节点
-  return (
-    <Ico>
-      <rect x="4" y="4" width="16" height="6" rx="2" />
-      <rect x="4" y="14" width="16" height="6" rx="2" />
-      <path d="M8 7h.01" strokeWidth={2.8} />
-      <path d="M8 17h.01" strokeWidth={2.8} />
-      <path d="M12 10v4" strokeDasharray="1.5 2" />
-    </Ico>
-  );
+  // 代理节点：分叉路径（比「两个堆叠矩形」更能表达「多条线路」）
+  return <Waypoints aria-hidden="true" />;
 }
 
 export function NavProfilesIcon() {
-  return (
-    <Ico>
-      <rect x="4" y="3.5" width="16" height="7" rx="2.5" />
-      <rect x="4" y="13.5" width="16" height="7" rx="2.5" />
-      <path d="M8 7h4" />
-      <path d="M8 17h4" />
-    </Ico>
-  );
+  // 订阅：RSS 波纹
+  return <Rss aria-hidden="true" />;
 }
 
 export function NavConnectionsIcon() {
-  return (
-    <Ico>
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="M3.5 12h17" />
-      <path d="M12 3.5c2.8 2.3 4.2 5.2 4.2 8.5s-1.4 6.2-4.2 8.5c-2.8-2.3-4.2-5.2-4.2-8.5s1.4-6.2 4.2-8.5z" />
-    </Ico>
-  );
+  return <Globe aria-hidden="true" />;
 }
 
 export function NavRulesIcon() {
-  return (
-    <Ico>
-      <path d="M5 6h14" />
-      <path d="M5 12h14" />
-      <path d="M5 18h9" />
-      <circle cx="18.5" cy="18" r="2.3" />
-    </Ico>
-  );
+  // 规则：漏斗式筛选列表
+  return <ListFilter aria-hidden="true" />;
 }
 
 export function NavLogsIcon() {
-  return (
-    <Ico>
-      <path d="M6 3.5h9l4 4v13H6z" />
-      <path d="M15 3.5v4h4" />
-      <path d="M9.5 12h6" />
-      <path d="M9.5 15.5h6" />
-    </Ico>
-  );
+  return <ScrollText aria-hidden="true" />;
 }
 
 export function NavTestsIcon() {
-  return (
-    <Ico>
-      <path d="M10 3.5h4" />
-      <path d="M11 3.5v5.2L5.8 17a2.4 2.4 0 0 0 2.1 3.5h8.2a2.4 2.4 0 0 0 2.1-3.5L13 8.7V3.5" />
-      <path d="M8.2 14.5h7.6" />
-    </Ico>
-  );
+  return <FlaskConical aria-hidden="true" />;
 }
 
 export function NavSettingsIcon() {
-  return (
-    <Ico>
-      <circle cx="12" cy="12" r="3.2" />
-      <path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1" />
-    </Ico>
-  );
+  // 设置：双滑杆，比「圆 + 8 道射线」的太阳形更好认
+  return <Settings2 aria-hidden="true" />;
 }
 
 // ===== 首页卡片图标：同风格定制 =====

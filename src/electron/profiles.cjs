@@ -195,6 +195,7 @@ function readContent(profilesDir, uid) {
 }
 
 function writeContent(profilesDir, uid, content) {
+  if (typeof content !== "string") throw new Error("配置内容必须是文本");
   const idx = loadIndex(profilesDir);
   const item = idx.items.find((x) => x.uid === uid);
   if (!item) throw new Error("配置不存在");
@@ -235,6 +236,29 @@ function activeMainText(profilesDir, runtimePath) {
   }
   if (fs.existsSync(runtimePath)) return fs.readFileSync(runtimePath, "utf8");
   return "";
+}
+
+/** 旧版把文件名（`<uid>_subscription.yaml`）当展示名，这里判断是否需要换成可读名 */
+function isLegacyDisplayName(name) {
+  const s = String(name || "");
+  return !s || /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s) || /\.ya?ml$/i.test(s) || /^subscription$/i.test(s);
+}
+
+/**
+ * 按订阅 URL 改档案展示名。只写 index 里的 name，不动 file —— 文件名是内部标识，
+ * 改名不能造成「索引指向的文件不存在」。默认只迁移旧式名字，用户自定义名保持不变。
+ */
+function renameByUrl(profilesDir, url, name, opts = {}) {
+  if (!url || !name) return null;
+  const idx = loadIndex(profilesDir);
+  const item = idx.items.find((x) => x.type === "remote" && x.url === url);
+  if (!item) return null;
+  const safe = sanitizeName(name);
+  if (item.name === safe) return item;
+  if (!opts.force && !isLegacyDisplayName(item.name)) return item;
+  item.name = safe;
+  saveIndex(profilesDir, idx);
+  return item;
 }
 
 function migrateLegacyFiles(profilesDir) {
@@ -290,4 +314,6 @@ module.exports = {
   migrateLegacyFiles,
   sanitizeName,
   setProfileBinds,
+  renameByUrl,
+  isLegacyDisplayName,
 };

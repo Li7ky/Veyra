@@ -155,7 +155,7 @@ function injectFoxveyDefaults(config, opts) {
   // 但新增调用方传 undefined 时会写入 mixed-port: null 导致内核绑定异常
   config["mixed-port"] = opts.mixedPort ?? 7897;
   const bind = opts.bindAddress || "127.0.0.1";
-  config["external-controller"] = `${bind === "0.0.0.0" || opts.allowLan ? "0.0.0.0" : "127.0.0.1"}:${opts.controllerPort}`;
+  config["external-controller"] = `${bind === "0.0.0.0" || opts.allowLan ? "0.0.0.0" : "127.0.0.1"}:${opts.controllerPort ?? 19097}`;
   if (opts.bindAddress) config["bind-address"] = opts.bindAddress;
   config.secret = opts.secret;
   config["allow-lan"] = !!opts.allowLan;
@@ -210,6 +210,23 @@ function cleanupGroups(config) {
     if (!g || !Array.isArray(g.proxies)) continue;
     g.proxies = g.proxies.filter((n) => typeof n !== "string" || names.has(n));
   }
+}
+
+/**
+ * 内置基础规则：订阅没带 rules 时补一套最小可用规则。
+ * 不补的话 rule 模式下没有规则可匹配，内核等于全量直连——代理完全不生效，
+ * 首页「规则数量」也会一直是 0。
+ */
+function ensureBasicRules(config, warnings = []) {
+  const rules = Array.isArray(config.rules) ? config.rules.filter(Boolean) : [];
+  if (rules.length) return;
+  const groups = Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : [];
+  const groupName =
+    (groups.find((g) => g && g.name) || {}).name ||
+    (Array.isArray(config.proxies) && config.proxies[0] && config.proxies[0].name) ||
+    "DIRECT";
+  config.rules = ["GEOIP,LAN,DIRECT,no-resolve", "GEOIP,CN,DIRECT", `MATCH,${groupName}`];
+  warnings.push("订阅未包含 rules，已补入内置基础规则（局域网/国内直连，其它走代理）");
 }
 
 function enhance(profilesDir, runtimePath, opts) {
@@ -285,6 +302,7 @@ function enhance(profilesDir, runtimePath, opts) {
 
   injectFoxveyDefaults(config, opts);
   cleanupGroups(config);
+  ensureBasicRules(config, warnings);
 
   const text = yaml.dump(config, { lineWidth: -1, noRefs: true });
   return { text, warnings, scriptLogs, config };

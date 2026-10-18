@@ -10,6 +10,13 @@ contextBridge.exposeInMainWorld("veyra", {
     return () => ipcRenderer.removeListener("window:maximized", fn);
   },
   close: () => ipcRenderer.invoke("window:close"),
+  changelog: () => ipcRenderer.invoke("app:changelog"),
+  updateNotes: () => ipcRenderer.invoke("app:updateNotes"),
+  markVersionSeen: () => ipcRenderer.invoke("app:markVersionSeen"),
+  // 无边框窗口拖动：渲染层把鼠标的屏幕坐标发过来，主进程换算成窗口位置
+  windowDragStart: (x, y) => ipcRenderer.send("window:drag-start", x, y),
+  windowDragMove: (x, y) => ipcRenderer.send("window:drag-move", x, y),
+  windowDragEnd: () => ipcRenderer.send("window:drag-end"),
 
   startCore: () => ipcRenderer.invoke("core:start"),
   stopCore: () => ipcRenderer.invoke("core:stop"),
@@ -17,6 +24,8 @@ contextBridge.exposeInMainWorld("veyra", {
   coreStatus: () => ipcRenderer.invoke("core:status"),
   coreInfo: () => ipcRenderer.invoke("core:info"),
   checkCoreUpdate: () => ipcRenderer.invoke("core:checkUpdate"),
+  checkAppUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
+  downloadAppUpdate: () => ipcRenderer.invoke("app:downloadUpdate"),
   updateCore: () => ipcRenderer.invoke("core:update"),
   matchCoreBuild: () => ipcRenderer.invoke("core:matchBuild"),
   switchCore: (core) => ipcRenderer.invoke("core:switch", core),
@@ -65,6 +74,8 @@ contextBridge.exposeInMainWorld("veyra", {
   importProfile: (payload) => ipcRenderer.invoke("profile:import", payload),
   importProfileUrl: (payload) => ipcRenderer.invoke("profile:importUrl", payload),
   listSubscriptions: () => ipcRenderer.invoke("profile:subscriptions"),
+  refreshMissingSubInfo: () => ipcRenderer.invoke("subs:refreshMissing"),
+  removeSubscription: (url) => ipcRenderer.invoke("profile:removeSubscription", url),
   readActiveProfile: () => ipcRenderer.invoke("profile:readActive"),
   activateProfile: (uid) => ipcRenderer.invoke("profile:activate", uid),
   setProfileEnabled: (uid, enabled) => ipcRenderer.invoke("profile:setEnabled", uid, enabled),

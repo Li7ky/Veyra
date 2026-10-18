@@ -10,6 +10,8 @@ export interface ProfileRich {
   updatedAt: number;
   file: string;
   size: number;
+  /** 是否为当前激活的配置（由主进程 listRich 补充） */
+  active?: boolean;
   binds?: {
     merge?: string | null;
     script?: string | null;
@@ -141,6 +143,10 @@ export interface ConnectionItem {
 export interface VeyraAPI {
   minimize: () => Promise<void>;
   maximize: () => Promise<void>;
+  /** 无边框窗口拖动（渲染层发屏幕坐标，主进程移动窗口） */
+  windowDragStart?: (x: number, y: number) => void;
+  windowDragMove?: (x: number, y: number) => void;
+  windowDragEnd?: () => void;
   isMaximized: () => Promise<boolean>;
   onMaximizedChange: (cb: (maximized: boolean) => void) => () => void;
   close: () => Promise<void>;
@@ -168,6 +174,25 @@ export interface VeyraAPI {
     apiVersion?: { version?: string } | null;
   }>;
   checkCoreUpdate: () => Promise<{ latest: string; name?: string; url?: string }>;
+  checkAppUpdate: () => Promise<{
+    current: string;
+    latest: string;
+    name?: string;
+    htmlUrl?: string;
+    prerelease?: boolean;
+    hasUpdate: boolean;
+    assetName?: string;
+    assetUrl?: string;
+    assetSize?: number;
+  }>;
+  downloadAppUpdate: () => Promise<{
+    current: string;
+    latest: string;
+    hasUpdate: boolean;
+    started: boolean;
+    path?: string;
+    assetName?: string;
+  }>;
   updateCore: () => Promise<unknown>;
   matchCoreBuild: () => Promise<unknown>;
   switchCore: (core: string) => Promise<unknown>;
@@ -242,13 +267,35 @@ export interface VeyraAPI {
   }) => Promise<{
     ok: boolean;
     path: string;
+    /** 订阅的可读名（机场响应头 / 自定义名） */
+    name?: string;
     mixedPort?: number;
     controller?: string;
     bytes?: number;
     warnings?: string[];
   }>;
-  listSubscriptions: () => Promise<{ url: string; name: string; updatedAt: number; userinfo?: { upload: number; download: number; total: number; expire: number } }[]>;
+  listSubscriptions: () => Promise<
+    {
+      url: string;
+      name: string;
+      updatedAt: number;
+      nextUpdateAt?: number;
+      userinfo?: { upload: number; download: number; total: number; expire: number };
+    }[]
+  >;
+  /** 存量订阅补流量信息（早期版本没存 userinfo），返回补全后的列表 */
+  refreshMissingSubInfo?: () => Promise<
+    {
+      url: string;
+      name: string;
+      updatedAt: number;
+      nextUpdateAt?: number;
+      userinfo?: { upload: number; download: number; total: number; expire: number };
+    }[]
+  >;
   readActiveProfile: () => Promise<string>;
+  /** 删除订阅：连它的配置文件一起删 */
+  removeSubscription?: (url: string) => Promise<{ ok: boolean; removedProfile: boolean; wasActive: boolean }>;
   activateProfile?: (uid: string) => Promise<{ ok: boolean; warnings?: string[] }>;
   setProfileEnabled?: (uid: string, enabled: boolean) => Promise<unknown>;
   createEnhanceProfile?: (
@@ -275,7 +322,20 @@ export interface VeyraAPI {
   backupReveal?: () => Promise<unknown>;
   webdavUpload?: () => Promise<unknown>;
   webdavDownload?: () => Promise<unknown>;
-  exitIp?: () => Promise<{ ip: string | null; country?: string; city?: string; isp?: string }>;
+  exitIp?: () => Promise<{
+    ip: string | null;
+    viaProxy?: boolean;
+    country?: string;
+    countryCode?: string;
+    city?: string;
+    region?: string;
+    isp?: string;
+    org?: string;
+    as?: string;
+    timezone?: string;
+    lat?: number;
+    lon?: number;
+  }>;
   detectProxyConflict?: () => Promise<string[]>;
   fullConflictScan?: () => Promise<{ conflicts: Array<{ type: string; label: string; severity?: string; port?: number; proc?: string; family?: string }>; summary: string; severity?: string; counts?: { critical: number; high: number; medium: number } }>;
   /** 端口可用性自检：直接尝试绑定本机配置的端口 */
@@ -333,7 +393,30 @@ export interface VeyraAPI {
     platform: string;
     arch: string;
     isDev: boolean;
+    osRelease?: string;
+    osVersion?: string;
+    totalMem?: number;
+    cpu?: string;
   }>;
+  /** 更新日志（随包发布的 changelog.json） */
+  changelog?: () => Promise<ChangelogEntry[]>;
+  /** 当前版本是否首次运行：返回 isNew + 对应版本的更新内容 */
+  updateNotes?: () => Promise<{
+    current: string;
+    seen: string;
+    isNew: boolean;
+    entry: ChangelogEntry | null;
+  }>;
+  /** 标记当前版本已读，避免下次启动再弹 */
+  markVersionSeen?: () => Promise<{ ok: boolean }>;
+}
+
+export interface ChangelogEntry {
+  version: string;
+  date: string;
+  channel?: "beta" | "stable" | string;
+  title?: string;
+  items: string[];
 }
 
 declare global {

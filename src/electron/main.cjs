@@ -8,6 +8,8 @@ const winService = require("./win-service.cjs");
 const uriImport = require("./uri-import.cjs");
 const streamingUnlock = require("./streaming-unlock.cjs");
 const conflictGuard = require("./conflict-guard.cjs");
+const proxyState = require("./proxy-state.cjs");
+const subscriptionInfo = require("./subscription-info.cjs");
 let yamlLib = null;
 function getYaml() {
   if (!yamlLib) {
@@ -23,6 +25,10 @@ const path = require("path");
 const fs = require("fs");
 const { spawn, execFile, execFileSync } = require("child_process");
 const http = require("http");
+const https = require("https");
+
+/** 软件自身的 GitHub 发布仓库。检查更新与下载安装包都走这里。 */
+const APP_UPDATE_REPO = "Li7ky/Veyra-omini";
 
 const isDev = !app.isPackaged;
 const DEFAULT_MIXED = 17897;
@@ -121,6 +127,10 @@ const DEFAULT_SETTINGS = {
   core: "mihomo",
   // —— Verge 对齐扩展 ——
   proxyMode: "system", // system | pac | off
+  // 用户上次退出时系统代理是否是「开着」的。退出时我们会把注册表代理清掉（避免指向死端口），
+  // 但把这个意图记下来，下次启动内核起来后自动恢复——不用每次手动去点「系统代理」。
+  lastProxyOn: false,
+  proxyPacUrl: "",
   proxyGuard: false,
   disconnectOnProxyOff: true,
   blockConflict: true, // 兼容旧设置字段；启动前互斥检测始终强制执行
@@ -402,7 +412,7 @@ async function pickPorts() {
     const alt = prefer + 10003;
     // 回退端口也必须验证空闲；两者都被占时保持首选端口，
     // 让启动失败报错指向用户实际配置的端口而不是一个莫名的 +10003。
-    if (await portFree(alt)) return alt;
+    if (await portUsable(alt)) return alt;
     return prefer;
   };
   MIXED_PORT = await pick(preferMixed);
@@ -456,6 +466,85 @@ function looksLikeClashYaml(text) {
   return /(?:^|\n)\s*(?:proxies|proxy-groups|rules|mixed-port|port|socks-port)\s*:/m.test(text);
 }
 
+/** 订阅的可读名字：优先用域名（clash-verge-rev 的默认取名方式），拿不到再退回路径段。 */
+function subscriptionDisplayName(url) {
+  try {
+    const u = new URL(String(url || ""));
+    const host = (u.hostname || "").replace(/^www\./i, "");
+    if (host) return host;
+  } catch {}
+  return guessNameFromUrl(url);
+}
+
+/**
+ * 机场自己在响应头里给的名字（Clash Verge 也是这么取名的）：
+ *  - content-disposition: attachment;filename*=UTF-8''%E8%89%AF%E5%BF%83%E4%BA%91
+ *  - profile-title: 有些机场直接给明文 / base64:
+ * 拿不到再退回域名。
+ */
+function subscriptionNameFromHeaders(headers = {}) {
+  for (const [k, raw] of Object.entries(headers || {})) {
+    const key = String(k || "").toLowerCase();
+    const val = String(raw || "").trim();
+    if (!val) continue;
+    if (key === "content-disposition") {
+      const star = val.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+      if (star) {
+        try {
+          const decoded = decodeURIComponent(star[1].trim());
+          if (decoded) return decoded;
+        } catch {}
+      }
+      const plain = val.match(/filename\s*=\s*"?([^";]+)"?/i);
+      if (plain && plain[1].trim()) return plain[1].trim();
+    }
+    if (key === "profile-title") {
+      if (/^base64:/i.test(val)) {
+        try {
+          const decoded = Buffer.from(val.slice(7).trim(), "base64").toString("utf8").trim();
+          if (decoded) return decoded;
+        } catch {}
+      }
+      return val;
+    }
+  }
+  return "";
+}
+
+/** 旧数据兼容：`<uuid>_subscription.yaml` 这种文件名曾被直接当成订阅名展示，
+ *  这里统一还原成域名。已经迁移过的可读名原样返回。 */
+function prettySubscriptionName(entry) {
+  const raw = String(entry?.name || "");
+  const looksLikeFile = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(raw) || /\.ya?ml$/i.test(raw) || !raw;
+  if (!looksLikeFile) return raw;
+  const derived = subscriptionDisplayName(entry?.url);
+  return derived || raw || "订阅";
+}
+
+let subsMetaNormalized = false;
+/** 一次性迁移：旧订阅名是 UUID 文件名 → 改成域名；顺带把档案索引里的展示名也修好。 */
+function normalizeSubscriptionMeta() {
+  if (subsMetaNormalized) return;
+  subsMetaNormalized = true;
+  try {
+    const metaPath = path.join(configDir(), "subscriptions.json");
+    if (!fs.existsSync(metaPath)) return;
+    const list = JSON.parse(fs.readFileSync(metaPath, "utf8").replace(/^\uFEFF/, ""));
+    if (!Array.isArray(list)) return;
+    let changed = false;
+    const next = list.map((x) => {
+      const pretty = prettySubscriptionName(x);
+      if (pretty !== x.name) changed = true;
+      try {
+        profilesLib.renameByUrl(profilesDir(), x.url, pretty);
+      } catch {}
+      return { ...x, name: pretty };
+    });
+    if (changed) fs.writeFileSync(metaPath, JSON.stringify(next, null, 2), "utf8");
+  } catch {}
+}
+
+
 function normalizeSubscriptionBody(buf) {
   const text = Buffer.isBuffer(buf) ? buf.toString("utf8") : String(buf || "");
   const trimmed = text.trim();
@@ -488,20 +577,37 @@ function normalizeSubscriptionBody(buf) {
 function fetchWithPowershell(urlStr, proxyUrl, timeoutMs = 90000) {
   const tmp = path.join(app.getPath("temp"), `veyra-sub-${Date.now()}.bin`);
   const hdrTmp = `${tmp}.headers.json`;
+  const timeout = Math.max(5000, Number(timeoutMs) || 90000);
+  // 注意：Windows PowerShell 5.1 的 Invoke-WebRequest 一旦带 -OutFile 就**不返回响应对象**
+  // （实测 $resp -eq $null），原来那句 `$resp.Headers.Keys` 永远拿到空表 —— 订阅的
+  // Subscription-Userinfo / Profile-Update-Interval 从来没被读到过。改用 HttpWebRequest
+  // 自己写文件，响应头才能拿到。
   const proxyLine = proxyUrl
-    ? `-Proxy '${proxyUrl.replace(/'/g, "''")}'`
-    : "";
+    ? `$req.Proxy = New-Object System.Net.WebProxy('${proxyUrl.replace(/'/g, "''")}', $true)`
+    : `$req.Proxy = $null`;
   const script = `
 $ProgressPreference='SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
 try {
-  $resp = Invoke-WebRequest -Uri '${urlStr.replace(/'/g, "''")}' -OutFile '${tmp.replace(/'/g, "''")}' ${proxyLine} -Headers @{ 'User-Agent'='ClashMetaForAndroid/2.11.0' } -UseBasicParsing
-  if (-not (Test-Path '${tmp.replace(/'/g, "''")}')) { throw 'empty file' }
+  $req = [System.Net.HttpWebRequest]::Create('${urlStr.replace(/'/g, "''")}')
+  $req.UserAgent = 'ClashMetaForAndroid/2.11.0'
+  $req.Timeout = ${timeout}
+  $req.ReadWriteTimeout = ${timeout}
+  $req.AllowAutoRedirect = $true
+  ${proxyLine}
+  $resp = $req.GetResponse()
+  $fs = [System.IO.File]::Create('${tmp.replace(/'/g, "''")}')
+  $resp.GetResponseStream().CopyTo($fs)
+  $fs.Close()
   $h = @{}
-  foreach ($k in $resp.Headers.Keys) { $h[$k] = ($resp.Headers[$k] -join ', ') }
+  foreach ($k in $resp.Headers.AllKeys) { $h[$k] = [string]$resp.Headers[$k] }
   $h | ConvertTo-Json -Compress | Out-File -Encoding utf8 '${hdrTmp.replace(/'/g, "''")}'
+  $resp.Close()
+  if (-not (Test-Path '${tmp.replace(/'/g, "''")}')) { throw 'empty file' }
 } catch {
-  Write-Error $_.Exception.Message
+  # 不要用 Write-Error：-Command 模式下它会把整段脚本一并塞进错误上下文，
+  # 前端 toast 里就会出现一大坨 PowerShell 代码。只写异常消息。
+  [Console]::Error.WriteLine($_.Exception.GetBaseException().Message)
   exit 1
 }
 `;
@@ -523,7 +629,14 @@ try {
         try {
           const body = fs.readFileSync(tmp);
           let headers = {};
-          try { headers = JSON.parse(fs.readFileSync(hdrTmp, "utf8")); } catch {}
+          try {
+            // Windows PowerShell 5.1 的 `Out-File -Encoding utf8` 会写 BOM（EF BB BF），
+            // JSON.parse 遇到 BOM 直接抛错，之前的 catch 把 headers 静默吞成 {}，
+            // 结果订阅的 Subscription-Userinfo / Profile-Update-Interval 全部丢失：
+            // 卡片没有流量和到期、自动更新周期也不生效。这里先剥掉 BOM 再解析。
+            const rawHeaders = fs.readFileSync(hdrTmp, "utf8").replace(/^\uFEFF/, "");
+            headers = JSON.parse(rawHeaders);
+          } catch {}
           cleanup();
           if (!body.length) reject(new Error("订阅内容为空"));
           else resolve({ body, headers });
@@ -554,7 +667,7 @@ function parseSubscriptionUserinfo(headers = {}) {
 }
 
 async function fetchSubscription(urlStr, opts = {}) {
-  sendProgress("sub:download", 10, "正在下载订阅…");
+  if (!opts.silent) sendProgress("sub:download", 10, "正在下载订阅…");
   // 只用Veyra-omini自身代理，失败再直连；不走任何第三方客户端端口
   const viaProxy = appSettings?.subUpdateViaProxy !== false;
   const proxies = viaProxy ? [`http://127.0.0.1:${MIXED_PORT}`, null] : [null, `http://127.0.0.1:${MIXED_PORT}`];
@@ -562,7 +675,7 @@ async function fetchSubscription(urlStr, opts = {}) {
   for (const p of proxies) {
     try {
       const result = await fetchWithPowershell(urlStr, p, opts.timeoutMs);
-      sendProgress("sub:download", 60, "订阅下载完成，正在解析…");
+      if (!opts.silent) sendProgress("sub:download", 60, "订阅下载完成，正在解析…");
       return result;
     } catch (e) {
       lastErr = e;
@@ -688,13 +801,20 @@ async function systemProxyStatusRaw() {
         err ? reject(err) : resolve({ stdout: String(stdout || "") })
       );
     });
-    const enabled = /ProxyEnable\s+REG_DWORD\s+0x1\b/i.test(stdout);
-    const sm = stdout.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
-    const pm = stdout.match(/AutoConfigURL\s+REG_SZ\s+(.+)/i);
+    // 逐行解析：空值行（「AutoConfigURL    REG_SZ」）后面什么都没有，
+    // 旧的 `REG_SZ\s+(.+)` 会跨过换行把下一行的子键名（...\Internet Settings\5.0）
+    // 当成 PAC 地址，导致明明没开系统代理也报冲突。
+    const readSz = (name) => {
+      const m = stdout.match(new RegExp(`^[ \\t]*${name}[ \\t]+REG_SZ[ \\t]*(.*)$`, "mi"));
+      return m ? m[1].trim() : "";
+    };
+    const enabled = /^[ \t]*ProxyEnable[ \t]+REG_DWORD[ \t]+0x1\b/im.test(stdout);
+    let pacUrl = readSz("AutoConfigURL");
+    if (pacUrl && !/^[a-z][a-z0-9+.-]*:\/\//i.test(pacUrl)) pacUrl = "";
     return {
       enabled,
-      server: sm ? sm[1].trim() : "",
-      pacUrl: pm ? pm[1].trim() : "",
+      server: readSz("ProxyServer"),
+      pacUrl,
     };
   } catch {
     return { enabled: false, server: "", pacUrl: "" };
@@ -705,15 +825,16 @@ async function externalSystemProxyConflict() {
   const st = await systemProxyStatusRaw();
   const active = st.enabled || !!st.pacUrl;
   if (!active) return null;
-  if (st.enabled && isOurProxyServer(st.server)) return null;
-  if (st.pacUrl && isOurProxyPac(st.pacUrl)) return null;
+  const ownServer = st.enabled && isOurProxyServer(st.server);
+  const ownPac = st.pacUrl && isOurProxyPac(st.pacUrl);
+  if ((!st.enabled || ownServer) && (!st.pacUrl || ownPac)) return null;
   const target = st.pacUrl
     ? `系统 PAC 代理被占用 → ${st.pacUrl}`
     : `系统代理被占用 → ${st.server || "未知地址"}`;
   return { type: "system-proxy", label: target, server: st.server, pacUrl: st.pacUrl };
 }
 
-async function applyProxyMode(mode) {
+async function applyProxyMode(mode, opts = {}) {
   const s = appSettings || DEFAULT_SETTINGS;
   const m = mode || s.proxyMode || "system";
   if (m !== "off") {
@@ -744,7 +865,8 @@ async function applyProxyMode(mode) {
         await api("/connections", "DELETE");
       } catch {}
     }
-    saveSettings({ proxyMode: "off" });
+    // keepIntent：退出软件时的清理动作，不能覆盖用户「想让系统代理开着」的意图。
+    if (!opts.keepIntent) saveSettings({ proxyMode: "off", lastProxyOn: false, proxyPacUrl: "" });
     updateTray();
     notifySysProxy();
     return r;
@@ -757,7 +879,11 @@ async function applyProxyMode(mode) {
     refreshWinInet,
   });
   sysProxyOn = true;
-  saveSettings({ proxyMode: m === "pac" ? "pac" : "system" });
+  saveSettings({
+    proxyMode: m === "pac" ? "pac" : "system",
+    lastProxyOn: true,
+    proxyPacUrl: m === "pac" ? r.pacUrl || s.proxyPacUrl || "" : "",
+  });
   updateTray();
   notifySysProxy();
   return r;
@@ -890,6 +1016,8 @@ async function applyProfileContent(name, content, kind = "local", url = null) {
     ok: true,
     path: path.join(profilesDir(), item.file),
     uid: item.uid,
+    // 档案的可读名字（不是文件名），订阅列表直接用它做标题
+    name: item.name,
     mixedPort: MIXED_PORT,
     controller: CONTROLLER,
     warnings: er.warnings,
@@ -1507,18 +1635,6 @@ function regAdd(args) {
   });
 }
 
-function regQuery(args) {
-  return new Promise((resolve) => {
-    try {
-      execFile("reg", args, { encoding: "utf8" }, (err, stdout) => {
-        resolve(err ? "" : String(stdout || ""));
-      });
-    } catch {
-      resolve("");
-    }
-  });
-}
-
 function notifySysProxy() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("system:proxyChanged", { enabled: !!sysProxyOn });
@@ -1551,25 +1667,20 @@ public class VeyraWinInet {
 async function getSystemProxyStatus() {
   if (process.platform !== "win32") return { enabled: false, server: "", ours: false };
   const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
-  const enableOut = await regQuery(["query", key, "/v", "ProxyEnable"]);
-  const enabled = /ProxyEnable\s+REG_DWORD\s+0x1/i.test(enableOut);
-  const serverOut = await regQuery(["query", key, "/v", "ProxyServer"]);
-  const m = serverOut.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
-  const server = m ? m[1].trim() : "";
-  // 严格判定：注册表必须精确指向当前 MIXED_PORT，才算 Veyra-omini 接管。
-  // 旧逻辑把 DEFAULT_MIXED / 设置端口都算 ours，端口漂移(+10003)后旧注册表指向死端口也会误判为开。
-  let ours = false;
-  if (enabled && server) {
-    const re = /(?:127\.0\.0\.1|localhost)\s*:\s*(\d+)/gi;
-    let hit;
-    while ((hit = re.exec(server)) !== null) {
-      if (Number(hit[1]) === Number(MIXED_PORT)) {
-        ours = true;
-        break;
-      }
-    }
+  try {
+    const { stdout } = await new Promise((resolve, reject) => {
+      execFile("reg", ["query", key], { windowsHide: true }, (err, stdout) =>
+        err ? reject(err) : resolve({ stdout: String(stdout || "") })
+      );
+    });
+    const state = proxyState.parseWindowsProxySettings(stdout);
+    const ours =
+      (state.enabled && isOurProxyServer(state.server)) ||
+      isOurProxyPac(state.pacUrl);
+    return { ...state, ours };
+  } catch {
+    return { enabled: false, server: "", pacUrl: "", ours: false };
   }
-  return { enabled, server, ours };
 }
 
 async function syncSystemProxyState() {
@@ -1584,10 +1695,11 @@ async function syncSystemProxyState() {
 
 /** 判断注册表里的代理服务器地址是否指向 Veyra 自己的端口（含历史/漂移端口） */
 function isOurProxyPac(pacUrl) {
-  const ownPacPort = Number(vergeExt.pacPort?.() || 0);
-  if (!ownPacPort) return false;
-  const match = String(pacUrl || "").trim().match(/^https?:\/\/(127\.0\.0\.1|localhost):(\d+)\//i);
-  return !!match && Number(match[2]) === ownPacPort;
+  return proxyState.isVeyraPacUrl(
+    pacUrl,
+    Number(vergeExt.pacPort?.() || 0),
+    appSettings?.proxyPacUrl
+  );
 }
 
 function isOurProxyServer(server) {
@@ -1604,18 +1716,17 @@ function isOurProxyServer(server) {
 /** 仅关闭指向本机Veyra端口的系统代理，不误伤其它代理软件 */
 async function clearOurSystemProxy() {
   const st = await getSystemProxyStatus();
-  // PAC 模式下 ProxyEnable=0，故 ours / st.enabled 恒为 false，但 AutoConfigURL 仍指向本地 PAC；
-  // 用 systemProxyStatusRaw 的 pacUrl 兜底识别（指向 127.0.0.1/localhost 的 PAC 即视为我们留下），
-  // 否则 PAC 模式退出后 AutoConfigURL 残留指向死 PAC 服务器，浏览器/系统联网异常。
+  // PAC 模式下 ProxyEnable=0；通过当前端口或持久化 URL 精确识别本软件的 PAC。
   let ourPac = false;
   if (sysProxyOn && !st.enabled) {
     const raw = await systemProxyStatusRaw();
-    ourPac = !!raw.pacUrl && /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(raw.pacUrl.trim());
+    ourPac = isOurProxyPac(raw.pacUrl);
   }
   // sysProxyOn 只代表「本软件曾在管」，注册表端口必须仍属于我们才动手清理；
   // 否则会把用户其它代理软件（如 127.0.0.1:7890）的代理配置一并关掉。
   if (st.ours || (sysProxyOn && st.enabled && isOurProxyServer(st.server)) || ourPac) {
-    return setSystemProxy(false);
+    // keepIntent：这是退出/启动兜底清理，不是用户主动关代理，保留「下次启动自动恢复」的意图
+    return setSystemProxy(false, { keepIntent: true });
   }
   if (sysProxyOn) {
     sysProxyOn = false;
@@ -1679,12 +1790,12 @@ async function setSystemProxyLinux(enable) {
   return { ok: true, enabled: !!enable, platform: "linux" };
 }
 
-async function setSystemProxy(enable) {
+async function setSystemProxy(enable, opts = {}) {
   if (process.platform === "darwin") return setSystemProxyDarwin(enable);
   if (process.platform === "linux") return setSystemProxyLinux(enable);
   if (process.platform !== "win32") return { ok: false, reason: "unsupported" };
   if (!enable) {
-    const r = await applyProxyMode("off");
+    const r = await applyProxyMode("off", opts);
     return { ok: true, enabled: false, ...r };
   }
   const mode = (appSettings && appSettings.proxyMode === "pac") ? "pac" : "system";
@@ -1757,6 +1868,141 @@ function coreInfo() {
     controller: CONTROLLER,
     secret: SECRET,
   };
+}
+
+function httpsGet(url, headers, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirects > 5) {
+      reject(new Error("重定向次数过多"));
+      return;
+    }
+    const req = https.get(url, { headers }, (res) => {
+      const code = res.statusCode || 0;
+      if (code >= 300 && code < 400 && res.headers.location) {
+        res.resume();
+        const next = new URL(res.headers.location, url).href;
+        resolve(httpsGet(next, headers, redirects + 1));
+        return;
+      }
+      if (code !== 200) {
+        res.resume();
+        const err = new Error(`HTTP ${code}`);
+        err.status = code;
+        reject(err);
+        return;
+      }
+      resolve(res);
+    });
+    req.on("error", reject);
+    req.setTimeout(60000, () => req.destroy(new Error("请求超时")));
+  });
+}
+
+function readHttpsJson(url) {
+  return httpsGet(url, {
+    "User-Agent": "Veyra-omini",
+    Accept: "application/vnd.github+json",
+  }).then(
+    (res) =>
+      new Promise((resolve, reject) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+          } catch (e) {
+            reject(e);
+          }
+        });
+        res.on("error", reject);
+      })
+  );
+}
+
+function parseAppVersion(v) {
+  const m = String(v || "")
+    .replace(/^v/i, "")
+    .match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$/);
+  if (!m) return null;
+  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), pre: m[4] || "" };
+}
+
+/** 正数表示 a 比 b 新。正式版高于同号测试版。 */
+function compareAppVersion(a, b) {
+  const pa = parseAppVersion(a);
+  const pb = parseAppVersion(b);
+  if (!pa || !pb) return String(a).localeCompare(String(b));
+  if (pa.major !== pb.major) return pa.major - pb.major;
+  if (pa.minor !== pb.minor) return pa.minor - pb.minor;
+  if (pa.patch !== pb.patch) return pa.patch - pb.patch;
+  if (pa.pre === pb.pre) return 0;
+  if (!pa.pre) return 1;
+  if (!pb.pre) return -1;
+  return pa.pre.localeCompare(pb.pre, undefined, { numeric: true });
+}
+
+function pickSetupAsset(assets) {
+  const list = Array.isArray(assets) ? assets : [];
+  return (
+    list.find((a) => /Setup-.*-x64\.exe$/i.test(a.name || "")) ||
+    list.find((a) => /\.exe$/i.test(a.name || "") && !/blockmap/i.test(a.name || "")) ||
+    null
+  );
+}
+
+async function checkAppUpdate() {
+  const current = app.getVersion();
+  let data;
+  try {
+    data = await readHttpsJson(`https://api.github.com/repos/${APP_UPDATE_REPO}/releases/latest`);
+  } catch (e) {
+    if (e.status !== 404) throw e;
+    const list = await readHttpsJson(`https://api.github.com/repos/${APP_UPDATE_REPO}/releases?per_page=10`);
+    data = (Array.isArray(list) ? list : []).find((r) => !r.draft) || null;
+  }
+  if (!data || !data.tag_name) throw new Error("GitHub 上还没有可安装的发布版本");
+  const latest = String(data.tag_name).replace(/^v/i, "");
+  const asset = pickSetupAsset(data.assets);
+  return {
+    current,
+    latest,
+    name: data.name || data.tag_name,
+    htmlUrl: data.html_url || "",
+    prerelease: !!data.prerelease,
+    hasUpdate: compareAppVersion(latest, current) > 0,
+    assetName: asset?.name || "",
+    assetUrl: asset?.browser_download_url || "",
+    assetSize: asset?.size || 0,
+  };
+}
+
+function downloadToFile(url, dest) {
+  return httpsGet(url, { "User-Agent": "Veyra-omini", Accept: "application/octet-stream" }).then(
+    (res) =>
+      new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(dest);
+        res.pipe(file);
+        file.on("finish", () => file.close(() => resolve(dest)));
+        file.on("error", (err) => {
+          try {
+            fs.unlinkSync(dest);
+          } catch {}
+          reject(err);
+        });
+        res.on("error", reject);
+      })
+  );
+}
+
+async function downloadAppUpdate() {
+  const info = await checkAppUpdate();
+  if (!info.hasUpdate) return { ...info, started: false };
+  if (!info.assetUrl) throw new Error("发布页没有 Windows 安装包");
+  const dest = path.join(app.getPath("temp"), info.assetName || "Veyra-omini-Setup.exe");
+  await downloadToFile(info.assetUrl, dest);
+  const opened = await shell.openPath(dest);
+  if (opened) throw new Error(opened);
+  return { ...info, started: true, path: dest };
 }
 
 async function checkCoreUpdate(core = activeCore) {
@@ -2016,10 +2262,10 @@ function createWindow() {
     fullscreenable: false,
     frame: false,
     titleBarStyle: "hidden",
-    // 透明窗口 + 渲染层 .app 的 border-radius：让无边框窗口在 Windows 上也呈现圆角，
-    // 而不是一块直角砖。背景色必须全透明，否则四角会露出底色方块。
-    transparent: true,
-    backgroundColor: "#00000000",
+    // 原生观感：不再用透明窗口 + 圆角裁切（那种「悬浮玻璃板」在桌面上很像概念稿），
+    // 改成不透明窗口、直角、整块铺满。背景色给浅色底，避免启动瞬间闪白/闪黑。
+    transparent: false,
+    backgroundColor: "#f3f5f8",
     show: !(appSettings && appSettings.lightweightMode),
     ...(icon ? { icon } : {}),
     webPreferences: {
@@ -2430,6 +2676,27 @@ function registerIpc() {
     mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
   });
   ipcMain.handle("window:isMaximized", () => !!mainWindow?.isMaximized());
+  // 窗口拖动：-webkit-app-region: drag 在部分 Windows + 软件渲染组合下会失效，
+  // 这里用「渲染层发屏幕坐标 → 主进程 setPosition」兜底，保证任何环境都能拖动窗口。
+  let dragState = null;
+  ipcMain.on("window:drag-start", (_e, sx, sy) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    }
+    const b = mainWindow.getBounds();
+    dragState = { sx: Number(sx) || 0, sy: Number(sy) || 0, bx: b.x, by: b.y };
+  });
+  ipcMain.on("window:drag-move", (_e, sx, sy) => {
+    if (!dragState || !mainWindow || mainWindow.isDestroyed()) return;
+    const dx = (Number(sx) || 0) - dragState.sx;
+    const dy = (Number(sy) || 0) - dragState.sy;
+    if (!dx && !dy) return;
+    mainWindow.setPosition(Math.round(dragState.bx + dx), Math.round(dragState.by + dy));
+  });
+  ipcMain.on("window:drag-end", () => {
+    dragState = null;
+  });
   ipcMain.handle("window:close", () => {
     if (appSettings?.closeToTray !== false) {
       mainWindow?.hide();
@@ -2696,7 +2963,40 @@ function registerIpc() {
     arch: process.arch,
     isDev,
     userData: userData(),
+    // 系统信息：首页底部要显示「当前版本 + 电脑系统」
+    osRelease: os.release(),
+    osVersion: typeof os.version === "function" ? os.version() : "",
+    totalMem: os.totalmem(),
+    cpu: (os.cpus && os.cpus()[0] && os.cpus()[0].model) || "",
   }));
+
+  // ── 更新日志 ─────────────────────────────────────────────
+  // changelog.json 随安装包一起发布；版本号变化时前端弹一次「本次更新」。
+  const readChangelog = () => {
+    try {
+      const raw = fs
+        .readFileSync(path.join(__dirname, "changelog.json"), "utf8")
+        .replace(/^\uFEFF/, "");
+      const list = JSON.parse(raw);
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  };
+  ipcMain.handle("app:changelog", () => readChangelog());
+  ipcMain.handle("app:updateNotes", () => {
+    const list = readChangelog();
+    const current = app.getVersion();
+    const seen = String(appSettings?.seenVersion || "");
+    const entry = list.find((e) => e.version === current) || null;
+    return { current, seen, isNew: seen !== current, entry };
+  });
+  ipcMain.handle("app:markVersionSeen", () => {
+    saveSettings({ seenVersion: app.getVersion() });
+    return { ok: true };
+  });
+  ipcMain.handle("app:checkUpdate", async () => checkAppUpdate());
+  ipcMain.handle("app:downloadUpdate", async () => downloadAppUpdate());
   ipcMain.handle("connections:closeAll", async () => {
     try {
       return await api("/connections", "DELETE");
@@ -2859,14 +3159,28 @@ function registerIpc() {
     } catch {}
     return r;
   });
-  ipcMain.handle("verge:exitIp", async () => vergeExt.fetchExitIp(MIXED_PORT));
+  ipcMain.handle("verge:exitIp", async () => {
+    // 网络状态卡跟随「当前实际网络」：系统代理或 TUN 开启时走本地混合端口，
+    // 都关闭时直连（此前无脑走混合端口，系统代理没开也会报代理出口，且内核刚起时必然失败）。
+    const viaProxy = !!sysProxyOn || !!appSettings?.tunEnable;
+    const info = await vergeExt.fetchExitIp({ mixedPort: MIXED_PORT, viaProxy });
+    return { ...info, viaProxy };
+  });
   ipcMain.handle("system:detectProxyConflict", async () => detectOtherProxy());
   // 完整冲突扫描（含系统代理 / DNS / 路由表）— 手动扫描用
   ipcMain.handle("system:fullConflictScan", async () => {
     const ctrlPort = Number(CONTROLLER.split(":")[1]) || 0;
+    // 内核在跑时，这两个端口本来就是自己在监听。再把它们当「自定义端口」扫一遍，
+    // 只会把自家端口报成 critical 冲突——自检里就会显示成「Clash Verge 有端口冲突风险」。
+    // 只有内核没跑（端口空闲或真被别人占着）时，才值得用自定义端口探测。
+    let coreRunning = false;
+    try {
+      const r = await api("/version");
+      coreRunning = r.status === 200;
+    } catch {}
     const { conflicts, summary, severity, counts } = await conflictGuard.fullScan({
       myPorts: [MIXED_PORT, ctrlPort],
-      myCustomPorts: [MIXED_PORT, ctrlPort],
+      myCustomPorts: coreRunning ? [] : [MIXED_PORT, ctrlPort],
       includeSystem: true,
     });
     return { conflicts, summary, severity, counts };
@@ -2876,7 +3190,7 @@ function registerIpc() {
   // 所以它测不出「用户把端口改成 7890 后被别的软件占了」这类问题。
   ipcMain.handle("system:checkPorts", async () => {
     const ctrlPort = Number(CONTROLLER.split(":")[1]) || 0;
-    const [mixedFree, ctrlFree] = await Promise.all([portFree(MIXED_PORT), portFree(ctrlPort)]);
+    const [mixedFree, ctrlFree] = await Promise.all([portUsable(MIXED_PORT), portUsable(ctrlPort)]);
     return { mixedPort: MIXED_PORT, controllerPort: ctrlPort, mixedFree, ctrlFree };
   });
   // 启动 / 停止运行时冲突监控
@@ -3014,84 +3328,116 @@ function registerIpc() {
   ipcMain.handle("profile:listRich", async () => {
     ensureDirs();
     profilesLib.migrateLegacyFiles(profilesDir());
-    return profilesLib.listRich(profilesDir());
+    const items = profilesLib.listRich(profilesDir());
+    // 带上「当前激活」标记，订阅页才能显示哪条正在用、并支持一键切换
+    const activeUid = profilesLib.loadIndex(profilesDir()).active;
+    return items.map((it) => ({ ...it, active: !!activeUid && it.uid === activeUid }));
   });
 
-  ipcMain.handle("profile:import", async (_e, { name, content }) => {
+  ipcMain.handle("profile:import", async (_e, payload) => {
+    if (!payload || typeof payload !== "object") throw new Error("配置导入参数无效");
+    const { name, content } = payload;
+    if (typeof content !== "string" || !content.trim()) throw new Error("配置内容不能为空");
     return applyProfileContent(name, content, "local");
   });
 
-  ipcMain.handle("profile:importUrl", async (_e, { url, name }) => {
-    if (!url || !/^https?:\/\//i.test(url.trim())) {
-      throw new Error("请输入有效的 http(s) 订阅链接");
-    }
-    const retries = Math.max(1, Number(appSettings?.subRetry) || 3);
-    const timeoutSec = Math.max(5, Number(appSettings?.subTimeoutSec) || 30);
-    let raw = "";
-    let subHeaders = {};
-    let lastErr = null;
-    for (let i = 0; i < retries; i++) {
-      try {
-        const fetched = await fetchSubscription(url.trim(), { timeoutMs: timeoutSec * 1000 });
-        raw = fetched.body;
-        subHeaders = fetched.headers || {};
-        if (raw && raw.length > 8) break;
-      } catch (e) {
-        lastErr = e;
-        // 429 限流时拉长退避，避免连续请求加重限流
-        const backoff = /429/.test(String(e?.message || e)) ? 5000 * (i + 1) : 600 * (i + 1);
-        await new Promise((r) => setTimeout(r, backoff));
-      }
-    }
-    if (!raw || raw.length < 8) {
-      throw new Error(`订阅拉取失败（重试 ${retries} 次）：${lastErr?.message || "内容为空"}`);
-    }
-    const content = normalizeSubscriptionBody(raw);
-    if (!content || content.length < 8) {
-      throw new Error("订阅内容为空或无法解析");
-    }
-    const result = await applyProfileContent(name || guessNameFromUrl(url), content, "remote", url.trim());
-    const metaPath = path.join(configDir(), "subscriptions.json");
-    let list = [];
+  ipcMain.handle("profile:importUrl", async (_e, payload) => {
     try {
-      list = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-    } catch {}
-    if (!Array.isArray(list)) list = [];
-    const intervalMin = Number(appSettings?.subAutoUpdateMin) || 0;
-    const userinfo = parseSubscriptionUserinfo(subHeaders);
-    // 机场通过 profile-update-interval 头（小时）建议更新周期，参考 clash-verge-rev 优先采用
-    let headerIntervalHours = 0;
-    for (const k of Object.keys(subHeaders || {})) {
-      if (k.toLowerCase() === "profile-update-interval") {
-        headerIntervalHours = Number(subHeaders[k]) || 0;
-        break;
+      if (!payload || typeof payload !== "object") throw new Error("订阅导入参数无效");
+      const { url, name } = payload;
+      if (typeof url !== "string" || !/^https?:\/\//i.test(url.trim())) {
+        throw new Error("请输入有效的 http(s) 订阅链接");
       }
+      const targetUrl = url.trim();
+      // 名字优先级：调用方显式命名 > 域名。旧版把默认的 "subscription.yaml" 当名字传进来，
+      // 落盘成 `<uid>_subscription.yaml` 后又被直接当标题展示，用户看到的是一串 UUID。
+      const customName =
+        typeof name === "string" && name.trim() && !/^subscription\.ya?ml$/i.test(name.trim())
+          ? name.trim()
+          : "";
+      const retries = Math.max(1, Number(appSettings?.subRetry) || 3);
+      const timeoutSec = Math.max(5, Number(appSettings?.subTimeoutSec) || 30);
+      let raw = "";
+      let subHeaders = {};
+      let lastErr = null;
+      for (let i = 0; i < retries; i++) {
+        try {
+          const fetched = await fetchSubscription(targetUrl, { timeoutMs: timeoutSec * 1000 });
+          raw = fetched.body;
+          subHeaders = fetched.headers || {};
+          if (raw && raw.length > 8) break;
+        } catch (e) {
+          lastErr = e;
+          // 429 限流时拉长退避，避免连续请求加重限流
+          const backoff = /429/.test(String(e?.message || e)) ? 5000 * (i + 1) : 600 * (i + 1);
+          await new Promise((r) => setTimeout(r, backoff));
+        }
+      }
+      if (!raw || raw.length < 8) {
+        throw new Error(`订阅拉取失败（重试 ${retries} 次）：${lastErr?.message || "内容为空"}`);
+      }
+      const content = normalizeSubscriptionBody(raw);
+      if (!content || content.length < 8) {
+        throw new Error("订阅内容为空或无法解析");
+      }
+      // 名字优先级：调用方显式命名 > 机场在响应头里给的名字（content-disposition / profile-title）
+      // > 域名兜底。必须在拉取之后算——请求头这时候才有。
+      const displayName =
+        customName || subscriptionNameFromHeaders(subHeaders) || subscriptionDisplayName(targetUrl);
+      const result = await applyProfileContent(displayName, content, "remote", targetUrl);
+      // 老档案名是一串 UUID 文件名时顺手改成可读名（用户自定义过的名字不动）
+      try {
+        profilesLib.renameByUrl(profilesDir(), targetUrl, result.name || displayName);
+      } catch {}
+      const metaPath = path.join(configDir(), "subscriptions.json");
+      let list = [];
+      try {
+        list = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+      } catch {}
+      if (!Array.isArray(list)) list = [];
+      const intervalMin = Number(appSettings?.subAutoUpdateMin) || 0;
+      const userinfo = parseSubscriptionUserinfo(subHeaders);
+      // 机场通过 profile-update-interval 头（小时）建议更新周期，参考 clash-verge-rev 优先采用
+      let headerIntervalHours = 0;
+      for (const k of Object.keys(subHeaders || {})) {
+        if (k.toLowerCase() === "profile-update-interval") {
+          headerIntervalHours = Number(subHeaders[k]) || 0;
+          break;
+        }
+      }
+      const intervalMs = headerIntervalHours > 0
+        ? headerIntervalHours * 3600_000
+        : intervalMin > 0
+          ? intervalMin * 60_000
+          : 0;
+      const prevEntry = list.find((x) => x.url === targetUrl);
+      const entry = {
+        url: targetUrl,
+        name: result.name || displayName,
+        updatedAt: Date.now(),
+        metadataCheckedAt: Date.now(),
+        nextUpdateAt: intervalMs > 0 ? Date.now() + intervalMs : 0,
+        lastError: "",
+        // 本次拉取没带流量头（机场限流/部分 UA 不下发）时保留旧值，避免把已有流量数据冲掉
+        ...(userinfo
+          ? { userinfo }
+          : prevEntry?.userinfo
+            ? { userinfo: prevEntry.userinfo }
+            : {}),
+      };
+      list = [entry, ...list.filter((x) => x.url !== entry.url)].slice(0, 20);
+      fs.writeFileSync(metaPath, JSON.stringify(list, null, 2), "utf8");
+      // 前端只在 pct>=100 时收起进度横幅，这里补上结束事件（之前只有 10/60 两档，横幅永远挂着）
+      sendProgress("sub:download", 100, `订阅「${entry.name}」已导入`);
+      return { ...result, bytes: content.length, preview: content.slice(0, 200), nextUpdateAt: entry.nextUpdateAt };
+    } catch (e) {
+      sendProgress("sub:download", 100, "");
+      throw e;
     }
-    const intervalMs = headerIntervalHours > 0
-      ? headerIntervalHours * 3600_000
-      : intervalMin > 0
-        ? intervalMin * 60_000
-        : 0;
-    const prevEntry = list.find((x) => x.url === url.trim());
-    const entry = {
-      url: url.trim(),
-      name: path.basename(result.path),
-      updatedAt: Date.now(),
-      nextUpdateAt: intervalMs > 0 ? Date.now() + intervalMs : 0,
-      lastError: "",
-      // 本次拉取没带流量头（机场限流/部分 UA 不下发）时保留旧值，避免把已有流量数据冲掉
-      ...(userinfo
-        ? { userinfo }
-        : prevEntry?.userinfo
-          ? { userinfo: prevEntry.userinfo }
-          : {}),
-    };
-    list = [entry, ...list.filter((x) => x.url !== entry.url)].slice(0, 20);
-    fs.writeFileSync(metaPath, JSON.stringify(list, null, 2), "utf8");
-    return { ...result, bytes: content.length, preview: content.slice(0, 200), nextUpdateAt: entry.nextUpdateAt };
   });
 
   ipcMain.handle("profile:setNextUpdate", async (_e, url, nextUpdateAt) => {
+    if (typeof url !== "string" || !url.trim()) throw new Error("订阅地址无效");
     const metaPath = path.join(configDir(), "subscriptions.json");
     let list = [];
     try {
@@ -3105,12 +3451,112 @@ function registerIpc() {
   });
 
   ipcMain.handle("profile:subscriptions", async () => {
+    normalizeSubscriptionMeta();
     const metaPath = path.join(configDir(), "subscriptions.json");
     try {
-      return JSON.parse(fs.readFileSync(metaPath, "utf8"));
+      const list = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+      return (Array.isArray(list) ? list : []).map((x) => ({
+        ...x,
+        name: prettySubscriptionName(x),
+      }));
     } catch {
       return [];
     }
+  });
+
+  // 存量订阅补流量信息。
+  // 早期版本因为 Invoke-WebRequest -OutFile 不返回响应对象，订阅的
+  // Subscription-Userinfo 从来没被保存下来，老订阅卡片只能显示"未提供流量信息"。
+  // 这里在启动时静默补一次（不弹进度横幅），只补缺 userinfo / 缺更新周期的条目。
+  ipcMain.handle("subs:refreshMissing", async () => {
+    normalizeSubscriptionMeta();
+    const metaPath = path.join(configDir(), "subscriptions.json");
+    let list = [];
+    try {
+      list = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+    } catch {}
+    if (!Array.isArray(list)) return [];
+    let changed = false;
+    const queue = [];
+    for (const entry of list) {
+      if (!entry || typeof entry.url !== "string" || !entry.url) continue;
+      const autoNamed = entry.name === subscriptionDisplayName(entry.url);
+      if (!subscriptionInfo.shouldRefreshSubscriptionInfo(entry, autoNamed)) continue;
+      entry.metadataCheckedAt = Date.now();
+      changed = true;
+      queue.push({ entry, autoNamed });
+    }
+    let cursor = 0;
+    const refreshOne = async ({ entry, autoNamed }) => {
+      try {
+        const fetched = await fetchSubscription(entry.url, { timeoutMs: 8000, silent: true });
+        const headers = fetched.headers || {};
+        const headerName = subscriptionNameFromHeaders(headers);
+        if (autoNamed && headerName && headerName !== entry.name) {
+          entry.name = headerName;
+          changed = true;
+          try {
+            profilesLib.renameByUrl(profilesDir(), entry.url, headerName, { force: true });
+          } catch {}
+        }
+        const userinfo = parseSubscriptionUserinfo(headers);
+        if (userinfo) {
+          entry.userinfo = userinfo;
+          changed = true;
+        }
+        for (const k of Object.keys(headers)) {
+          if (k.toLowerCase() === "profile-update-interval") {
+            const hours = Number(headers[k]) || 0;
+            if (hours > 0) {
+              entry.nextUpdateAt = Date.now() + hours * 3600_000;
+              changed = true;
+            }
+            break;
+          }
+        }
+      } catch {}
+    };
+    const worker = async () => {
+      while (cursor < queue.length) await refreshOne(queue[cursor++]);
+    };
+    await Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker));
+    if (changed) {
+      try {
+        fs.writeFileSync(metaPath, JSON.stringify(list, null, 2), "utf8");
+      } catch {}
+    }
+    return list.map((x) => ({ ...x, name: prettySubscriptionName(x) }));
+  });
+
+  // 删除订阅：连它的配置文件一起删（只删订阅记录会留下一个孤儿档案）
+  ipcMain.handle("profile:removeSubscription", async (_e, url) => {
+    ensureDirs();
+    const target = String(url || "").trim();
+    if (!target) throw new Error("订阅地址无效");
+    const idxBefore = profilesLib.loadIndex(profilesDir());
+    const prof = idxBefore.items.find((x) => x.type === "remote" && x.url === target);
+    const wasActive = !!prof && idxBefore.active === prof.uid;
+    if (prof) profilesLib.deleteProfile(profilesDir(), prof.uid);
+    const metaPath = path.join(configDir(), "subscriptions.json");
+    let list = [];
+    try {
+      list = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+    } catch {}
+    const next = (Array.isArray(list) ? list : []).filter((x) => x.url !== target);
+    try {
+      fs.writeFileSync(metaPath, JSON.stringify(next, null, 2), "utf8");
+    } catch {}
+    // 删掉的正是当前使用的那条 → 重新增强/热重载，让内核切到剩下的配置
+    if (wasActive) {
+      if (!profilesLib.loadIndex(profilesDir()).active) {
+        const defaultConfig = path.join(resourcesRoot(), "config", "default.yaml");
+        fs.copyFileSync(defaultConfig, runtimeConfig());
+      }
+      try {
+        await runEnhanceAndReload();
+      } catch {}
+    }
+    return { ok: true, removedProfile: !!prof, wasActive };
   });
 
   ipcMain.handle("profile:activate", async (_e, uid) => {
@@ -3189,7 +3635,17 @@ function registerIpc() {
   });
 
   ipcMain.handle("open:external", async (_e, url) => {
-    await shell.openExternal(url);
+    if (typeof url !== "string" || !url.trim()) throw new Error("外部链接无效");
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error("外部链接无效");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("仅允许打开 HTTP/HTTPS 链接");
+    }
+    await shell.openExternal(parsed.href);
   });
 }
 
@@ -3305,73 +3761,23 @@ app.whenReady().then(async () => {
     trayBalloon("Veyra-omini 已启动（托盘）", "代理服务未能启动，请打开窗口查看日志。托盘图标为灰色状态。");
   } else {
     await syncSystemProxyState();
+    // 上次退出时系统代理是开着的 → 内核起来后自动恢复，用户不必每次启动都手动点一次
+    const restoreMode = appSettings.proxyMode === "pac" ? "pac" : "system";
+    if (appSettings.lastProxyOn && (restoreMode === "pac" || !sysProxyOn)) {
+      try {
+        await applyProxyMode(restoreMode);
+      } catch (e) {
+        // 外部代理冲突等失败场景不阻塞启动；冲突提示已由 applyProxyMode 弹出
+        console.warn("restore system proxy failed:", e?.message || e);
+      }
+    }
     trayBalloon(
       "Veyra-omini 已启动（托盘）",
       `代理服务运行中 · 127.0.0.1:${MIXED_PORT}。托盘绿点 = 系统代理已生效。`
     );
   }
 
-  // —— 临时探针（VEYRA_SMOKE_PROXIES=1 时生效，验证完即删）：切到代理页滚动采集显示数据 ——
-  if (process.env.VEYRA_SMOKE_PROXIES === "1") {
-    setTimeout(async () => {
-      const out = { ts: new Date().toISOString(), shots: [] };
-      const shot = async (name) => {
-        try {
-          const img = await mainWindow.webContents.capturePage();
-          const p = path.join(app.getPath("temp"), `veyra-${name}.png`);
-          fs.writeFileSync(p, img.toPNG());
-          out.shots.push(p);
-        } catch (e) {
-          out.shotErr = String((e && e.message) || e);
-        }
-      };
-      try {
-        await mainWindow.webContents.executeJavaScript(
-          `document.querySelectorAll('.nav-item')[1] && document.querySelectorAll('.nav-item')[1].click(); true`
-        );
-        await new Promise((r) => setTimeout(r, 6000));
-        await shot("px-v3-top");
-        // 模拟用户滑动：滚到 40% 停一下
-        await mainWindow.webContents.executeJavaScript(
-          `(() => { const el = document.querySelector('.stage'); if (el) el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.4); return true; })()`
-        );
-        await new Promise((r) => setTimeout(r, 1300));
-        await shot("px-v3-mid");
-        // 继续滚到 70%
-        await mainWindow.webContents.executeJavaScript(
-          `(() => { const el = document.querySelector('.stage'); if (el) el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.7); return true; })()`
-        );
-        await new Promise((r) => setTimeout(r, 1300));
-        await shot("px-v3-mid2");
-        // 滚到底
-        await mainWindow.webContents.executeJavaScript(
-          `(() => { const el = document.querySelector('.stage'); if (el) el.scrollTop = el.scrollHeight; return true; })()`
-        );
-        await new Promise((r) => setTimeout(r, 1300));
-        await shot("px-v3-bottom");
-        out.check = JSON.parse(
-          await mainWindow.webContents.executeJavaScript(`(() => {
-            const hc = document.querySelector('.px-header-card');
-            const cs = hc ? getComputedStyle(hc) : null;
-            return JSON.stringify({
-              bg: cs ? cs.backgroundColor : null,
-              transform: cs ? cs.transform : null,
-              willChange: cs ? cs.willChange : null,
-              cards: document.querySelectorAll('.px-card').length
-            });
-          })()`)
-        );
-      } catch (e) {
-        out.err = String((e && e.message) || e);
-      }
-      console.log("[PROXIES_RESULT]" + JSON.stringify(out));
-      isQuitting = true;
-      try {
-        await stopCore({ clearProxy: false });
-      } catch {}
-      app.exit(0);
-    }, 8000);
-  }
+
 });
 
 app.on("window-all-closed", () => {

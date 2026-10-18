@@ -295,9 +295,16 @@ function SettingsPanel(props: Props) {
   // 实时回写会让输入框内容被加密串覆盖；热键则会每敲一个字符就重新注册一次。
   const [draftWebdavPass, setDraftWebdavPass] = useState("");
   const [draftHotkeys, setDraftHotkeys] = useState<Record<string, string>>({});
-  const [draftUpdateUrl, setDraftUpdateUrl] = useState("");
   const [updateStatus, setUpdateStatus] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [downloadingUpdate, setDownloadingUpdate] = useState(false);
+  const [appUpdate, setAppUpdate] = useState<{
+    hasUpdate: boolean;
+    latest: string;
+    htmlUrl?: string;
+    assetUrl?: string;
+    assetName?: string;
+  } | null>(null);
 
   async function reload() {
     if (!window.veyra) return;
@@ -329,7 +336,6 @@ function SettingsPanel(props: Props) {
     setDraftColor(full.themeColor || "");
     setDraftWebdavPass("");
     setDraftHotkeys({});
-    setDraftUpdateUrl(full.updateUrl || "");
     try {
       setSvc((await window.veyra.serviceStatus?.()) || { installed: false });
     } catch {
@@ -1501,54 +1507,26 @@ async function scanConflict() {
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
               <span style={{ fontSize: 14, fontWeight: 600 }}>当前版本</span>
               <span className="pill">v{appInfo?.version || "…"}</span>
+              <span className="pill-beta">测试版 BETA</span>
               {updateStatus && (
                 <span style={{ fontSize: 13 }} className="s-muted">{updateStatus}</span>
               )}
             </div>
-            <label className="s-field-block">
-              更新源 URL（GitHub Releases latest 接口，留空则关闭检查）
-              <input
-                className="s-input full"
-                value={draftUpdateUrl}
-                placeholder="https://api.github.com/repos/<owner>/<repo>/releases/latest"
-                onChange={(e) => setDraftUpdateUrl(e.target.value)}
-                onBlur={async () => {
-                  const v = draftUpdateUrl.trim();
-                  if (v !== String(s.updateUrl || "")) await patchSettings({ updateUrl: v });
-                }}
-              />
-            </label>
             <div className="s-actions">
               <button
                 type="button"
                 className="btn primary btn-sm"
-                disabled={checkingUpdate}
+                disabled={checkingUpdate || downloadingUpdate}
                 onClick={async () => {
-                  // 之前这里硬编码了一个不存在的仓库地址，点「检查更新」必然 404；
-                  // 改为读取用户配置的更新源，未配置时给出明确提示。
-                  const url = String(s.updateUrl || "").trim();
-                  if (!/^https?:\/\//i.test(url)) {
-                    setUpdateStatus("");
-                    onToast("请先填写有效的更新源 URL");
-                    return;
-                  }
                   setCheckingUpdate(true);
                   setUpdateStatus("正在检查…");
+                  setAppUpdate(null);
                   try {
-                    const res = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                    const data = await res.json();
-                    const latest = String(data.tag_name || data.version || "").replace(/^v/, "");
-                    if (!latest) {
-                      // 更新源没给出版本号时明确提示，而不是误报「已是最新」
-                      setUpdateStatus("更新源未返回版本号，请确认 URL 是否正确");
-                      onToast("更新源未返回版本号");
-                    } else if (!appInfo?.version) {
-                      // 应用信息未就绪时不能用假版本号（旧代码兜底 1.1.0）做比较，否则会误判
-                      setUpdateStatus("应用信息未就绪，请稍后重试");
-                    } else if (latest !== appInfo.version) {
-                      setUpdateStatus(`发现新版本 v${latest}`);
-                      onToast(`发现新版本 v${latest}`);
+                    const info = await window.veyra!.checkAppUpdate();
+                    setAppUpdate(info);
+                    if (info.hasUpdate) {
+                      setUpdateStatus(`发现新版本 v${info.latest}`);
+                      onToast(`发现新版本 v${info.latest}`);
                     } else {
                       setUpdateStatus("已是最新版本");
                     }
@@ -1560,6 +1538,28 @@ async function scanConflict() {
               >
                 <RefreshCw size={13} /> {checkingUpdate ? "检查中…" : "检查更新"}
               </button>
+              {appUpdate?.hasUpdate && appUpdate.assetUrl && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={downloadingUpdate}
+                  onClick={async () => {
+                    setDownloadingUpdate(true);
+                    setUpdateStatus("正在下载安装包…");
+                    try {
+                      const r = await window.veyra!.downloadAppUpdate();
+                      setUpdateStatus(r.started ? "安装程序已启动，请按提示完成升级" : "已是最新版本");
+                      if (r.started) onToast("安装程序已启动");
+                    } catch (e) {
+                      setUpdateStatus(`下载失败：${(e as Error).message || e}`);
+                      onToast(String((e as Error).message || e));
+                    }
+                    setDownloadingUpdate(false);
+                  }}
+                >
+                  {downloadingUpdate ? "下载中…" : `下载并安装 v${appUpdate.latest}`}
+                </button>
+              )}
             </div>
           </Card>
           <Card title="关于" icon={<Info size={15} />}>

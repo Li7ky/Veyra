@@ -107,79 +107,105 @@ export function ProxiesVisualEditor({
   }
 
   return (
-    <div className="visual-ed">
-      <div className="block-hd">
-        <h2>{t("proxies.editor")}</h2>
-        <button type="button" className="btn primary btn-sm" onClick={save}>
-          <Save size={13} /> {t("proxies.saveAsProxies")}
-        </button>
+    <section className="pf-sec">
+      <div className="pf-sec-hd">
+        <h2>
+          {t("proxies.editor")}
+          <span className="pf-sec-count">{rows.length}</span>
+        </h2>
+        <div className="pf-sec-actions">
+          <button type="button" className="btn primary btn-sm" onClick={save}>
+            <Save size={13} /> {t("proxies.saveAsProxies")}
+          </button>
+        </div>
       </div>
-      <div className="s-fields" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-        {(
-          [
-            ["name", t("proxies.fieldName")],
-            ["type", t("proxies.fieldType")],
-            ["server", t("proxies.fieldServer")],
-            ["port", t("proxies.fieldPort")],
-            ["password", t("proxies.fieldPassword")],
-            ["uuid", t("proxies.fieldUuid")],
-            ["cipher", t("proxies.fieldCipher")],
-          ] as const
-        ).map(([k, label]) => (
-          <label key={k}>
-            {label}
-            {k === "type" ? (
-              <select
-                className="s-input"
-                value={draft.type}
-                onChange={(e) => setDraft({ ...draft, type: e.target.value })}
-              >
-                {["ss", "vmess", "vless", "trojan", "hysteria2", "tuic"].map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                className="s-input"
-                value={draft[k]}
-                onChange={(e) => setDraft({ ...draft, [k]: e.target.value })}
-              />
-            )}
-          </label>
-        ))}
-      </div>
-      <button
-        type="button"
-        className="btn ghost btn-sm"
-        style={{ marginTop: 8 }}
-        onClick={() => {
-          if (!draft.name || !draft.server) return onToast(t("proxies.nameServerRequired"));
-          setRows((prev) => [{ ...draft }, ...prev]);
-          setDraft({ ...EMPTY_PROXY });
-        }}
-      >
-        <Plus size={13} /> {t("proxies.addNode")}
-      </button>
-      <div className="pf-list" style={{ marginTop: 12 }}>
-        {rows.map((r, i) => (
-          <div key={`${r.name}-${i}`} className="pf-item">
-            <div className="pf-item-body">
-              <div className="pf-item-name">
-                {r.name} <span className="s-muted">({r.type})</span>
+      <div className="pf-sec-body">
+        <p className="pf-sec-desc">
+          视觉化维护节点，保存后写入「visual-proxies」增强文件，并立即应用到当前订阅。
+        </p>
+        <div className="s-fields" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+          {(
+            [
+              ["name", t("proxies.fieldName")],
+              ["type", t("proxies.fieldType")],
+              ["server", t("proxies.fieldServer")],
+              ["port", t("proxies.fieldPort")],
+              ["password", t("proxies.fieldPassword")],
+              ["uuid", t("proxies.fieldUuid")],
+              ["cipher", t("proxies.fieldCipher")],
+            ] as const
+          ).map(([k, label]) => (
+            <label key={k}>
+              {label}
+              {k === "type" ? (
+                <select
+                  className="s-input"
+                  value={draft.type}
+                  onChange={(e) => setDraft({ ...draft, type: e.target.value })}
+                >
+                  {["ss", "vmess", "vless", "trojan", "hysteria2", "tuic"].map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="s-input"
+                  value={draft[k]}
+                  onChange={(e) => setDraft({ ...draft, [k]: e.target.value })}
+                />
+              )}
+            </label>
+          ))}
+        </div>
+        <div className="ve-actions">
+          <button
+            type="button"
+            className="btn ghost btn-sm"
+            onClick={() => {
+              if (!draft.name || !draft.server) return onToast(t("proxies.nameServerRequired"));
+              setRows((prev) => [{ ...draft }, ...prev]);
+              setDraft({ ...EMPTY_PROXY });
+            }}
+          >
+            <Plus size={13} /> {t("proxies.addNode")}
+          </button>
+        </div>
+
+        {rows.length ? (
+          <div className="pf-rows">
+            {rows.map((r, i) => (
+              <div key={`${r.name}-${i}`} className="pf-row">
+                <span className="pf-row-badge is-proxies">{r.type}</span>
+                <div className="pf-row-main">
+                  <b>{r.name}</b>
+                  <span>
+                    {r.server}:{r.port}
+                  </span>
+                </div>
+                <div className="pf-row-actions">
+                  <button
+                    type="button"
+                    className="pf-row-icon"
+                    aria-label="删除节点"
+                    title="删除节点"
+                    onClick={() => setRows((p) => p.filter((_, j) => j !== i))}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
-              <div className="pf-item-sub">
-                {r.server}:{r.port}
-              </div>
-            </div>
-            <button type="button" className="btn ghost btn-sm" onClick={() => setRows((p) => p.filter((_, j) => j !== i))}>
-              <Trash2 size={13} />
-            </button>
+            ))}
           </div>
-        ))}
+        ) : (
+          <div className="pf-empty">
+            <Plus size={18} />
+            <p>暂无节点 · 填好上面的表单后点「{t("proxies.addNode")}」</p>
+          </div>
+        )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -242,64 +268,90 @@ export function GroupsVisualEditor({
   }
 
   return (
-    <div className="visual-ed">
-      <div className="block-hd">
-        <h2>{t("groups.editor")}</h2>
-        <button type="button" className="btn primary btn-sm" onClick={save}>
-          <Save size={13} /> {t("groups.saveAsGroups")}
-        </button>
+    <section className="pf-sec">
+      <div className="pf-sec-hd">
+        <h2>
+          {t("groups.editor")}
+          <span className="pf-sec-count">{rows.length}</span>
+        </h2>
+        <div className="pf-sec-actions">
+          <button type="button" className="btn primary btn-sm" onClick={save}>
+            <Save size={13} /> {t("groups.saveAsGroups")}
+          </button>
+        </div>
       </div>
-      <div className="s-fields" style={{ gridTemplateColumns: "1fr 1fr 2fr" }}>
-        <label>
-          {t("proxies.fieldName")}
-          <input className="s-input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-        </label>
-        <label>
-          {t("proxies.fieldType")}
-          <select className="s-input" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
-            {["select", "url-test", "fallback", "load-balance", "relay"].map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          {t("groups.proxiesPlaceholder")}
-          <input
-            className="s-input"
-            value={draft.proxies}
-            onChange={(e) => setDraft({ ...draft, proxies: e.target.value })}
-          />
-        </label>
-      </div>
-      <button
-        type="button"
-        className="btn ghost btn-sm"
-        style={{ marginTop: 8 }}
-        onClick={() => {
-          if (!draft.name) return onToast(t("proxies.nameRequired"));
-          setRows((p) => [{ ...draft }, ...p]);
-          setDraft({ name: "", type: "select", proxies: "DIRECT" });
-        }}
-      >
-        <Plus size={13} /> {t("groups.addGroup")}
-      </button>
-      <div className="pf-list" style={{ marginTop: 12 }}>
-        {rows.map((r, i) => (
-          <div key={`${r.name}-${i}`} className="pf-item">
-            <div className="pf-item-body">
-              <div className="pf-item-name">
-                {r.name} <span className="s-muted">({r.type})</span>
+      <div className="pf-sec-body">
+        <p className="pf-sec-desc">
+          维护策略组，保存后写入「visual-groups」增强文件，并立即应用到当前订阅。
+        </p>
+        <div className="s-fields" style={{ gridTemplateColumns: "1fr 1fr 2fr" }}>
+          <label>
+            {t("proxies.fieldName")}
+            <input className="s-input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+          </label>
+          <label>
+            {t("proxies.fieldType")}
+            <select className="s-input" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
+              {["select", "url-test", "fallback", "load-balance", "relay"].map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {t("groups.proxiesPlaceholder")}
+            <input
+              className="s-input"
+              value={draft.proxies}
+              onChange={(e) => setDraft({ ...draft, proxies: e.target.value })}
+            />
+          </label>
+        </div>
+        <div className="ve-actions">
+          <button
+            type="button"
+            className="btn ghost btn-sm"
+            onClick={() => {
+              if (!draft.name) return onToast(t("proxies.nameRequired"));
+              setRows((p) => [{ ...draft }, ...p]);
+              setDraft({ name: "", type: "select", proxies: "DIRECT" });
+            }}
+          >
+            <Plus size={13} /> {t("groups.addGroup")}
+          </button>
+        </div>
+
+        {rows.length ? (
+          <div className="pf-rows">
+            {rows.map((r, i) => (
+              <div key={`${r.name}-${i}`} className="pf-row">
+                <span className="pf-row-badge is-groups">{r.type}</span>
+                <div className="pf-row-main">
+                  <b>{r.name}</b>
+                  <span>{r.proxies}</span>
+                </div>
+                <div className="pf-row-actions">
+                  <button
+                    type="button"
+                    className="pf-row-icon"
+                    aria-label="删除策略组"
+                    title="删除策略组"
+                    onClick={() => setRows((p) => p.filter((_, j) => j !== i))}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
-              <div className="pf-item-sub">{r.proxies}</div>
-            </div>
-            <button type="button" className="btn ghost btn-sm" onClick={() => setRows((p) => p.filter((_, j) => j !== i))}>
-              <Trash2 size={13} />
-            </button>
+            ))}
           </div>
-        ))}
+        ) : (
+          <div className="pf-empty">
+            <Plus size={18} />
+            <p>暂无策略组 · 填好上面的表单后点「{t("groups.addGroup")}」</p>
+          </div>
+        )}
       </div>
-    </div>
+    </section>
   );
 }

@@ -15,7 +15,21 @@ type Props = {
   /** 运行态附加信息（内核名 · 运行时长）。原属右栏「系统时间」卡，
       v13 右栏精简后移到这里，避免单独占一张卡的高度。 */
   meta?: ReactNode;
+  /** 当前节点延迟 / 可用节点数：填进 hero 右侧原本空着的 200px，
+      同时把「用的谁、快不快」提到首屏（此前在折叠线以下） */
+  delay?: number | null;
+  nodeCount?: number;
+  nodeType?: string;
+  /** 首页「当前节点」开关：关掉时 hero 右侧的节点块整块隐藏 */
+  showNodeBlock?: boolean;
 };
+
+function delayTone(ms?: number | null): string {
+  if (ms == null || ms <= 0) return "na";
+  if (ms < 200) return "good";
+  if (ms < 500) return "mid";
+  return "bad";
+}
 
 function ConnectOrb({
   sysProxy,
@@ -27,6 +41,10 @@ function ConnectOrb({
   onToggleCore,
   onNodeClick,
   meta,
+  delay,
+  nodeCount,
+  nodeType,
+  showNodeBlock = true,
 }: Props) {
   // 与托盘同语义：只有「内核在线 && 系统代理开」才算生效。
   const active = running && sysProxy;
@@ -55,7 +73,7 @@ function ConnectOrb({
       >
         <div className="orb-glow" aria-hidden="true" />
         <div className="orb-core">
-          <Power size={36} strokeWidth={2.4} />
+          <Power size={34} strokeWidth={2.4} />
         </div>
       </button>
 
@@ -71,29 +89,50 @@ function ConnectOrb({
           {running ? (
             <>
               <code>127.0.0.1:{mixedPort}</code>
-              {showNode ? (
-                onNodeClick ? (
-                  /* P2：节点名从纯文本改为可点击入口——切节点是日频操作，
-                     首屏直接回答「现在用的谁、去哪换」，省掉三步导航 */
-                  <button
-                    type="button"
-                    className="hero-node-btn"
-                    onClick={onNodeClick}
-                    title={t("hero.switchNode", "切换节点")}
-                  >
-                    <span className="hero-node">{nodeName}</span>
-                    <ChevronDown size={13} />
-                  </button>
-                ) : (
-                  <span className="hero-node">· {nodeName}</span>
-                )
-              ) : null}
+              {meta ? <span className="hero-run-sep">·</span> : null}
+              {meta}
             </>
           ) : (
             <span>点击 Core 按钮启动代理服务</span>
           )}
         </div>
       </div>
+
+      {/* 当前节点：原本在折叠线以下的「当前节点 / 延迟」两个 tile，
+          合并成 hero 右侧这一块——首屏就能看到「用的谁、快不快」，
+          点一下直接去代理页切节点。 */}
+      {showNodeBlock ? (
+      <button
+        type="button"
+        className="hero-node-block"
+        onClick={onNodeClick}
+        disabled={!onNodeClick}
+        title={t("hero.switchNode", "切换节点")}
+      >
+        <span className="hnb-k">{t("home.currentNode", "当前节点")}</span>
+        <span className="hnb-v">
+          <span className={`hnb-name${showNode ? "" : " is-empty"}`}>
+            {showNode ? nodeName : t("home.noNodeShort", "未选择")}
+          </span>
+          {nodeType ? <span className="hnb-type">{nodeType}</span> : null}
+          <ChevronDown size={13} aria-hidden="true" />
+        </span>
+        <span className="hnb-meta">
+          {/* 没选节点时不显示延迟：一个孤零零的「—」看不出是延迟还是缺数据 */}
+          {showNode ? (
+            <>
+              <span className={`hnb-delay ${delayTone(delay)}`}>
+                {delay != null && delay > 0 ? `${delay} ms` : "未测速"}
+              </span>
+              <span className="hnb-dot">·</span>
+            </>
+          ) : null}
+          <span>
+            {nodeCount ?? 0} {t("home.nodesAvailable", "节点可用")}
+          </span>
+        </span>
+      </button>
+      ) : null}
 
       <div className="hero-actions">
         <button
@@ -122,7 +161,6 @@ function ConnectOrb({
             {running ? "停止内核服务" : "启动内核服务"}
           </button>
         ) : null}
-        {meta ? <div className="hero-run">{meta}</div> : null}
       </div>
     </section>
   );

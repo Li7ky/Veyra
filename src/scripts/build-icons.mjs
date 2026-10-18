@@ -34,13 +34,14 @@ const MARK_STROKE = 3.1; // 24 单位视口下的描边宽度。
 // 这里按「光学尺寸」加粗到 3.1，保证 16px 下六边形轮廓依然立得住。
 const MASTER = 1024;
 
-/** 与 App.tsx brand 区完全一致的六边形标几何（24×24 视口，stroke-only） */
+/** 与 App.tsx brand 区完全一致的品牌标几何（24×24 视口，stroke-only）
+ *  v6：六边形 + 内部路由「V」+ 三个节点 —— 表达「节点 / 线路 / 转发」的代理属性。 */
 const MARK_GEOMETRY = `
-  <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
-  <line x1="12" y1="22" x2="12" y2="15.5"/>
-  <polyline points="22 8.5 12 15.5 2 8.5"/>
-  <polyline points="2 15.5 12 8.5 22 15.5"/>
-  <line x1="12" y1="2" x2="12" y2="8.5"/>
+  <polygon points="12 2 21.5 8 21.5 16 12 22 2.5 16 2.5 8"/>
+  <polyline points="7.6 10 12 14.6 16.4 10" stroke-width="1.7"/>
+  <circle cx="7.6" cy="10" r="1.9" fill="currentColor" stroke="none"/>
+  <circle cx="16.4" cy="10" r="1.9" fill="currentColor" stroke="none"/>
+  <circle cx="12" cy="14.6" r="1.9" fill="currentColor" stroke="none"/>
 `;
 
 function logoSvg(size = MASTER) {
@@ -57,7 +58,7 @@ function logoSvg(size = MASTER) {
   </defs>
   <rect x="0" y="0" width="${size}" height="${size}" rx="${r}" ry="${r}" fill="url(#tile)"/>
   <g transform="translate(${size / 2} ${size / 2}) scale(${scale.toFixed(6)}) translate(-12 -12)"
-     fill="none" stroke="#ffffff" stroke-width="${MARK_STROKE}"
+     fill="none" stroke="#ffffff" stroke-width="${MARK_STROKE}" color="#ffffff"
      stroke-linecap="round" stroke-linejoin="round">
     ${MARK_GEOMETRY}
   </g>

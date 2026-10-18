@@ -6,6 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const https = require("https");
+const tls = require("tls");
 const { execFile, spawn } = require("child_process");
 const zlib = require("zlib");
 const crypto = require("crypto");
@@ -102,7 +103,10 @@ async function setWinProxyMode({ mode, mixedPort, bypass, regAdd, refreshWinInet
   if (mode === "off") {
     stopPacServer();
     await regAdd(["add", key, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "0", "/f"]);
-    await regAdd(["add", key, "/v", "AutoConfigURL", "/t", "REG_SZ", "/d", "", "/f"]);
+    // 用 delete 而不是写入空字符串：空的 AutoConfigURL 值仍然留在注册表里，
+    // 任何「读注册表判断有没有开 PAC」的程序（包括我们自己的冲突检测）
+    // 都容易把「值存在」误判成「PAC 已启用」。
+    await regAdd(["delete", key, "/v", "AutoConfigURL", "/f"]);
     await refreshWinInet();
     return { ok: true, mode: "off" };
   }
@@ -117,7 +121,7 @@ async function setWinProxyMode({ mode, mixedPort, bypass, regAdd, refreshWinInet
   // system = classic proxy
   stopPacServer();
   const server = `127.0.0.1:${mixedPort}`;
-  await regAdd(["add", key, "/v", "AutoConfigURL", "/t", "REG_SZ", "/d", "", "/f"]);
+  await regAdd(["delete", key, "/v", "AutoConfigURL", "/f"]);
   await regAdd(["add", key, "/v", "ProxyServer", "/t", "REG_SZ", "/d", server, "/f"]);
   await regAdd(["add", key, "/v", "ProxyOverride", "/t", "REG_SZ", "/d", bypass, "/f"]);
   await regAdd(["add", key, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "1", "/f"]);
@@ -489,79 +493,278 @@ function proxyFetch(url, mixedPort) {
 }
 
 /** ---- 出口 IP ---- */
-async function fetchExitIp(mixedPort) {
-  const urls = [
-    "http://ip-api.com/json?fields=query,country,countryCode,city,regionName,isp,org,as,timezone,lat,lon",
-    "http://ipinfo.io/json",
-    "http://httpbin.org/ip",
-  ];
-  for (const url of urls) {
-    try {
-      const r = await proxyFetchBody(url, mixedPort);
-      const text = r.toString("utf8");
-      try {
-        const j = JSON.parse(text);
-        if (j.query) return {
-          ip: j.query,
-          country: j.country,
-          countryCode: j.countryCode,
-          city: j.city,
-          region: j.regionName,
-          isp: j.isp,
-          org: j.org,
-          as: j.as,
-          timezone: j.timezone,
-          lat: j.lat,
-          lon: j.lon,
-        };
-        // ipinfo.io 格式
-        if (j.ip) return {
-          ip: j.ip,
-          country: j.country,
-          countryCode: j.country,
-          city: j.city,
-          region: j.region,
-          isp: j.org,
-          org: j.org,
-          as: j.asn?.asn,
-          timezone: j.timezone,
-          lat: j.loc ? Number(j.loc.split(",")[0]) : null,
-          lon: j.loc ? Number(j.loc.split(",")[1]) : null,
-        };
-        if (j.origin) return { ip: String(j.origin).split(",")[0].trim() };
-      } catch {
-        const m = text.match(/\d+\.\d+\.\d+\.\d+/);
-        if (m) return { ip: m[0] };
+const EXIT_IP_UA = "Veyra/1.0";
+
+// 探测端点按「成功率高 → 低」排序，且全部做 2xx 校验：
+// 之前只看 body 不看状态码，ip-api 的 429 / ipinfo 的 429 都会被当成「解析失败」继续往下试，
+// 最后一个 httpbin 在部分节点上又连不通，于是一次启动就整体判成「IP 检测失败」。
+// ip-api 免费额度按出口 IP 计（45 次/分），机场共享出口经常 429/临时封禁，
+// 所以优先用 HTTPS 的 api.ip.sb / ipwho.is / ifconfig.co / Cloudflare trace，HTTP 接口只兜底。
+const EXIT_IP_ENDPOINTS = [
+  {
+    // 非 CN 段 IP，系统代理开启时必定被规则送进代理；字段也最全。
+    // 直连时该站返回 403（被墙），正好快速落到下一个端点。
+    url: "https://api.ip.sb/geoip",
+    parse(j) {
+      if (!j || !j.ip) return null;
+      return {
+        ip: j.ip,
+        country: j.country,
+        countryCode: j.country_code,
+        city: j.city,
+        region: j.region,
+        isp: j.isp,
+        org: j.organization || j.asn_organization,
+        as: j.asn ? `AS${j.asn}` : undefined,
+        timezone: j.timezone,
+        lat: j.latitude,
+        lon: j.longitude,
+      };
+    },
+  },
+  {
+    url: "https://ipwho.is/",
+    parse(j) {
+      if (!j || j.success === false || !j.ip) return null;
+      const c = j.connection || {};
+      return {
+        ip: j.ip,
+        country: j.country,
+        countryCode: j.country_code,
+        city: j.city,
+        region: j.region,
+        isp: c.isp,
+        org: c.org,
+        as: c.asn ? `AS${c.asn}` : undefined,
+        timezone: j.timezone?.id,
+        lat: j.latitude,
+        lon: j.longitude,
+      };
+    },
+  },
+  {
+    url: "https://ifconfig.co/json",
+    parse(j) {
+      if (!j || !j.ip) return null;
+      return {
+        ip: j.ip,
+        country: j.country,
+        countryCode: j.country_iso,
+        city: j.city,
+        region: j.region_name,
+        isp: j.asn_org,
+        org: j.asn_org,
+        as: j.asn ? `AS${j.asn}` : undefined,
+        timezone: j.time_zone,
+        lat: j.latitude,
+        lon: j.longitude,
+      };
+    },
+  },
+  {
+    // 纯文本 key=value；没有城市/ISP，但胜在稳定且不挑网络
+    url: "https://www.cloudflare.com/cdn-cgi/trace",
+    parseText(text) {
+      const map = {};
+      for (const line of String(text).split("\n")) {
+        const i = line.indexOf("=");
+        if (i > 0) map[line.slice(0, i)] = line.slice(i + 1).trim();
       }
+      if (!map.ip) return null;
+      return { ip: map.ip, countryCode: map.loc };
+    },
+  },
+  {
+    url: "http://ip-api.com/json?fields=query,country,countryCode,city,regionName,isp,org,as,timezone,lat,lon",
+    parse(j) {
+      if (!j || !j.query) return null;
+      return {
+        ip: j.query,
+        country: j.country,
+        countryCode: j.countryCode,
+        city: j.city,
+        region: j.regionName,
+        isp: j.isp,
+        org: j.org,
+        as: j.as,
+        timezone: j.timezone,
+        lat: j.lat,
+        lon: j.lon,
+      };
+    },
+  },
+  {
+    url: "https://ipinfo.io/json",
+    parse(j) {
+      if (!j || !j.ip) return null;
+      return {
+        ip: j.ip,
+        country: j.country,
+        countryCode: j.countryCode || j.country,
+        city: j.city,
+        region: j.region,
+        isp: j.org,
+        org: j.org,
+        as: j.asn?.asn,
+        timezone: j.timezone,
+        lat: j.loc ? Number(j.loc.split(",")[0]) : null,
+        lon: j.loc ? Number(j.loc.split(",")[1]) : null,
+      };
+    },
+  },
+  {
+    url: "http://httpbin.org/ip",
+    parse(j) {
+      if (!j || !j.origin) return null;
+      return { ip: String(j.origin).split(",")[0].trim() };
+    },
+  },
+];
+
+/**
+ * 出口 IP 探测。
+ * @param {{mixedPort?: number, viaProxy?: boolean, timeout?: number}|number} options
+ *   viaProxy=true 走本地混合端口（系统代理开启时，反映「代理后的网络」）；
+ *   viaProxy=false 直连（系统代理关闭时，反映当前真实网络）。
+ */
+async function fetchExitIp(options = {}) {
+  const opts = typeof options === "number" ? { mixedPort: options } : options || {};
+  const viaProxy = opts.viaProxy !== false && Number(opts.mixedPort) > 0;
+  const deadline = Date.now() + (Number(opts.timeout) || 8000);
+  for (const ep of EXIT_IP_ENDPOINTS) {
+    const remain = deadline - Date.now();
+    if (remain < 1200) break;
+    const timeout = Math.min(4000, remain);
+    try {
+      const r = viaProxy
+        ? await proxyFetchThrough(ep.url, Number(opts.mixedPort), timeout)
+        : await directFetch(ep.url, timeout);
+      // 明确丢弃 429/403/5xx：这些响应里的错误 JSON 不是出口信息
+      if (r.status < 200 || r.status >= 300) continue;
+      const text = r.body.toString("utf8");
+      let info = null;
+      if (ep.parseText) {
+        info = ep.parseText(text);
+      } else {
+        let j = null;
+        try {
+          j = JSON.parse(text);
+        } catch {
+          const m = text.match(/\d{1,3}(?:\.\d{1,3}){3}/);
+          if (m) info = { ip: m[0] };
+        }
+        if (j) info = ep.parse(j);
+      }
+      if (info && info.ip) return info;
     } catch {}
   }
   return { ip: null };
 }
 
-function proxyFetchBody(url, mixedPort) {
+function readResponse(res) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    res.on("data", (c) => chunks.push(c));
+    res.on("end", () => resolve({ status: res.statusCode || 0, body: Buffer.concat(chunks) }));
+  });
+}
+
+/** 直连请求（系统代理关闭时用） */
+function directFetch(url, timeoutMs) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
-    const req = http.request(
+    const lib = u.protocol === "https:" ? https : http;
+    const req = lib.request(
       {
-        host: "127.0.0.1",
-        port: mixedPort,
+        hostname: u.hostname,
+        port: u.port || (u.protocol === "https:" ? 443 : 80),
+        path: u.pathname + u.search,
         method: "GET",
-        path: url,
-        headers: { Host: u.host, "User-Agent": "Veyra/1.0" },
-        timeout: 10000,
+        headers: { Host: u.host, "User-Agent": EXIT_IP_UA, Accept: "application/json" },
+        timeout: timeoutMs,
       },
-      (res) => {
-        const chunks = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => resolve(Buffer.concat(chunks)));
-      }
+      (res) => readResponse(res).then(resolve, reject)
     );
     req.on("error", reject);
     req.on("timeout", () => {
-      req.destroy();
-      reject(new Error("timeout"));
+      req.destroy(new Error("timeout"));
     });
     req.end();
+  });
+}
+
+/**
+ * 经本地混合端口请求。
+ * HTTP 走绝对 URL；HTTPS 必须 CONNECT 建隧道再 TLS —— 直接把 https:// 绝对 URL
+ * 发给 HTTP 代理是拿不到响应的（旧实现只敢用 http:// 端点，正是这个原因）。
+ */
+function proxyFetchThrough(url, proxyPort, timeoutMs) {
+  const u = new URL(url);
+  if (u.protocol === "http:") {
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port: proxyPort,
+          method: "GET",
+          path: url,
+          headers: { Host: u.host, "User-Agent": EXIT_IP_UA, Accept: "application/json" },
+          timeout: timeoutMs,
+        },
+        (res) => readResponse(res).then(resolve, reject)
+      );
+      req.on("error", reject);
+      req.on("timeout", () => {
+        req.destroy(new Error("timeout"));
+      });
+      req.end();
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const authority = `${u.hostname}:${u.port || 443}`;
+    const connectReq = http.request({
+      host: "127.0.0.1",
+      port: proxyPort,
+      method: "CONNECT",
+      path: authority,
+      headers: { Host: authority },
+      timeout: timeoutMs,
+    });
+    connectReq.on("connect", (res, socket, head) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        reject(new Error(`CONNECT ${res.statusCode}`));
+        return;
+      }
+      if (head && head.length) socket.unshift(head);
+      // 注意：不能用 agent:false + createConnection —— Node 会忽略 createConnection
+      // 直接连目标，等于绕过了代理（实测 HTTPS 请求拿到的是本机出口 IP）。
+      // 必须挂一个自定义 Agent，把 CONNECT 隧道 socket 复用为 TLS 底层。
+      const agent = new https.Agent({ keepAlive: false });
+      agent.createConnection = () => tls.connect({ socket, servername: u.hostname });
+      const req = https.request(
+        {
+          hostname: u.hostname,
+          port: u.port || 443,
+          path: u.pathname + u.search,
+          method: "GET",
+          headers: { Host: u.host, "User-Agent": EXIT_IP_UA, Accept: "application/json" },
+          agent,
+          timeout: timeoutMs,
+        },
+        (r) => readResponse(r).then(resolve, reject)
+      );
+      req.on("error", reject);
+      req.on("timeout", () => {
+        req.destroy(new Error("timeout"));
+      });
+      req.end();
+    });
+    connectReq.on("error", reject);
+    connectReq.on("timeout", () => {
+      connectReq.destroy(new Error("timeout"));
+    });
+    connectReq.end();
   });
 }
 

@@ -8,6 +8,9 @@ on:
   pull_request:
     branches: ["**"]
 
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: src
@@ -36,10 +39,6 @@ jobs:
       - name: 代码规范
         # 存量告警不阻断，但新增 error 必须清零（阈值为当前基线，逐步下调）
         run: npx eslint . --max-warnings=200
-
-      - name: 格式检查
-        run: npm run format:check
-        continue-on-error: true
 
       - name: 单元测试
         run: npm run test

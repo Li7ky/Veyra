@@ -1,13 +1,20 @@
 {
   "name": "veyra-omini",
   "private": true,
-  "version": "1.1.7",
+  "version": "1.1.9-beta.1",
   "description": "Veyra-omini — next-gen proxy client powered by mihomo",
   "author": "Veyra-omini",
   "productName": "Veyra-omini",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
+    "typecheck": "tsc -b",
+    "lint": "eslint . --max-warnings=200",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:ipc": "node scripts/check-ipc-contract.mjs",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run check:ipc && npm run build",
     "dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
@@ -29,6 +36,9 @@
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
+  "overrides": {
+    "dompurify": "3.4.17"
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@types/js-yaml": "^4.0.9",
@@ -37,7 +47,7 @@
     "@vitejs/plugin-react": "^5.0.3",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
-    "electron": "^38.1.2",
+    "electron": "^44.9.0",
     "electron-builder": "^26.0.12",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^7.1.1",

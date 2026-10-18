@@ -55,6 +55,10 @@ describe("parseNodeUri - SS", () => {
     const node = parseNodeUri("ss://aes-256-gcm:pa:ss:word@9.9.9.9:1080#T");
     expect(node.password).toBe("pa:ss:word");
   });
+
+  it("拒绝超出 TCP 端口范围的端口", () => {
+    expect(() => parseNodeUri("ss://aes-256-gcm:pw@9.9.9.9:65536#T")).toThrow(/port 非法/);
+  });
 });
 
 describe("parseNodeUri - VMess", () => {
@@ -78,6 +82,16 @@ describe("parseNodeUri - VMess", () => {
     expect(node.uuid).toBe(cfg.id);
     expect(node.network).toBe("ws");
     expect(node.tls).toBe(true);
+  });
+
+  it("拒绝非数字 vmess 端口而不是静默回退到 443", () => {
+    const cfg = {
+      ps: "bad-port",
+      add: "example.com",
+      port: "not-a-port",
+      id: "11111111-2222-3333-4444-555555555555",
+    };
+    expect(() => parseNodeUri(`vmess://${b64(JSON.stringify(cfg))}`)).toThrow(/port 非法/);
   });
 });
 

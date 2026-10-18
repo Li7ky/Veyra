@@ -90,6 +90,8 @@ function ConnectionsPage({
                 await window.veyra?.closeAllConnections();
                 onToast(t("conn.closeAllDone"));
                 await reload();
+              } catch (e) {
+                onToast(String((e as Error).message || e));
               } finally {
                 setBusy(false);
               }

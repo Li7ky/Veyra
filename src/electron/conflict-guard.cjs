@@ -30,7 +30,11 @@ const PROXY_PROCESS_DB = [
   ["clash.exe", "Clash for Windows", { family: "clash" }],
   ["clash-verge.exe", "Clash Verge Rev", { family: "clash" }],
   ["verge.exe", "Clash Verge", { family: "clash" }],
-  ["clash-verge-service.exe", "Clash Verge Service", { family: "clash" }],
+  // Clash Verge 的内核进程（GUI 关了它也可能残留着）
+  ["verge-mihomo.exe", "Clash Verge 内核", { family: "clash" }],
+  // 注意：clash-verge-service.exe 是提权助手服务（装驱动/改路由用），
+  // 它本身不监听代理端口、也不接管系统代理，开着并不代表有冲突，
+  // 所以刻意不放进这张表——否则只要装过 Clash Verge 就会一直「检测到其它代理软件」。
   ["clash-rev.exe", "Clash.Rev", { family: "clash" }],
   ["clash-win.exe", "Clash Premium", { family: "clash" }],
   ["clash-mihomo.exe", "Clash Mihomo", { family: "clash" }],
@@ -298,11 +302,20 @@ function detectSystemProxyConflict() {
     execFile("reg", ["query", key], { windowsHide: true, timeout: 3000 }, (err, stdout) => {
       if (err) return resolve(null);
       const text = String(stdout || "");
-      const enabled = /ProxyEnable\s+REG_DWORD\s+0x1\b/i.test(text);
-      const serverMatch = text.match(/ProxyServer\s+REG_SZ\s+([^\r\n]+)/i);
-      const pacMatch = text.match(/AutoConfigURL\s+REG_SZ\s+([^\r\n]+)/i);
-      const server = serverMatch ? serverMatch[1].trim() : "";
-      const pacUrl = pacMatch ? pacMatch[1].trim() : "";
+      // 注意：这里必须逐行解析，不能用 `REG_SZ\s+`。
+      // `reg query` 会把空值的行输出成「AutoConfigURL    REG_SZ」后面什么都没有，
+      // 而 \s 能吃掉换行——旧写法于是把下一行的子键名
+      // `HKEY_CURRENT_USER\...\Internet Settings\5.0` 当成了 PAC 地址，
+      // 结果每次启动都误报「系统 PAC 代理被占用」。
+      const readSz = (name) => {
+        const m = text.match(new RegExp(`^[ \\t]*${name}[ \\t]+REG_SZ[ \\t]*(.*)$`, "mi"));
+        return m ? m[1].trim() : "";
+      };
+      const enabled = /^[ \t]*ProxyEnable[ \t]+REG_DWORD[ \t]+0x1\b/im.test(text);
+      const server = readSz("ProxyServer");
+      let pacUrl = readSz("AutoConfigURL");
+      // 只认真正的 URL：空值 / 残留的非 URL 文本一律当作「没开 PAC」
+      if (pacUrl && !/^[a-z][a-z0-9+.-]*:\/\//i.test(pacUrl)) pacUrl = "";
       if (!enabled && !pacUrl) return resolve(null);
       if (pacUrl && !enabled) {
         resolve({

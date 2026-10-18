@@ -62,7 +62,7 @@ function WaveChart({ up, down, empty }: Props) {
           <stop offset="100%" stopColor="var(--cyan-500)" />
         </linearGradient>
       </defs>
-      {[0.25, 0.5, 0.75].map((f) => (
+      {[0.2, 0.4, 0.6, 0.8].map((f) => (
         <line
           key={f}
           x1="0"
@@ -70,11 +70,22 @@ function WaveChart({ up, down, empty }: Props) {
           y1={h * f}
           y2={h * f}
           stroke="currentColor"
-          strokeOpacity="0.15"
-          strokeDasharray="4 6"
+          strokeOpacity="0.10"
           strokeWidth="1"
         />
       ))}
+      {/* 0 基线：零流量时这条线就是「数据」，有流量时它给曲线一个落点。
+          没有它，空态只剩三根悬空的虚线，看起来像没画完。 */}
+      <line
+        x1="0"
+        x2={w}
+        y1={h - 1}
+        y2={h - 1}
+        stroke="currentColor"
+        strokeOpacity="0.5"
+        strokeWidth="1"
+        vectorEffect="non-scaling-stroke"
+      />
       {hasData && (
         <>
           <path d={dn.area} fill={`url(#${gid}-dn)`} />

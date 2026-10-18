@@ -56,7 +56,7 @@ export default function YamlEditor({
       {hint ? <div className="yaml-editor-hint">{hint}</div> : null}
       <div className="yaml-monaco-host">
         <Editor
-          height="320px"
+          height="100%"
           language={language}
           theme={editorTheme}
           value={value || ""}

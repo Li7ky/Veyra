@@ -14,15 +14,12 @@ import {
   ArrowDown,
   ArrowUp,
   Building2,
-  Cable,
   CalendarClock,
   Check,
   Clock,
   Copy,
-  Cpu,
   Database,
   Globe,
-  HardDrive,
   Layers3,
   Link2,
   ListTree,
@@ -2090,25 +2087,25 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                   </div>
                   <ul className="rail-metrics">
                     <li>
-                      <Globe size={13} aria-hidden="true" />
                       <span>{t("nav.proxy", "代理")}</span>
+                      <i className="rail-leader" aria-hidden="true" />
                       <strong className={sysProxy ? "on" : ""}>
                         {sysProxy ? t("nav.on", "开启") : t("nav.off", "关闭")}
                       </strong>
                     </li>
                     <li>
-                      <Cable size={13} aria-hidden="true" />
                       <span>{t("nav.connections", "连接")}</span>
+                      <i className="rail-leader" aria-hidden="true" />
                       <strong className={connCount > 0 ? "on" : ""}>{connCount}</strong>
                     </li>
                     <li>
-                      <HardDrive size={13} aria-hidden="true" />
                       <span>{t("nav.memory", "内存")}</span>
+                      <i className="rail-leader" aria-hidden="true" />
                       <strong>{memText}</strong>
                     </li>
                     <li>
-                      <Cpu size={13} aria-hidden="true" />
                       <span>{t("nav.core", "内核")}</span>
+                      <i className="rail-leader" aria-hidden="true" />
                       <strong>{activeCore === "singbox" ? "sing-box" : "Mihomo"}</strong>
                     </li>
                   </ul>

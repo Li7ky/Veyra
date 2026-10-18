@@ -3026,6 +3026,230 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   gap: 8px;
 }
 
+/* ── 网络状态卡（v20 · 出口读数）────────────────────────────
+   原卡片只有「国家 · 城市 / IP / ISP / 速率」四行裸文字，信息少且层级平。
+   现在分四段：走哪条网络（状态灯 + 直连/代理 + 位置）→ 出口 IP 盒（等宽大字、
+   v6 标记、复制）→ 归属明细（运营商 / 网络 / 时区）→ 实时速率 + 累计 + 连接数。
+   视觉沿用 v19 读数风：10px 字距标签、等宽数值、1px 细线，不加装饰色块。 */
+.net-hd {
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 6px;
+}
+.net-refresh {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: -2px;
+  color: var(--text-400);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition: color 0.16s var(--ease), background-color 0.16s var(--ease);
+}
+.net-refresh:hover:not(:disabled) {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.net-refresh:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.net-body { padding: 0 14px 14px; }
+.net-empty {
+  padding: 4px 2px 8px;
+  font-size: 11px;
+  color: var(--text-500);
+}
+.net { display: flex; flex-direction: column; gap: 10px; }
+
+/* 出口位置（标题行右侧是「直连 / 系统代理」状态，位置行独占整宽） */
+.net-route {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.net-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-500);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-500) 9%, transparent);
+}
+.net-dot.on {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 15%, transparent);
+}
+.net-via {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--text-500);
+}
+.net-via.on { color: var(--ok); }
+.net-cc {
+  flex: none;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.4;
+  color: var(--text-400);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+}
+.net-loc {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-200);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.01em;
+}
+
+/* 出口 IP 盒 */
+.net-ipbox {
+  padding: 8px 10px 9px;
+  background: color-mix(in srgb, var(--bg-soft) 62%, transparent);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+}
+.net-ip-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.net-ip-k {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: var(--text-500);
+}
+.net-tag {
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 13px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 3px;
+}
+.net-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  font-size: 9.5px;
+  color: var(--text-400);
+  background: transparent;
+  border-radius: 4px;
+  transition: color 0.16s var(--ease), background-color 0.16s var(--ease);
+}
+.net-copy:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.net-ip {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  color: var(--text-100);
+  word-break: break-all;
+}
+
+/* 归属明细 */
+.net-meta { display: flex; flex-direction: column; }
+.net-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 22px;
+}
+.net-row > span {
+  flex: none;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--text-500);
+}
+.net-row > b {
+  min-width: 0;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-200);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.net-sep {
+  height: 1px;
+  background: color-mix(in srgb, var(--line) 62%, transparent);
+}
+
+/* 速率 / 连接 三栏 + 累计一行 */
+.net-rates {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: end;
+}
+.net-rate { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.net-rate-conn { align-items: flex-end; }
+.net-rate-k {
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  color: var(--text-500);
+  white-space: nowrap;
+}
+.net-rate-v {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-500);
+  white-space: nowrap;
+}
+.net-rate-v.down:not(.is-zero) { color: var(--cyan-500); }
+.net-rate-v.up:not(.is-zero) { color: var(--purple-500); }
+.net-rate-v.on { color: var(--accent); }
+.net-totals {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 9.5px;
+  color: var(--text-500);
+  white-space: nowrap;
+}
+.net-updated {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  color: var(--text-500);
+}
+.net-totals b {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-300);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
 /* ── 解锁状态 · 聚合网格（v16）─────────────────────────────────
    6 个品牌磁贴代替 6 行文字：未测试时整体去饱和，测出结果恢复品牌色。
    颜色本身就是状态信号 —— 不用逐行读文字就知道哪些通、哪些不通。 */

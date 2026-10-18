@@ -728,6 +728,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   const [editUid, setEditUid] = useState<string | null>(null);
   const [exitIp, setExitIp] = useState<ExitIpInfo | null>(null);
   const [exitIpLoading, setExitIpLoading] = useState(false);
+  // 最近一次成功检测的时间：卡片底部显示「更新于 HH:MM」，让读数有新鲜度
+  const [exitIpAt, setExitIpAt] = useState(0);
 
   const [nodeUri, setNodeUri] = useState("");
   const [providers, setProviders] = useState<{ proxies: string[]; rules: string[] }>({
@@ -1641,6 +1643,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         }
         if (gen !== exitIpGenRef.current) return;
         setExitIp(result);
+        if (result.ip) setExitIpAt(Date.now());
         if (!result.ip && !opts.silent) showToast("IP 检测失败，请点击重试");
       } finally {
         if (gen === exitIpGenRef.current) setExitIpLoading(false);
@@ -3365,87 +3368,147 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                   运行时长与内核移到 hero，流量并入出口 IP。 */}
               {/* 出口 IP 卡：消费此前「只检测不显示」的 exitIp 数据（见 useEffect @ running）。
                   原「快捷操作」4 个按钮的跳转目标在左侧导航中均已一键可达，属纯重复，故移除。 */}
-              <div className="card">
-                <div className="card-header no-border">
+              <div className="card net-card">
+                <div className="card-header no-border net-hd">
                   <div className="card-title text-base">{t("exit.network", "网络状态")}</div>
+                  {/* 走哪条网络放在标题行：位置行因此能占满整宽，不会把「China · Henan · Xinyang」截断 */}
+                  <span
+                    className={`net-via${(exitIp?.viaProxy ?? sysProxy) ? " on" : ""}`}
+                    title={
+                      (exitIp?.viaProxy ?? sysProxy)
+                        ? t("exit.viaProxyHint", "经系统代理检测（当前出口为代理节点）")
+                        : t("exit.viaDirectHint", "系统代理未开启，当前显示直连出口")
+                    }
+                  >
+                    <i
+                      className={`net-dot${(exitIp?.viaProxy ?? sysProxy) ? " on" : ""}`}
+                      aria-hidden="true"
+                    />
+                    {(exitIp?.viaProxy ?? sysProxy)
+                      ? t("exit.viaProxy", "系统代理")
+                      : t("exit.viaDirect", "直连")}
+                  </span>
                   <button
                     type="button"
-                    className="btn ghost btn-xs"
+                    className="net-refresh"
                     onClick={() => void refreshExitIp()}
                     disabled={!running || exitIpLoading}
                     title={t("exit.refreshing", "重新检测出口 IP")}
+                    aria-label={t("exit.refreshing", "重新检测出口 IP")}
                   >
-                    {exitIpLoading ? t("exit.detecting", "检测中…") : t("common.refresh", "刷新")}
+                    <RefreshCw
+                      size={13}
+                      className={exitIpLoading ? "animate-spin" : ""}
+                      aria-hidden="true"
+                    />
                   </button>
                 </div>
-                <div className="card-body tight">
+                <div className="card-body tight net-body">
                   {!running ? (
-                    <div className="text-xs text-muted">{t("exit.coreDown", "内核未运行")}</div>
+                    <div className="net-empty">{t("exit.coreDown", "内核未运行")}</div>
                   ) : exitIpLoading && !exitIp ? (
-                    <div className="text-xs text-muted">{t("exit.detecting", "正在检测…")}</div>
+                    <div className="net-empty">{t("exit.detecting", "正在检测…")}</div>
                   ) : exitIp?.ip ? (
-                    <div className="exit-state">
-                      <div className="exit-state-loc">
-                        <span className="exit-dot" aria-hidden="true" />
+                    <div className="net">
+                      {/* 出口位置：国家 · 省/州 · 城市（去重后拼接，长名字交给 ellipsis） */}
+                      <div className="net-route">
                         {countryBadge(exitIp.countryCode) ? (
-                          <span className="exit-flag">{countryBadge(exitIp.countryCode)}</span>
+                          <span className="net-cc">{countryBadge(exitIp.countryCode)}</span>
                         ) : null}
-                        <span className="exit-loc" title={[exitIp.country, exitIp.city].filter(Boolean).join(" · ")}>
-                          {[exitIp.country, exitIp.city].filter(Boolean).join(" · ") || "—"}
-                        </span>
-                        {/* 标明这次检测走的是哪条网络：系统代理开=代理出口，关=直连出口 */}
                         <span
-                          className={`exit-via${(exitIp.viaProxy ?? sysProxy) ? " on" : ""}`}
-                          title={
-                            (exitIp.viaProxy ?? sysProxy)
-                              ? t("exit.viaProxyHint", "经系统代理检测（当前出口为代理节点）")
-                              : t("exit.viaDirectHint", "系统代理未开启，当前显示直连出口")
-                          }
+                          className="net-loc"
+                          title={[...new Set([exitIp.country, exitIp.region, exitIp.city].filter(Boolean))].join(" · ")}
                         >
-                          {(exitIp.viaProxy ?? sysProxy)
-                            ? t("exit.viaProxy", "系统代理")
-                            : t("exit.viaDirect", "直连")}
+                          {[...new Set([exitIp.country, exitIp.region, exitIp.city].filter(Boolean))].join(" · ") ||
+                            "—"}
                         </span>
                       </div>
-                      <div className="exit-state-ip">
-                        <span className="exit-ip" title={exitIp.ip}>
-                          {exitIp.ip}
-                        </span>
-                        <button
-                          type="button"
-                          className="btn ghost btn-xs exit-copy"
-                          onClick={() => {
-                            navigator.clipboard?.writeText(exitIp.ip || "");
-                            showToast(t("exit.copied", "已复制出口 IP"));
-                          }}
-                          title={t("exit.copy", "复制出口 IP")}
-                        >
-                          {t("exit.copy", "复制")}
-                        </button>
+
+                      {/* 出口 IP：等宽大字 + 复制；v6 地址带标记 */}
+                      <div className="net-ipbox">
+                        <div className="net-ip-hd">
+                          <span className="net-ip-k">
+                            {t("exit.ip", "出口 IP")}
+                            {exitIp.ip.includes(":") ? <em className="net-tag">IPv6</em> : null}
+                          </span>
+                          <button
+                            type="button"
+                            className="net-copy"
+                            onClick={() => {
+                              navigator.clipboard?.writeText(exitIp.ip || "");
+                              showToast(t("exit.copied", "已复制出口 IP"));
+                            }}
+                            title={t("exit.copy", "复制出口 IP")}
+                          >
+                            <Copy size={11} aria-hidden="true" />
+                            {t("exit.copy", "复制")}
+                          </button>
+                        </div>
+                        <div className="net-ip" title={exitIp.ip}>{exitIp.ip}</div>
                       </div>
-                      <div className="exit-state-isp" title={exitIp.isp || exitIp.org || ""}>
-                        {exitIp.isp || exitIp.org || "—"}
+
+                      {/* 归属明细：运营商的 ASN / 组织、时区 */}
+                      <div className="net-meta">
+                        {exitIp.isp ? (
+                          <div className="net-row">
+                            <span>{t("exit.isp", "运营商")}</span>
+                            <b title={exitIp.isp}>{exitIp.isp}</b>
+                          </div>
+                        ) : null}
+                        {exitIp.as || exitIp.org ? (
+                          <div className="net-row">
+                            <span>{t("exit.asn", "网络")}</span>
+                            {/* 只显示 AS 号，组织名放 title：ISP 已经在上一条，重复展开会把值挤成省略号 */}
+                            <b title={[exitIp.as, exitIp.org].filter(Boolean).join(" · ")}>
+                              {exitIp.as || exitIp.org}
+                            </b>
+                          </div>
+                        ) : null}
+                        {exitIp.timezone ? (
+                          <div className="net-row">
+                            <span>{t("exit.timezone", "时区")}</span>
+                            <b>{exitIp.timezone}</b>
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="exit-state-sep" />
-                      <div className="exit-state-rates">
-                        <div className="exit-state-rate">
-                          <span className="exit-rate-k">{t("home.download", "下载")}</span>
-                          <span className={`exit-rate-v${downRate > 0 ? " down" : ""}`}>
+
+                      <div className="net-sep" aria-hidden="true" />
+
+                      {/* 实时速率 + 连接数三栏，累计单独一行贴底 */}
+                      <div className="net-rates">
+                        <div className="net-rate">
+                          <span className="net-rate-k">↓ {t("home.download", "下载")}</span>
+                          <span className={`net-rate-v down${downRate > 0 ? "" : " is-zero"}`}>
                             {formatRate(downRate)}
                           </span>
                         </div>
-                        <div className="exit-state-rate">
-                          <span className="exit-rate-k">{t("home.upload", "上传")}</span>
-                          <span className={`exit-rate-v${upRate > 0 ? " up" : ""}`}>
+                        <div className="net-rate">
+                          <span className="net-rate-k">↑ {t("home.upload", "上传")}</span>
+                          <span className={`net-rate-v up${upRate > 0 ? "" : " is-zero"}`}>
                             {formatRate(upRate)}
                           </span>
                         </div>
+                        <div className="net-rate net-rate-conn">
+                          <span className="net-rate-k">{t("nav.connections", "连接")}</span>
+                          <span className={`net-rate-v${connCount > 0 ? " on" : " is-zero"}`}>
+                            {connCount}
+                          </span>
+                        </div>
                       </div>
-                      <div className="exit-state-total">
-                        <span className="exit-total-k">{t("exit.total", "累计")}</span>
-                        <span className="exit-total-v">
-                          ↓ {formatBytes(download)} · ↑ {formatBytes(upload)}
-                        </span>
+                      <div className="net-totals">
+                        <span>{t("exit.total", "累计")}</span>
+                        <b>↓ {formatBytes(download)}</b>
+                        <b>↑ {formatBytes(upload)}</b>
+                        {exitIpAt ? (
+                          <span className="net-updated">
+                            {t("exit.updated", "更新于")}{" "}
+                            {new Date(exitIpAt).toLocaleTimeString(getLocale(), {
+                              hour12: false,
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   ) : (

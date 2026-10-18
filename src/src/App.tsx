@@ -662,6 +662,16 @@ export default function App() {
     channel?: string;
     items: string[];
   } | null>(null);
+  // 启动后主进程自动查到新版本 → 弹提醒；下载进度也在这里
+  const [autoUpdate, setAutoUpdate] = useState<{
+    latest: string;
+    current?: string;
+    assetSize?: number;
+    htmlUrl?: string;
+  } | null>(null);
+  const [updPct, setUpdPct] = useState(-1);
+  const [updBusy, setUpdBusy] = useState(false);
+  const [updMsg, setUpdMsg] = useState("");
   useEffect(() => {
     let alive = true;
     window.veyra
@@ -688,6 +698,45 @@ export default function App() {
   const closeUpdateNotes = () => {
     setUpdateNotes(null);
     window.veyra?.markVersionSeen?.().catch(() => {});
+  };
+  // 主进程启动 6s 后静默检查更新：有新版本就弹提醒；下载进度实时回填
+  useEffect(() => {
+    const offAvailable = window.veyra?.onUpdateAvailable?.((info) => {
+      if (!info?.hasUpdate) return;
+      setAutoUpdate({
+        latest: info.latest,
+        current: info.current,
+        assetSize: info.assetSize,
+        htmlUrl: info.htmlUrl,
+      });
+      setUpdPct(-1);
+      setUpdBusy(false);
+      setUpdMsg("");
+    });
+    const offProgress = window.veyra?.onUpdateProgress?.((p) => {
+      if (p && typeof p.pct === "number") setUpdPct(p.pct);
+    });
+    return () => {
+      offAvailable?.();
+      offProgress?.();
+    };
+  }, []);
+  const startAppUpdate = async () => {
+    setUpdBusy(true);
+    setUpdMsg("");
+    setUpdPct(-1);
+    try {
+      const r = await window.veyra!.downloadAppUpdate();
+      if (r.started) {
+        setUpdMsg("安装程序已启动，请按提示完成升级");
+      } else {
+        setUpdMsg("已是最新版本");
+      }
+    } catch (e) {
+      setUpdMsg(`下载失败：${(e as Error).message || e}`);
+    } finally {
+      setUpdBusy(false);
+    }
   };
   useEffect(() => {
     if (!ctxMenu) return;
@@ -3531,6 +3580,87 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       {toast && (
         <div className="toast" role="status" aria-live="polite">
           {toast}
+        </div>
+      )}
+
+      {autoUpdate && (
+        <div
+          className="modal-mask"
+          onClick={() => {
+            if (!updBusy) setAutoUpdate(null);
+          }}
+        >
+          <div
+            className="modal-box upd-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("update.available", "发现新版本")}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="upd-hd">
+              <div className="upd-mark" aria-hidden="true">
+                <ArrowUp size={16} />
+              </div>
+              <div className="upd-hd-txt">
+                <div className="upd-title">
+                  {t("update.available", "发现新版本")} <b>v{autoUpdate.latest}</b>
+                </div>
+                <div className="upd-sub">
+                  {t("update.current", "当前")} v{autoUpdate.current || version}
+                  {autoUpdate.assetSize ? ` · ${formatBytes(autoUpdate.assetSize)}` : ""}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="home-cfg-close"
+                onClick={() => {
+                  if (!updBusy) setAutoUpdate(null);
+                }}
+                disabled={updBusy}
+                aria-label={t("common.cancel", "取消")}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="upd-body">
+              <p className="upd-desc">
+                {t("update.desc", "新版本已发布。下载完成后会自动打开安装程序，按提示完成升级即可。")}
+              </p>
+              {updBusy && (
+                <div className="upd-progress">
+                  <div className="upd-bar">
+                    <i style={{ width: `${updPct < 0 ? 4 : Math.max(4, updPct)}%` }} />
+                  </div>
+                  <span className="upd-pct">{updPct < 0 ? t("update.preparing", "准备中…") : `${updPct}%`}</span>
+                </div>
+              )}
+              {updMsg ? <div className="upd-msg">{updMsg}</div> : null}
+            </div>
+            <div className="upd-actions">
+              {updBusy ? (
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => {
+                    window.veyra?.cancelAppUpdate?.().catch(() => {});
+                    setUpdMsg(t("update.cancelled", "已取消下载"));
+                    setUpdBusy(false);
+                  }}
+                >
+                  {t("update.cancel", "取消下载")}
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="btn ghost" onClick={() => setAutoUpdate(null)}>
+                    {t("update.later", "稍后")}
+                  </button>
+                  <button type="button" className="btn primary" onClick={() => void startAppUpdate()}>
+                    {t("update.install", "下载并安装")}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

@@ -13,6 +13,19 @@ contextBridge.exposeInMainWorld("veyra", {
   changelog: () => ipcRenderer.invoke("app:changelog"),
   updateNotes: () => ipcRenderer.invoke("app:updateNotes"),
   markVersionSeen: () => ipcRenderer.invoke("app:markVersionSeen"),
+  // 启动后自动检查更新：主进程发现新版本时推送，渲染层弹提醒
+  onUpdateAvailable: (cb) => {
+    const fn = (_e, data) => cb(data);
+    ipcRenderer.on("app:updateAvailable", fn);
+    return () => ipcRenderer.removeListener("app:updateAvailable", fn);
+  },
+  // 下载进度：{ pct, received, total }
+  onUpdateProgress: (cb) => {
+    const fn = (_e, data) => cb(data);
+    ipcRenderer.on("app:updateProgress", fn);
+    return () => ipcRenderer.removeListener("app:updateProgress", fn);
+  },
+  cancelAppUpdate: () => ipcRenderer.invoke("app:cancelUpdate"),
   // 无边框窗口拖动：渲染层把鼠标的屏幕坐标发过来，主进程换算成窗口位置
   windowDragStart: (x, y) => ipcRenderer.send("window:drag-start", x, y),
   windowDragMove: (x, y) => ipcRenderer.send("window:drag-move", x, y),

@@ -1994,12 +1994,32 @@ function downloadToFile(url, dest) {
   );
 }
 
+/** 正在跑的 PowerShell 下载进程（取消用）与取消标记 */
+let updateDownloadProc = null;
+let updateDownloadCancelled = false;
+
+function statSize(p) {
+  try {
+    return fs.statSync(p).size;
+  } catch {
+    return 0;
+  }
+}
+
+function emitUpdateProgress(received, total) {
+  const pct = total > 0 ? Math.min(99, Math.round((received / total) * 100)) : 0;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("app:updateProgress", { pct, received, total });
+  }
+}
+
 /**
  * 经本地混合端口下载（HTTPS 走 PowerShell WebProxy 的 CONNECT 隧道）。
  * 背景：GitHub release 资源会 302 到 objects.githubusercontent.com，国内直连经常被重置；
  * 内核本来就在本机跑着，走一次本地代理最省事，也不要求用户先开系统代理。
+ * 进度：PowerShell 直接写目标文件，这里每 600ms 看一次文件大小推给渲染层。
  */
-function downloadViaProxy(urlStr, dest, proxyUrl, timeoutMs = 30 * 60_000) {
+function downloadViaProxy(urlStr, dest, proxyUrl, timeoutMs = 10 * 60_000, onTick = null) {
   const q = (s) => String(s).replace(/'/g, "''");
   const script = `
 $ProgressPreference='SilentlyContinue'
@@ -2022,21 +2042,29 @@ try {
 }
 `;
   return new Promise((resolve, reject) => {
-    execFile(
+    let tick = null;
+    const child = execFile(
       "powershell",
       ["-NoProfile", "-Command", script],
       { timeout: timeoutMs + 5000, windowsHide: true },
       (err, _stdout, stderr) => {
+        if (tick) clearInterval(tick);
+        updateDownloadProc = null;
         if (err) {
           try {
             fs.unlinkSync(dest);
           } catch {}
-          reject(new Error((stderr || err.message || "download failed").toString().trim().slice(0, 240)));
+          const msg = updateDownloadCancelled
+            ? "已取消下载"
+            : (stderr || err.message || "download failed").toString().trim().slice(0, 240);
+          reject(new Error(msg));
           return;
         }
         resolve(dest);
       }
     );
+    updateDownloadProc = child;
+    if (onTick) tick = setInterval(onTick, 600);
   });
 }
 
@@ -2045,30 +2073,36 @@ async function downloadAppUpdate() {
   if (!info.hasUpdate) return { ...info, started: false };
   if (!info.assetUrl) throw new Error("发布页没有 Windows 安装包");
   const dest = path.join(app.getPath("temp"), info.assetName || "Veyra-omini-Setup.exe");
+  const total = Number(info.assetSize) || 0;
+  const tick = () => emitUpdateProgress(statSize(dest), total);
+  try {
+    fs.unlinkSync(dest);
+  } catch {}
+  updateDownloadCancelled = false;
   let lastErr = null;
-  // 国内直连 GitHub 发布资源经常被重置：内核在跑时先走本地混合端口
+
+  // 内核在跑时先走本地混合端口：国内直连 GitHub 发布资源经常被重置
   if (coreOnline) {
     try {
-      await downloadViaProxy(info.assetUrl, dest, `http://127.0.0.1:${MIXED_PORT}`);
+      await downloadViaProxy(info.assetUrl, dest, `http://127.0.0.1:${MIXED_PORT}`, 10 * 60_000, tick);
+      tick();
     } catch (e) {
       lastErr = e;
+      if (updateDownloadCancelled) throw e;
     }
   }
-  const sizeOf = () => {
-    try {
-      return fs.statSync(dest).size;
-    } catch {
-      return 0;
-    }
-  };
-  if (sizeOf() < 1024) {
+  // 回退直连
+  if (statSize(dest) < 1024) {
+    const timer = setInterval(tick, 700);
     try {
       await downloadToFile(info.assetUrl, dest);
     } catch (e) {
       lastErr = e;
+    } finally {
+      clearInterval(timer);
     }
   }
-  const size = sizeOf();
+  const size = statSize(dest);
   if (size < 1024) {
     try {
       fs.unlinkSync(dest);
@@ -2076,15 +2110,32 @@ async function downloadAppUpdate() {
     throw lastErr || new Error("安装包下载失败");
   }
   // 大小对不上就当作下载被截断：宁可报错，也不要运行半截的安装包
-  if (info.assetSize && Math.abs(size - info.assetSize) > 1024) {
+  if (total && Math.abs(size - total) > 1024) {
     try {
       fs.unlinkSync(dest);
     } catch {}
-    throw new Error(`安装包不完整（${size} / ${info.assetSize} 字节），请重试`);
+    throw new Error(`安装包不完整（${size} / ${total} 字节），请重试`);
   }
+  emitUpdateProgress(size, total || size);
   const opened = await shell.openPath(dest);
   if (opened) throw new Error(opened);
   return { ...info, started: true, path: dest };
+}
+
+/** 启动后静默检查一次更新：有新版就推给渲染层弹提醒（每次启动只弹一次） */
+let updatePrompted = false;
+async function promptUpdateIfAny() {
+  if (updatePrompted) return;
+  try {
+    const info = await checkAppUpdate();
+    if (!info.hasUpdate) return;
+    updatePrompted = true;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("app:updateAvailable", info);
+    }
+  } catch {
+    /* 网络受限/限流时静默失败，不打扰用户 */
+  }
 }
 
 async function checkCoreUpdate(core = activeCore) {
@@ -3079,6 +3130,13 @@ function registerIpc() {
   });
   ipcMain.handle("app:checkUpdate", async () => checkAppUpdate());
   ipcMain.handle("app:downloadUpdate", async () => downloadAppUpdate());
+  ipcMain.handle("app:cancelUpdate", async () => {
+    updateDownloadCancelled = true;
+    try {
+      updateDownloadProc?.kill();
+    } catch {}
+    return { ok: true };
+  });
   ipcMain.handle("connections:closeAll", async () => {
     try {
       return await api("/connections", "DELETE");
@@ -3793,6 +3851,10 @@ app.whenReady().then(async () => {
   await syncSystemProxyState();
   createWindow();
   createTray();
+  // 启动 6s 后静默检查一次更新：有新版就推给渲染层弹提醒（不阻塞启动）
+  setTimeout(() => {
+    void promptUpdateIfAny();
+  }, 6000);
   if (appSettings.lightweightMode) setLightweight(true);
   // 窗口隐藏时渲染层定时器会被节流，主进程每 3s 主动校准一次注册表，
   // 保证托盘图标/菜单与真实系统代理一致，再推给窗口。

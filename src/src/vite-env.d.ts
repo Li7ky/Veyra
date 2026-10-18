@@ -193,6 +193,23 @@ export interface VeyraAPI {
     path?: string;
     assetName?: string;
   }>;
+  /** 启动后自动检查到新版本时由主进程推送 */
+  onUpdateAvailable: (
+    cb: (data: {
+      current: string;
+      latest: string;
+      name?: string;
+      htmlUrl?: string;
+      prerelease?: boolean;
+      hasUpdate: boolean;
+      assetName?: string;
+      assetUrl?: string;
+      assetSize?: number;
+    }) => void
+  ) => () => void;
+  /** 安装包下载进度 */
+  onUpdateProgress: (cb: (data: { pct: number; received: number; total: number }) => void) => () => void;
+  cancelAppUpdate: () => Promise<{ ok: boolean }>;
   updateCore: () => Promise<unknown>;
   matchCoreBuild: () => Promise<unknown>;
   switchCore: (core: string) => Promise<unknown>;

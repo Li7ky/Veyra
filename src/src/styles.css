@@ -5769,6 +5769,95 @@ label.switch.compact input[type="checkbox"]:checked::after { transform: translat
   border-top: 1px solid var(--card-border);
 }
 
+/* ── 发现新版本弹窗（自动更新提醒） ───────────────────────── */
+.upd-modal {
+  width: 388px;
+  max-width: calc(100vw - 64px);
+  padding: 0;
+  overflow: hidden;
+}
+.upd-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--card-border);
+}
+.upd-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.upd-hd-txt { flex: 1; min-width: 0; }
+.upd-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-100);
+}
+.upd-title b {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.upd-sub {
+  margin-top: 3px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-500);
+}
+.upd-body { padding: 14px 18px 2px; }
+.upd-desc {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-400);
+}
+.upd-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.upd-bar {
+  flex: 1;
+  height: 6px;
+  overflow: hidden;
+  background: var(--bg-soft);
+  border-radius: 3px;
+}
+.upd-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.25s var(--ease);
+}
+.upd-pct {
+  flex: none;
+  min-width: 44px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-align: right;
+  color: var(--text-400);
+}
+.upd-msg {
+  padding: 6px 0 2px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-400);
+}
+.upd-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 16px;
+}
+
 /* 设置 → 关于 → 更新内容 */
 .changelog { display: flex; flex-direction: column; gap: 16px; }
 .changelog-item + .changelog-item {

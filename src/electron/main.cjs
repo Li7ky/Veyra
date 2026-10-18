@@ -1994,12 +1994,94 @@ function downloadToFile(url, dest) {
   );
 }
 
+/**
+ * 经本地混合端口下载（HTTPS 走 PowerShell WebProxy 的 CONNECT 隧道）。
+ * 背景：GitHub release 资源会 302 到 objects.githubusercontent.com，国内直连经常被重置；
+ * 内核本来就在本机跑着，走一次本地代理最省事，也不要求用户先开系统代理。
+ */
+function downloadViaProxy(urlStr, dest, proxyUrl, timeoutMs = 30 * 60_000) {
+  const q = (s) => String(s).replace(/'/g, "''");
+  const script = `
+$ProgressPreference='SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+try {
+  $req = [System.Net.HttpWebRequest]::Create('${q(urlStr)}')
+  $req.UserAgent = 'Veyra-omini'
+  $req.Timeout = 20000
+  $req.ReadWriteTimeout = 120000
+  $req.AllowAutoRedirect = $true
+  $req.Proxy = New-Object System.Net.WebProxy('${q(proxyUrl)}', $true)
+  $resp = $req.GetResponse()
+  $fs = [System.IO.File]::Create('${q(dest)}')
+  $resp.GetResponseStream().CopyTo($fs)
+  $fs.Close()
+  $resp.Close()
+} catch {
+  [Console]::Error.WriteLine($_.Exception.GetBaseException().Message)
+  exit 1
+}
+`;
+  return new Promise((resolve, reject) => {
+    execFile(
+      "powershell",
+      ["-NoProfile", "-Command", script],
+      { timeout: timeoutMs + 5000, windowsHide: true },
+      (err, _stdout, stderr) => {
+        if (err) {
+          try {
+            fs.unlinkSync(dest);
+          } catch {}
+          reject(new Error((stderr || err.message || "download failed").toString().trim().slice(0, 240)));
+          return;
+        }
+        resolve(dest);
+      }
+    );
+  });
+}
+
 async function downloadAppUpdate() {
   const info = await checkAppUpdate();
   if (!info.hasUpdate) return { ...info, started: false };
   if (!info.assetUrl) throw new Error("发布页没有 Windows 安装包");
   const dest = path.join(app.getPath("temp"), info.assetName || "Veyra-omini-Setup.exe");
-  await downloadToFile(info.assetUrl, dest);
+  let lastErr = null;
+  // 国内直连 GitHub 发布资源经常被重置：内核在跑时先走本地混合端口
+  if (coreOnline) {
+    try {
+      await downloadViaProxy(info.assetUrl, dest, `http://127.0.0.1:${MIXED_PORT}`);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  const sizeOf = () => {
+    try {
+      return fs.statSync(dest).size;
+    } catch {
+      return 0;
+    }
+  };
+  if (sizeOf() < 1024) {
+    try {
+      await downloadToFile(info.assetUrl, dest);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  const size = sizeOf();
+  if (size < 1024) {
+    try {
+      fs.unlinkSync(dest);
+    } catch {}
+    throw lastErr || new Error("安装包下载失败");
+  }
+  // 大小对不上就当作下载被截断：宁可报错，也不要运行半截的安装包
+  if (info.assetSize && Math.abs(size - info.assetSize) > 1024) {
+    try {
+      fs.unlinkSync(dest);
+    } catch {}
+    throw new Error(`安装包不完整（${size} / ${info.assetSize} 字节），请重试`);
+  }
   const opened = await shell.openPath(dest);
   if (opened) throw new Error(opened);
   return { ...info, started: true, path: dest };

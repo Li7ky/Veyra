@@ -2,6 +2,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -843,6 +844,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
   const toastTimer = useRef<number | null>(null);
   const lastSeqRef = useRef(0);
+  // 侧栏底部状态区：它的上边距要按首页信息表的实际位置算（见下面的 useLayoutEffect）
+  const railStatusRef = useRef<HTMLElement | null>(null);
   const trafficRef = useRef<{ up: number; down: number; t: number } | null>(null);
   // 速率显示平滑：轮询间隔抖动会让差值速率忽大忽小，用 EMA 压平
   const upRateRef = useRef(0);
@@ -1320,6 +1323,49 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   useEffect(() => {
     setPfSeen((seen) => (seen[pfTab] ? seen : { ...seen, [pfTab]: true }));
   }, [pfTab]);
+
+  // 侧栏状态区的最后一行（内核 / Mihomo）与首页右下信息表的最后一行（运行环境）齐平。
+  // 信息表的位置取决于上方流量卡的高度（随窗口尺寸变化），CSS 固定 margin 做不到，
+  // 所以按实际几何量补上边距：窗口 resize / 信息表尺寸变化时重算，只写回整数 px。
+  useLayoutEffect(() => {
+    if (tab !== "home") return;
+    const status = railStatusRef.current;
+    const table = document.querySelector<HTMLElement>(".home-sysinfo");
+    if (!status) return;
+    if (!table) {
+      // 关掉「系统」卡片组时没有信息表，回到 CSS 里的默认间距
+      status.style.marginTop = "";
+      return;
+    }
+    let raf = 0;
+    const align = () => {
+      raf = 0;
+      const lastRow = status.querySelector<HTMLElement>(".rail-metrics li:last-child");
+      const cells = table.querySelectorAll<HTMLElement>(".sysinfo-item");
+      const lastCell = cells[cells.length - 1];
+      if (!lastRow || !lastCell) return;
+      const a = lastRow.getBoundingClientRect();
+      const b = lastCell.getBoundingClientRect();
+      if (a.height < 1 || b.height < 1) return;
+      const delta = b.top + b.height / 2 - (a.top + a.height / 2);
+      const cur = parseFloat(getComputedStyle(status).marginTop) || 0;
+      const next = Math.max(16, Math.round(cur + delta));
+      if (Math.abs(next - cur) > 0.5) status.style.marginTop = `${next}px`;
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(align);
+    };
+    align();
+    window.addEventListener("resize", schedule);
+    const ro = new ResizeObserver(schedule);
+    ro.observe(table);
+    ro.observe(status);
+    return () => {
+      window.removeEventListener("resize", schedule);
+      ro.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [tab, homeCards]);
 
   const currentGroup = useMemo(() => groups.find((g) => g.name === selectedGroup), [groups, selectedGroup]);
 
@@ -2033,6 +2079,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 {/* 状态页脚：点 + 状态字 + 右对齐运行时长。卡片里就这一件「实时」的事，
                     不再要「系统状态」这种冗余标题。 */}
                 <section
+                  ref={railStatusRef}
                   className={`rail-status${running ? " is-on" : ""}`}
                   aria-label={t("nav.sysStatus", "System status")}
                 >

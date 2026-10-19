@@ -36,7 +36,6 @@ import {
   Server,
   ShieldCheck,
   SlidersHorizontal,
-  Square,
   Terminal,
   Trash2,
   X,
@@ -943,7 +942,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   const hasTraffic =
     rateHistory.down.some((v) => v > 0) || rateHistory.up.some((v) => v > 0);
   const [banner, setBanner] = useState("");
-  const [isMaximized, setIsMaximized] = useState(false);
   const [homeCfgOpen, setHomeCfgOpen] = useState(false);
   const [homeCfgDraft, setHomeCfgDraft] = useState(homeCards);
   // 启动冲突模态对话框
@@ -1082,22 +1080,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     return () => window.removeEventListener("keydown", onKey);
   }, [homeCfgOpen]);
 
-  // 窗口最大化状态：标题栏「最大化/还原」按钮的图标切换
-  useEffect(() => {
-    if (!window.veyra) return;
-    let alive = true;
-    void window.veyra
-      .isMaximized?.()
-      .then((v) => {
-        if (alive) setIsMaximized(!!v);
-      })
-      .catch(() => {});
-    const off = window.veyra.onMaximizedChange?.((v) => setIsMaximized(!!v));
-    return () => {
-      alive = false;
-      off?.();
-    };
-  }, []);
+  // 窗口尺寸固定，不再需要「最大化状态」订阅（标题栏已无最大化按钮）
 
   const showToast = useCallback((msg: string, ms = 2400) => {
     setToast(msg);
@@ -2195,7 +2178,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     <div className={`app ${busy ? "busy" : ""} ${running ? "is-on" : ""} ${sysProxy ? "proxy-on" : ""}`}>
       <div className="container">
         {/* Header */}
-        <header className="header" onMouseDown={onHeaderMouseDown} onDoubleClick={() => window.veyra?.maximize()}>
+        <header className="header" onMouseDown={onHeaderMouseDown}>
           <div className="header-brand">
             <svg
               viewBox="0 0 24 24"
@@ -2257,15 +2240,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
               >
                 <PanelRight size={17} />
               </button>
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={() => window.veyra?.maximize()}
-                aria-label={isMaximized ? "还原窗口" : "最大化"}
-                title={isMaximized ? "还原窗口" : "最大化"}
-              >
-                {isMaximized ? <Copy size={17} /> : <Square size={17} />}
-              </button>
+              {/* 窗口尺寸固定：不再提供最大化/还原按钮 */}
               <button type="button" className="icon-btn" onClick={() => window.veyra?.minimize()} aria-label={t("nav.minimize", "Minimize")} title={t("nav.minimize", "Minimize")}>
                 <Minus size={17} />
               </button>
@@ -2596,7 +2571,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       {homeCards.system && electronVersion ? (
                         <div className="sysinfo-item">
                           <span>{t("home.sysRuntime", "运行环境")}</span>
-                          <b>Electron {electronVersion}</b>
+                          <b>运行时 {electronVersion}</b>
                         </div>
                       ) : null}
                       {homeCards.system && mihomoChannel ? (

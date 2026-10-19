@@ -272,7 +272,7 @@ export interface VeyraAPI {
   }>;
   closeConnection?: (id: string) => Promise<unknown>;
   listRules?: () => Promise<{ rules?: { payload: string; type?: string }[] }>;
-  saveVisualRules?: (rules: string[]) => Promise<{ ok: boolean; warnings?: string[] }>;
+  saveVisualRules?: (rules: string[]) => Promise<{ ok: boolean; unchanged?: boolean; warnings?: string[] }>;
   listProviders?: () => Promise<{ proxies: Record<string, unknown>; rules: Record<string, unknown> }>;
   updateProvider?: (kind: "proxies" | "rules", name: string) => Promise<unknown>;
   listProfiles: () => Promise<
@@ -371,7 +371,16 @@ export interface VeyraAPI {
   detectProxyConflict?: () => Promise<string[]>;
   fullConflictScan?: () => Promise<{ conflicts: Array<{ type: string; label: string; severity?: string; port?: number; proc?: string; family?: string }>; summary: string; severity?: string; counts?: { critical: number; high: number; medium: number } }>;
   /** 端口可用性自检：直接尝试绑定本机配置的端口 */
-  checkPorts?: () => Promise<{ mixedPort: number; controllerPort: number; mixedFree: boolean; ctrlFree: boolean }>;
+  checkPorts?: () => Promise<{
+    mixedPort: number;
+    controllerPort: number;
+    preferredMixedPort?: number;
+    preferredControllerPort?: number;
+    mixedFree: boolean;
+    ctrlFree: boolean;
+    running?: boolean;
+    drifted?: boolean;
+  }>;
   startConflictMonitor?: (on: boolean) => Promise<{ ok: boolean }>;
   getSelfIdentity?: () => Promise<{ app: string; version: string; pid: number; mixedPort: number | null; controllerPort: string | null; coreMode: string; startedAt: string; session: string } | null>;
   onConflictDetected?: (cb: (data: { items: string[]; severity: "critical" | "high" | "medium"; at: string }) => void) => () => void;
@@ -411,6 +420,7 @@ export interface VeyraAPI {
   openExternal: (url: string) => Promise<void>;
   getSettings: () => Promise<AppSettings>;
   setSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  resetSettings: () => Promise<AppSettings>;
   applyNetwork: (patch: Partial<AppSettings>) => Promise<{
     settings: AppSettings;
     mixedPort: number;

@@ -9,7 +9,8 @@ import ConfirmDialog, { type ConfirmRequest } from "./ConfirmDialog";
 function formatBytes(n = 0) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 ** 2).toFixed(2)} MB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(2)} MB`;
+  return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
 
 type SortKey = "upload" | "download" | "host" | "chain";

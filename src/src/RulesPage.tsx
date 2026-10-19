@@ -136,8 +136,9 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
               }
               onBusy(true);
               try {
-                await window.veyra?.saveVisualRules?.(userRows.map((r) => r.payload));
-                onToast(t("rule.saved"));
+                const r = await window.veyra?.saveVisualRules?.(userRows.map((r) => r.payload));
+                // 内容与内核当前规则完全一致时不写增强项（避免把订阅规则固化成快照）
+                onToast(r?.unchanged ? t("rule.unchanged", "规则没有变化") : t("rule.saved"));
                 await reload();
               } catch (e) {
                 onToast(String((e as Error).message || e));
@@ -154,6 +155,15 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
       <p className="s-muted" style={{ marginBottom: 12 }}>
         {t("rule.desc")}
       </p>
+
+      {rows.length > 0 && rows.every((r) => r.isBuiltin) ? (
+        <p className="s-muted" style={{ marginBottom: 12, color: "var(--amber-500)" }}>
+          {t(
+            "rule.builtinPreview",
+            "当前配置没有规则，下面是内置示例（仅预览，不会生效）。添加自己的规则后才会写入配置。"
+          )}
+        </p>
+      ) : null}
 
       <div className="import-bar" style={{ marginBottom: 12 }}>
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={t("rule.placeholder")} />

@@ -56,7 +56,7 @@ export async function runSelfCheck(running: boolean): Promise<SelfCheckResult> {
   push({
     id: "platform",
     label: "运行平台",
-    value: info ? `${info.platform}/${info.arch} · Electron ${info.electron}` : "读取失败",
+    value: info ? `${info.platform}/${info.arch} · ${info.electron}` : "读取失败",
     state: info ? "ok" : "warn",
   });
 
@@ -103,38 +103,69 @@ export async function runSelfCheck(running: boolean): Promise<SelfCheckResult> {
 
   // ── 端口 ─────────────────────────────────────────────────
   if (ports) {
-    // 内核在跑时端口本来就该被自己占着，这是正常的；但不能因此直接判 ok——
-    // 真实故障恰恰是「端口被占导致内核漂移到 +10003」：这种情况下
-    // ports.mixedFree 为假却仍然全绿，用户拿不到任何线索。
-    // 所以运行中也分三态：空闲 = ok，被占 = warn 并提示可能已漂移。
-    push({
-      id: "port-mixed",
-      label: `混合端口 ${ports.mixedPort}`,
-      value: ports.mixedFree
-        ? running ? "可用（由本程序内核占用）" : "可用"
-        : running ? "被占用，内核可能已漂移到其它端口" : "被其它程序占用",
-      state: ports.mixedFree ? "ok" : running ? "warn" : "fail",
-      hint: ports.mixedFree
-        ? undefined
-        : running
-          ? "端口被非本进程占用时内核会改用备用端口，界面显示的端口可能不是实际端口"
-          : "端口被别的程序占用，内核无法监听",
-      go: ports.mixedFree ? undefined : { section: "network", label: "去「网络」改端口" },
-    });
-    push({
-      id: "port-ctrl",
-      label: `控制端口 ${ports.controllerPort}`,
-      value: ports.ctrlFree
-        ? running ? "可用（由本程序内核占用）" : "可用"
-        : running ? "被占用，内核可能已漂移到其它端口" : "被其它程序占用",
-      state: ports.ctrlFree ? "ok" : running ? "warn" : "fail",
-      hint: ports.ctrlFree
-        ? undefined
-        : running
-          ? "控制端口被非本进程占用时读不到内核状态和节点列表，内核可能已改用备用端口"
-          : "控制端口被占用时读不到内核状态和节点列表",
-      go: ports.ctrlFree ? undefined : { section: "network", label: "去「网络」改端口" },
-    });
+    // 兼容旧主进程：没有 running 字段时退回渲染层已知的运行状态
+    const isRunning = ports.running ?? running;
+    // 运行中端口本来就该被自家内核占着 —— 不能再把「bind 不上」直接判成
+    // 「可能已漂移」：那样只要内核在跑，自检就永远挂两条橙色告警，
+    // 真正的漂移反而被噪音淹没。主进程现在会区分 running / drifted，
+    // 只有「运行时端口 ≠ 首选端口」才是异常。
+    const portItem = (
+      id: string,
+      label: string,
+      port: number,
+      free: boolean,
+      preferred: number,
+      section = "network"
+    ): SelfCheckItem => {
+      if (free) {
+        return { id, label, value: "可用", state: "ok" };
+      }
+      if (isRunning) {
+        if (ports.drifted && port !== preferred) {
+          return {
+            id,
+            label,
+            value: `已漂移到 ${port}（首选 ${preferred} 被占用）`,
+            state: "warn",
+            hint: "内核改用了备用端口；界面与系统代理都跟随实际端口，功能可用，但建议把首选端口改回空闲端口",
+            go: { section, label: "去「网络」改端口" },
+          };
+        }
+        return {
+          id,
+          label,
+          value: "由本程序内核占用",
+          state: "ok",
+        };
+      }
+      return {
+        id,
+        label,
+        value: "被其它程序占用",
+        state: "fail",
+        hint: "端口被别的程序占用，内核无法监听",
+        go: { section, label: "去「网络」改端口" },
+      };
+    };
+
+    push(
+      portItem(
+        "port-mixed",
+        `混合端口 ${ports.mixedPort}`,
+        ports.mixedPort,
+        ports.mixedFree,
+        ports.preferredMixedPort ?? ports.mixedPort
+      )
+    );
+    push(
+      portItem(
+        "port-ctrl",
+        `控制端口 ${ports.controllerPort}`,
+        ports.controllerPort,
+        ports.ctrlFree,
+        ports.preferredControllerPort ?? ports.controllerPort
+      )
+    );
   }
 
   // ── 冲突（来自 fullConflictScan） ─────────────────────────

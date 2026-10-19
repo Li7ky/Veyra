@@ -1,6 +1,6 @@
 /*
  * MOCK IPC BRIDGE for Veyra-omini web testing
- * Simulates window.veyra in browser context (without Electron)
+ * Simulates window.veyra in browser context (without the desktop backend)
  * Enables full UI interaction testing via browser-action automation
  */
 (function() {
@@ -264,7 +264,7 @@
     proxyEnvText: function() { return delay(100).then(function(){ return {text: 'http_proxy=http://127.0.0.1:' + state.settings.mixedPort + '\nhttps_proxy=http://127.0.0.1:' + state.settings.mixedPort + '\n'}; }); },
     openExternal: function(url) { console.log('[MOCK] openExternal:', url); return Promise.resolve(); },
     copyText: function(t) { console.log('[MOCK] copyText:', t); return Promise.resolve({}); },
-    appInfo: function() { return delay(50).then(function(){ return {name: 'Veyra-omini', version: '1.1.8', electron: '38.1.2', platform: 'win32', arch: 'x64', isDev: true}; }); },
+    appInfo: function() { return delay(50).then(function(){ return {name: 'Veyra-omini', version: '1.1.8', electron: 'Tauri 2', platform: 'win32', arch: 'x64', isDev: true}; }); },
     openPath: function(w) { return delay(100).then(function(){ return {}; }); },
     traffic: function() { return delay(200).then(function(){ return {downloadTotal: 1048576, uploadTotal: 524288, connections: []}; }); },
     onCoreStatus: function(cb) { return function(){}; },

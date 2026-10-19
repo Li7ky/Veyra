@@ -2,6 +2,10 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import { applyTheme, cachedTheme } from "./theme";
+import { installTauriBridge } from "./tauri-bridge";
+
+// Tauri 没有 preload，用同形状的桥接层注入 window.veyra。
+installTauriBridge();
 
 // 首帧用缓存的主题（上次选择/系统偏好），getSettings 返回后再用真实设置校准；
 // 之前硬编码 dark，浅色用户启动时会先闪一下深色。

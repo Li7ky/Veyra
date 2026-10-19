@@ -1,14 +1,13 @@
 # Third-party notices
 
-The application bundles Electron and an unmodified mihomo v1.19.15 Windows x64 compatible executable.
+The application bundles an unmodified mihomo v1.19.15 Windows x64 compatible executable and is built with Tauri 2.
 Component licenses are included in src/resources/licenses and the installed resources/licenses directory.
-Electron/Chromium also ships LICENSE.electron.txt and LICENSES.chromium.html alongside the executable.
 
 - mihomo: GPL-3.0, https://github.com/MetaCubeX/mihomo/tree/v1.19.15
-  The matching upstream source archive is included with this release as mihomo-v1.19.15-source.tar.gz.
-- Electron: MIT plus Chromium third-party licenses, https://github.com/electron/electron
+  Matching upstream source is available from that tag.
+- Tauri: Apache-2.0 OR MIT, https://github.com/tauri-apps/tauri
+- Microsoft Edge WebView2: Microsoft Edge WebView2 Runtime license, https://learn.microsoft.com/microsoft-edge/webview2/
 - Geist fonts: SIL Open Font License; see geist-LICENSE.txt.
-- rcedit (build tool): MIT; see rcedit-LICENSE.txt.
 - sing-box is optional and is downloaded separately; it is not bundled in this installer.
 
 ## Application dependencies
@@ -32,5 +31,7 @@ Electron/Chromium also ships LICENSE.electron.txt and LICENSES.chromium.html alo
 | scheduler | 0.28.0 | MIT |
 | state-local | 1.0.7 | MIT |
 | tslib | 2.8.1 | 0BSD |
+
+Rust dependency versions and their licenses are recorded in src/src-tauri/Cargo.lock and the crates.io metadata for each crate.
 
 These notices apply to the listed third-party components. No license for the original application code has been selected.

@@ -2438,6 +2438,34 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   border-radius: var(--radius-sm);
 }
 
+/* 窗口已固定 1080×680：四段栅格会把中列压到约 120px，
+   「内核运行中」被省略成「内核运…」、端口只剩 127.0.0.1:178。
+   收紧留白与字号，保证状态文案和 ip:port 完整可读。 */
+@media (max-width: 1160px) {
+  .hero {
+    gap: 12px;
+    padding: 14px 16px;
+  }
+  .hero-state {
+    font-size: 18px;
+  }
+  .hero-node-block {
+    min-width: 136px;
+    max-width: 186px;
+    padding-left: 12px;
+  }
+  .hero-btn {
+    padding: 7px 10px;
+  }
+  .hero-meta {
+    font-size: 11.5px;
+  }
+  .hero-meta code {
+    font-size: 11px;
+    padding: 2px 6px;
+  }
+}
+
 .hero-actions {
   display: flex;
   flex-direction: column;

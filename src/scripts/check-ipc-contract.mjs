@@ -1,107 +1,76 @@
 #!/usr/bin/env node
 /**
- * IPC 契约一致性校验
- *
- * 背景：Veyra 的 IPC 契约分散在三处手工维护——
- *   1. electron/preload.cjs   —— 实际暴露给渲染进程的 API
- *   2. electron/main.cjs      —— ipcMain.handle 注册的 channel
- *   3. src/vite-env.d.ts      —— 渲染进程看到的 TypeScript 类型
- *
- * 三处不同步会静默产生线上问题（例如 onCoreProgress 曾在 preload/main 中实现，
- * 但类型定义漏了，导致 tsc 报错、新代码无法使用该能力）。
- *
- * 本脚本把三处提取出来做机器比对，在 CI/提交前拦住漂移。
- * 用法：node scripts/check-ipc-contract.mjs
+ * IPC 契约检查（Tauri 版）：
+ *   1. 前端用到的每个 window.veyra.xxx 方法，必须在 src-tauri/src/commands.rs 的 dispatch 里有分支；
+ *   2. 前端订阅的每个 onXxx，必须在 src/tauri-bridge.ts 的 EVENTS 里注册；
+ *   3. EVENTS 映射到的事件名，必须在 Rust 侧至少 emit 过一次。
+ * 任何一项缺失都直接失败，避免「前端点了没反应」这类静默回归。
  */
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import fs from "node:fs";
+import path from "node:path";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const read = (p) => readFileSync(resolve(root, p), "utf8");
+const root = process.cwd();
+const read = (p) => fs.readFileSync(path.join(root, p), "utf8");
 
-/** 提取所有 ipcMain.handle("channel") */
-function extractHandled(src) {
-  return [...src.matchAll(/ipcMain\.handle\(\s*"([^"]+)"/g)].map((m) => m[1]);
+const rust = read("src-tauri/src/commands.rs");
+const bridge = read("src/tauri-bridge.ts");
+
+const methods = new Set();
+for (const line of rust.split(/\r?\n/)) {
+  if (!line.includes("=>")) continue;
+  const m = line.match(/^\s*((?:"[^"]+"\s*\|\s*)*"[^"]+")\s*=>/);
+  if (!m) continue;
+  for (const q of m[1].matchAll(/"([^"]+)"/g)) methods.add(q[1]);
 }
 
-/** 提取 preload 中 ipcRenderer.invoke("channel") */
-function extractInvoked(src) {
-  return [...src.matchAll(/ipcRenderer\.invoke\(\s*"([^"]+)"/g)].map((m) => m[1]);
+const events = new Map();
+for (const m of bridge.matchAll(/^\s*(on[A-Za-z0-9_]+):\s*"([^"]+)"/gm)) {
+  events.set(m[1], m[2]);
 }
 
-/** 提取 preload 中 ipcRenderer.on("channel") —— 主→渲染的单向事件 */
-function extractListened(src) {
-  return [...src.matchAll(/ipcRenderer\.on\(\s*"([^"]+)"/g)].map((m) => m[1]);
+const emitted = new Set();
+const rsDir = path.join(root, "src-tauri/src");
+for (const file of fs.readdirSync(rsDir)) {
+  if (!file.endsWith(".rs")) continue;
+  const text = fs.readFileSync(path.join(rsDir, file), "utf8");
+  // 兼容 app.emit("x", …) 与 tauri::Emitter::emit(&app, "x", …) 两种写法
+  for (const m of text.matchAll(/(?:\.emit|::emit)\(\s*(?:&?[A-Za-z0-9_:.]+,\s*)?"([^"]+)"/g)) {
+    emitted.add(m[1]);
+  }
 }
 
-/** 提取主进程 webContents.send("channel") 或 mainWindow?.webContents.send */
-function extractSent(src) {
-  return [...src.matchAll(/webContents\.send\(\s*"([^"]+)"/g)].map((m) => m[1]);
-}
+const walk = (dir) =>
+  fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) return e.name === "node_modules" ? [] : walk(p);
+    return [p];
+  });
 
-/**
- * 校验类型声明覆盖率：preload 暴露的每个 API 名（invoke 包装的函数名）
- * 在 vite-env.d.ts 中都应有对应声明。
- * preload 写法：`name: (args) => ipcRenderer.invoke("channel", ...)`
- */
-function extractPreloadApiNames(src) {
-  const names = [];
-  const re = /^\s{2}([A-Za-z_$][\w$]*)\s*:\s*(?:\(|\(.*?\)\s*=>)/gm;
-  for (const m of src.matchAll(re)) names.push(m[1]);
-  return names;
-}
-
-const mainSrc = read("electron/main.cjs");
-const preloadSrc = read("electron/preload.cjs");
-const dtsSrc = read("src/vite-env.d.ts");
-
-const handled = new Set(extractHandled(mainSrc));
-const invoked = new Set(extractInvoked(preloadSrc));
-const listened = new Set(extractListened(preloadSrc));
-const sent = new Set(extractSent(mainSrc));
-
-const problems = [];
-const warn = [];
-
-// 1) preload invoke 的 channel 必须有对应的 main handler
-const invokeSatisfied = new Set([...handled].filter((c) => invoked.has(c)));
-for (const c of invoked) if (!handled.has(c)) problems.push(`preload 调用了未注册的 channel: ${c}`);
-
-// 2) main handler 应全部经 preload 暴露（否则渲染进程用不到，属于死代码线索）
-for (const c of handled) if (!invoked.has(c)) warn.push(`main 注册但 preload 未暴露: ${c}`);
-
-// 3) preload 监听的事件必须有 main 侧 send（除非由内核/其它模块推送）
-for (const c of listened)
-  if (!sent.has(c)) warn.push(`preload 监听 ${c}，但主进程未发现对应 send（确认是否由其它模块推送）`);
-
-// 4) 类型声明覆盖率
-const preloadApiNames = extractPreloadApiNames(preloadSrc);
-const missingTypes = preloadApiNames.filter((n) => !new RegExp(`\\b${n}\\b`).test(dtsSrc));
-
-console.log("── IPC 契约校验 ──────────────────────────────");
-console.log(`main.cjs    ipcMain.handle   : ${handled.size}`);
-console.log(`preload.cjs ipcRenderer.invoke: ${invoked.size}`);
-console.log(`preload.cjs 事件监听         : ${listened.size}`);
-console.log(
-  `vite-env.d.ts 覆盖 API       : ${preloadApiNames.length - missingTypes.length}/${preloadApiNames.length}`
+const files = walk(path.join(root, "src")).filter(
+  (f) => /\.(ts|tsx)$/.test(f) && !f.endsWith(".d.ts")
 );
 
-if (warn.length) {
-  console.log("\n提示（不阻断）:");
-  for (const w of warn) console.log("  · " + w);
+const problems = [];
+for (const file of files) {
+  const rel = path.relative(root, file);
+  const text = fs.readFileSync(file, "utf8");
+  for (const m of text.matchAll(/window\.veyra\??\.([A-Za-z0-9_]+)/g)) {
+    const name = m[1];
+    if (name.startsWith("on")) {
+      if (!events.has(name)) problems.push(`${rel}: 事件 ${name} 未在 tauri-bridge EVENTS 中注册`);
+    } else if (!methods.has(name)) {
+      problems.push(`${rel}: 方法 ${name} 未在 commands.rs dispatch 中实现`);
+    }
+  }
 }
 
-if (missingTypes.length) {
-  console.log("\n类型声明缺失（preload 暴露但 vite-env.d.ts 未声明）:");
-  for (const n of missingTypes) console.log("  ✗ " + n);
-  problems.push(`${missingTypes.length} 个 preload API 缺少类型声明`);
+for (const [key, event] of events) {
+  if (!emitted.has(event)) problems.push(`tauri-bridge: ${key} -> ${event} 在 Rust 侧没有任何 emit`);
 }
 
 if (problems.length) {
-  console.log("\n❌ 契约校验失败:");
-  for (const p of problems) console.log("  " + p);
+  console.error("IPC 契约检查失败：");
+  for (const p of problems) console.error(`  - ${p}`);
   process.exit(1);
 }
-
-console.log("\n✅ IPC 契约一致");
+console.log(`IPC 契约检查通过：${methods.size} 个方法、${events.size} 个事件`);

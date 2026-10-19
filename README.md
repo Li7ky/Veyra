@@ -1,11 +1,11 @@
 # Veyra-omini
 
-[![Version](https://img.shields.io/badge/version-1.1.9--beta.4-blue)](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)
+[![Version](https://img.shields.io/badge/version-1.1.9--beta.6-blue)](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D4)](https://github.com/Li7ky/Veyra-omini/releases)
 [![Core](https://img.shields.io/badge/core-mihomo-0B7A75)](https://github.com/MetaCubeX/mihomo)
 [![Status](https://img.shields.io/badge/status-测试版-orange)](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)
 
-适用于 Windows 10/11 x64 的本地代理客户端。界面基于 Electron 与 React，转发内核为 mihomo，可直接导入已有的 Clash / Mihomo 订阅和节点链接。
+适用于 Windows 10/11 x64 的本地代理客户端。界面基于 Tauri 2 与 React，转发内核为 mihomo，可直接导入已有的 Clash / Mihomo 订阅和节点链接。
 
 当前版本 **1.1.9-beta.6** 为测试版。安装包未做代码签名，不作为稳定版的兼容性承诺。本软件不提供节点或订阅服务。
 
@@ -51,7 +51,7 @@
 
 ## 开发与构建
 
-需要 Node.js 22、npm 和 Windows 10/11 x64。
+需要 Node.js 22、Rust 1.77+（MSVC 工具链）、NSIS 构建工具和 Windows 10/11 x64。Tauri 会在首次构建时自动下载 WebView2 与打包工具。
 
 ```powershell
 cd src
@@ -66,7 +66,7 @@ npm run verify
 npm run dist
 ```
 
-`npm run verify` 包含类型检查、ESLint、单元测试、IPC 契约检查和前端构建。`npm run dist` 生成的安装包位于仓库根目录的 `release/`。
+`npm run verify` 包含类型检查、ESLint、前端单元测试、IPC 契约检查、Rust 单元测试和前端构建。`npm run dist` 生成的安装包位于 `src/src-tauri/target/release/bundle/nsis/`。
 
 默认代理端口 `17897`，控制端口 `19097`，可在设置中修改。默认控制密钥仅供本机使用，对局域网开放前应自行更换。
 

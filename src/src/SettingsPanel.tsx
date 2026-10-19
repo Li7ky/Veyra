@@ -398,7 +398,7 @@ async function scanConflict() {
 
   async function patchSettings(patch: Partial<AppSettings>) {
     if (!window.veyra) {
-      // 预览版无 Electron 接口，本地直接应用视觉效果
+      // 预览版无后端接口，本地直接应用视觉效果
       const next = { ...DEFAULTS, ...settings, ...patch } as AppSettings;
       setSettings(next);
       if (patch.customCss != null || patch.themeColor != null) applyCustomLook(next);
@@ -448,12 +448,15 @@ async function scanConflict() {
       return onToast("控制端口需为 1-65535 的整数");
     }
     if (p === c) return onToast("混合端口与控制端口不能相同");
+    // 空 Secret 不能回落默认值：那等于把已连接客户端（WebUI/脚本）的密钥
+    // 悄悄重置成 veyra-secret，它们会突然 401，而用户只看到「已应用」。
+    if (!draftSecret.trim()) return onToast("Secret 不能为空");
     onBusy(true);
     try {
       const r = await window.veyra.applyNetwork({
         mixedPort: p,
         controllerPort: c,
-        secret: draftSecret.trim() || DEFAULTS.secret,
+        secret: draftSecret.trim(),
         allowLan: !!settings?.allowLan,
         logLevel: settings?.logLevel || DEFAULTS.logLevel,
         bindAddress: settings?.bindAddress || DEFAULTS.bindAddress,
@@ -1758,7 +1761,7 @@ async function scanConflict() {
                 </b>
               </div>
               <div>
-                <span>Electron</span>
+                <span>运行时</span>
                 <b>{appInfo?.electron}</b>
               </div>
               <div>
@@ -1780,11 +1783,18 @@ async function scanConflict() {
                   confirmText: "恢复默认",
                   danger: true,
                   onConfirm: async () => {
-                    const { core: _omit, ...rest } = DEFAULTS;
-                    await window.veyra?.setSettings(rest);
-                    onToast("已恢复默认");
-                    await reload();
-                    onRefresh();
+                    try {
+                      const next = await window.veyra?.resetSettings?.();
+                      if (next) {
+                        setSettings({ ...DEFAULTS, ...next } as AppSettings);
+                        onThemeChange((next.theme as ThemeMode) || "system");
+                      }
+                      onToast("已恢复默认");
+                      await reload();
+                      onRefresh();
+                    } catch (e) {
+                      onToast(ipcErrorText(e));
+                    }
                   },
                 })
               }

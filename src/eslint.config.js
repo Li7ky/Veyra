@@ -13,7 +13,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
  * 2. 先以 warn 落地存量问题，不阻塞构建；新代码由 CI 的 --max-warnings 收紧。
  */
 export default tseslint.config(
-  { ignores: ["dist", "dist-electron", "node_modules", "resources", "outputs", "playwright-report", "scripts/bin"] },
+  { ignores: ["dist", "dist-electron", "node_modules", "resources", "outputs", "playwright-report", "scripts/bin", "src-tauri"] },
 
   // ── 渲染进程（src/**）──────────────────────────────────────────
   {
@@ -46,23 +46,6 @@ export default tseslint.config(
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       eqeqeq: ["warn", "smart"],
       "prefer-const": "warn",
-    },
-  },
-
-  // ── 主进程（electron/**）────────────────────────────────────────
-  {
-    files: ["electron/**/*.{cjs,js}"],
-    extends: [js.configs.recommended],
-    languageOptions: {
-      ecmaVersion: 2022,
-      sourceType: "commonjs",
-      globals: { ...globals.node },
-    },
-    rules: {
-      "no-console": "off",
-      "no-empty": ["warn", { allowEmptyCatch: true }],
-      "no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
-      eqeqeq: ["warn", "smart"],
     },
   },
 

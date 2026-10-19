@@ -3684,3 +3684,31 @@ label.switch.compact input[type="checkbox"]:checked {
   width: 216px;
   height: 28px;
 }
+
+/* ── 29. 规则页：压成密集表格行 ───────────────────────────────────────── */
+.pane.rules-page .block-hd h2 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.pane.rules-page .import-bar {
+  height: 34px !important;
+  padding: 0 4px 0 10px !important;
+  border-radius: var(--v-r) !important;
+  background: var(--v-surface) !important;
+  border: 1px solid var(--v-line) !important;
+}
+
+.pane.rules-page .import-bar input,
+.pane.rules-page .import-bar .s-input {
+  height: 26px !important;
+  font-size: 11.5px !important;
+  background: transparent !important;
+  border: 0 !important;
+}
+
+.pane.rules-page .rule-row,
+.pane.rules-page .rules-list > div {
+  min-height: 34px;
+}

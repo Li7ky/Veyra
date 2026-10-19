@@ -72,4 +72,4 @@ npm run dist
 
 ## 第三方组件
 
-第三方组件及其许可证随安装包内的 `resources/licenses` 一并分发。本项目自有代码的开源许可证尚未指定，第三方许可证不自动授予本项目自有代码的使用授权。
+第三方组件的完整许可证清单位于 [src/resources/licenses/THIRD_PARTY_NOTICES.md](src/resources/licenses/THIRD_PARTY_NOTICES.md)，并随安装包内的 `resources/licenses` 一并分发。本项目自有代码的开源许可证尚未指定，第三方许可证不自动授予本项目自有代码的使用授权。

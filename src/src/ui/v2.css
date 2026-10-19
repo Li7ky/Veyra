@@ -4305,3 +4305,15 @@ label.switch.compact input[type="checkbox"]:checked {
   background-image: none;
   color: var(--v-text-3);
 }
+
+/* ── 37. 版本号承载渠道：beta 收进版本字符串本身 ─────────────────────── */
+.brand-ver {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  color: var(--v-text-3);
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--v-surface-2);
+  border: 1px solid var(--v-line);
+}

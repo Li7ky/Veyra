@@ -2208,7 +2208,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
             <span className="brand-text">Veyra-omini</span>
             {/* 用真实应用版本；之前硬编码 v1.1.2，升级后会与设置页显示的版本矛盾 */}
             <span className="brand-ver">{appVersion ? `v${appVersion.replace(/^v/, "")}` : "—"}</span>
-            <span className="brand-beta">BETA</span>
           </div>
           <div className="header-actions">
             {/* v13：系统时间从右栏卡片收进顶栏——时间属窗口级信息，

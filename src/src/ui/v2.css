@@ -4035,3 +4035,135 @@ label.switch.compact input[type="checkbox"]:checked {
 .net-totals {
   display: none;
 }
+
+/* ============================================================================
+   33. 配色重塑 + 选中节点强化
+   ----------------------------------------------------------------------------
+   主色改为「靛蓝 #5a5cf0」，中性色偏冷、层级更分明；浅色底提亮到 #f5f6fa，
+   深色底压到 #0e1017。选中的节点卡：左侧 3px 主色条 + 主色描边 + 淡底 + 勾选角标。
+   ========================================================================== */
+:root {
+  --v-bg: #0e1017;
+  --v-bg-soft: #121521;
+  --v-surface: #161923;
+  --v-surface-2: #1d2130;
+  --v-surface-3: #262b3c;
+  --v-line: rgba(255, 255, 255, 0.075);
+  --v-line-2: rgba(255, 255, 255, 0.14);
+  --v-line-3: rgba(255, 255, 255, 0.22);
+  --v-text: #e9ecf5;
+  --v-text-2: #b9bfd2;
+  --v-text-3: #858ca3;
+  --v-text-4: #5f667c;
+  --v-accent: #7d7ff5;
+  --v-accent-2: #9a9bff;
+  --v-accent-soft: rgba(125, 127, 245, 0.15);
+  --v-accent-line: rgba(125, 127, 245, 0.4);
+  --v-ok: #34d399;
+  --v-ok-soft: rgba(52, 211, 153, 0.14);
+  --v-warn: #fbbf24;
+  --v-warn-soft: rgba(251, 191, 36, 0.14);
+  --v-bad: #f87171;
+  --v-bad-soft: rgba(248, 113, 113, 0.14);
+  --v-info: #60a5fa;
+}
+
+[data-theme="light"] {
+  --v-bg: #f5f6fa;
+  --v-bg-soft: #ffffff;
+  --v-surface: #ffffff;
+  --v-surface-2: #f1f3f9;
+  --v-surface-3: #e6e9f2;
+  --v-line: rgba(23, 29, 54, 0.09);
+  --v-line-2: rgba(23, 29, 54, 0.17);
+  --v-line-3: rgba(23, 29, 54, 0.28);
+  --v-text: #161a2b;
+  --v-text-2: #3d4460;
+  --v-text-3: #6a7192;
+  --v-text-4: #9aa0b8;
+  --v-accent: #5a5cf0;
+  --v-accent-2: #4648d8;
+  --v-accent-soft: rgba(90, 92, 240, 0.1);
+  --v-accent-line: rgba(90, 92, 240, 0.32);
+  --v-ok: #0f9d6e;
+  --v-ok-soft: rgba(15, 157, 110, 0.1);
+  --v-warn: #c47b0a;
+  --v-warn-soft: rgba(196, 123, 10, 0.1);
+  --v-bad: #d33a4b;
+  --v-bad-soft: rgba(211, 58, 75, 0.09);
+  --v-info: #2b7fff;
+}
+
+/* 品牌点睛：logo 与选中导航带一点渐变，不再是纯色块 */
+.header-brand > svg {
+  color: var(--v-accent) !important;
+  filter: drop-shadow(0 2px 8px rgba(90, 92, 240, 0.28));
+}
+
+.nav-item.active {
+  background: linear-gradient(90deg, var(--v-accent-soft), transparent 92%);
+  color: var(--v-accent-2);
+}
+
+.nav-item.active svg {
+  color: var(--v-accent-2);
+}
+
+/* 首页 hero：生效时给一圈非常淡的主色光，而不是整块染色 */
+.v-hero.on {
+  background: var(--v-surface);
+  border-color: var(--v-line);
+  box-shadow: 0 0 0 1px var(--v-ok-soft), var(--v-shadow);
+}
+
+/* ── 选中节点卡：一眼可辨 ─────────────────────────────────────────────── */
+.px-card {
+  position: relative;
+  transition: background 0.14s var(--ease), border-color 0.14s var(--ease), box-shadow 0.16s var(--ease);
+}
+
+.px-card.active {
+  background:
+    linear-gradient(90deg, var(--v-accent-soft), transparent 62%),
+    var(--v-surface);
+  border-color: var(--v-accent);
+  box-shadow: 0 0 0 1px var(--v-accent-line), 0 6px 18px -12px var(--v-accent);
+}
+
+.px-card.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--v-accent);
+}
+
+.px-card.active .px-card-name {
+  color: var(--v-accent-2);
+  font-weight: 600;
+}
+
+.px-card.active .px-flag::after {
+  content: "✓";
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--v-accent);
+  border: 1.5px solid var(--v-surface);
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.px-card.active .px-card-delay {
+  color: var(--v-accent-2);
+}

@@ -60,29 +60,22 @@ export function HomePulse(props: Props) {
   }, []);
 
   const state = !props.running ? "off" : props.sysProxy ? "on" : "idle";
-  const text = !props.running ? "未连接" : props.sysProxy ? "代理正常" : "内核运行中";
   const up = props.startedAt ? Date.now() - props.startedAt : 0;
 
   return (
     <>
       <div className={`pulse ${state}`}>
         <span className={`pulse-dot ${state}`} aria-hidden="true" />
-        <b className="pulse-state">{text}</b>
         <span className="pulse-sep" aria-hidden="true" />
         <span className="pulse-rate down">↓ {rate(props.downRate)}</span>
         <span className="pulse-rate up">↑ {rate(props.upRate)}</span>
-        <span className="pulse-sep" aria-hidden="true" />
-        <span className="pulse-node" title={props.nodeName}>
-          {props.nodeName || "未选择"}
-          {props.delay != null && props.delay > 0 ? <i>{props.delay}ms</i> : null}
-        </span>
-        <span className="pulse-conn">{props.connCount} 连接</span>
         <span className="pulse-live" aria-hidden="true">
           {props.running ? `已运行 ${uptime(up)}` : "服务未运行"}
         </span>
         <button type="button" className="pulse-health" onClick={() => setOpen(true)}>
           <Activity size={13} />
           体检
+          <i className="new-badge">NEW</i>
         </button>
       </div>
       {open ? <DiagnoseSheet onClose={() => setOpen(false)} {...props} /> : null}

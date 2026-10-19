@@ -3999,3 +3999,39 @@ label.switch.compact input[type="checkbox"]:checked {
   white-space: nowrap;
   border: 0;
 }
+
+/* ── 32. NEW 徽标（新功能统一标识）────────────────────────────────────── */
+.new-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 13px;
+  padding: 0 4px;
+  margin-left: 4px;
+  border-radius: 4px;
+  font-family: var(--font-sans);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  color: #fff;
+  background: linear-gradient(135deg, #ff8a4c 0%, #ff4d8d 100%);
+  box-shadow: 0 1px 4px rgba(255, 77, 141, 0.35);
+  vertical-align: middle;
+  transform: translateY(-1px);
+}
+
+.pulse {
+  gap: 12px;
+}
+
+.pulse-live {
+  margin-left: auto;
+}
+
+/* 首页去重：右栏不再重复速率/连接/累计（保留出口 IP、地区、运营商、ASN、时区） */
+.net-rates,
+.net-totals {
+  display: none;
+}

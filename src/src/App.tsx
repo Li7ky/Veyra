@@ -2371,11 +2371,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     delay={currentNodeInfo.delay}
                     nodeCount={nodes.length}
                     nodeType={currentNodeInfo.type}
-                    meta={
-                      running ? (
-                        <span>{activeCore === "singbox" ? "sing-box" : "Mihomo"}</span>
-                      ) : null
-                    }
                   />
 
                   {/* 实时流量 */}
@@ -2403,33 +2398,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         {t("home.configureCards", "自定义首页卡片")}
                       </button>
                     </header>
-
-                    <div className="v-traffic-rates">
-                      <div className="v-rate">
-                        <span className="v-rate-k">
-                          <i className="v-arrow down" aria-hidden="true" />{" "}
-                          {t("home.download", "下载")}
-                        </span>
-                        <span className={`v-rate-v down${downRate > 0 ? "" : " is-zero"}`}>
-                          {formatRate(downRate)}
-                        </span>
-                      </div>
-                      <div className="v-rate">
-                        <span className="v-rate-k">
-                          <i className="v-arrow up" aria-hidden="true" />{" "}
-                          {t("home.upload", "上传")}
-                        </span>
-                        <span className={`v-rate-v up${upRate > 0 ? "" : " is-zero"}`}>
-                          {formatRate(upRate)}
-                        </span>
-                      </div>
-                      <div className="v-rate v-rate-conn">
-                        <span className="v-rate-k">{t("home.activeConnections", "活跃连接")}</span>
-                        <span className={`v-rate-v${connCount > 0 ? "" : " is-zero"}`}>
-                          {connCount}
-                        </span>
-                      </div>
-                    </div>
 
                     <div className="v-chart">
                       <WaveChart
@@ -2577,23 +2545,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         <div className="v-si">
                           <span>{t("home.sysRuntime", "运行环境")}</span>
                           <b>Tauri {electronVersion.replace(/^Tauri\s*/i, "")}</b>
-                        </div>
-                      ) : null}
-                      {homeCards.system && mihomoChannel ? (
-                        <div className="v-si">
-                          <span>{t("home.sysCore", "代理内核")}</span>
-                          <b>
-                            Mihomo
-                            {running ? t("home.sysCoreOn", " · 运行中") : t("home.sysCoreOff", " · 已停止")}
-                          </b>
-                        </div>
-                      ) : null}
-                      {homeCards.traffic ? (
-                        <div className="v-si">
-                          <span>{t("home.sysTraffic", "实时流量")}</span>
-                          <b>
-                            ↓ {formatBytes(download)} · ↑ {formatBytes(upload)}
-                          </b>
                         </div>
                       ) : null}
                     </div>
@@ -3763,16 +3714,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     <b>
                       {activeCore === "singbox" ? "sing-box" : "Mihomo"}
                       {coreVersion ? ` ${coreVersion}` : ""}
-                    </b>
-                  </div>
-                  <div className="v-rail-row">
-                    <span>{t("home.mode", "代理模式")}</span>
-                    <b>{MODE_LABEL(mode)}</b>
-                  </div>
-                  <div className="v-rail-row">
-                    <span>{t("nav.uptime", "运行时长")}</span>
-                    <b className="mono">
-                      {running && coreStartTime ? <RailUptime startedAt={coreStartTime} /> : "—"}
                     </b>
                   </div>
                 </div>

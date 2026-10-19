@@ -3740,3 +3740,262 @@ label.switch.compact input[type="checkbox"]:checked {
   font-size: 11px;
   color: var(--v-text-4);
 }
+
+/* ── 31. 首屏状态条 + 体检弹层 ─────────────────────────────────────────── */
+.pulse {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px 0 12px;
+  border-radius: var(--v-r);
+  background: var(--v-surface);
+  border: 1px solid var(--v-line);
+  box-shadow: var(--v-shadow);
+  font-size: 11px;
+  color: var(--v-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--v-text-4);
+  flex: none;
+}
+
+.pulse-dot.on { background: var(--v-ok); box-shadow: 0 0 0 3px var(--v-ok-soft); }
+.pulse-dot.idle { background: var(--v-warn); box-shadow: 0 0 0 3px var(--v-warn-soft); }
+.pulse-dot.off { background: var(--v-text-4); }
+
+.pulse-state {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--v-text);
+  flex: none;
+}
+
+.pulse-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--v-line);
+  flex: none;
+}
+
+.pulse-rate {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.pulse-rate.down { color: var(--v-info); }
+.pulse-rate.up { color: var(--v-ok); }
+
+.pulse-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--v-text-2);
+  font-weight: 500;
+}
+
+.pulse-node i {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--v-text-3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--v-surface-2);
+  border: 1px solid var(--v-line);
+}
+
+.pulse-conn {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--v-text-3);
+  flex: none;
+}
+
+.pulse-live {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--v-text-4);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pulse-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--v-accent);
+  background: var(--v-accent-soft);
+  border: 1px solid transparent;
+  flex: none;
+  transition: background 0.14s var(--ease), border-color 0.14s var(--ease);
+}
+
+.pulse-health:hover {
+  border-color: var(--v-accent-line);
+}
+
+/* 体检弹层 */
+.diag {
+  width: min(540px, calc(100vw - 80px));
+  padding: 16px 18px 14px;
+}
+
+.diag-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.diag-hd h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--v-text);
+  letter-spacing: -0.01em;
+}
+
+.diag-hd p {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--v-text-4);
+}
+
+.diag-hd .icon-btn {
+  margin-left: 4px;
+}
+
+.diag-score {
+  margin-left: auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  grid-auto-flow: column;
+  gap: 1px;
+  flex: none;
+  border: 2px solid var(--v-line-2);
+  background: var(--v-surface-2);
+}
+
+.diag-score b {
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--v-text);
+}
+
+.diag-score span {
+  font-size: 9px;
+  color: var(--v-text-4);
+  align-self: end;
+  margin-bottom: 15px;
+}
+
+.diag-score.ok { border-color: var(--v-ok); background: var(--v-ok-soft); }
+.diag-score.ok b { color: var(--v-ok); }
+.diag-score.warn { border-color: var(--v-warn); background: var(--v-warn-soft); }
+.diag-score.warn b { color: var(--v-warn); }
+.diag-score.bad { border-color: var(--v-bad); background: var(--v-bad-soft); }
+.diag-score.bad b { color: var(--v-bad); }
+.diag-score.loading b { color: var(--v-text-4); }
+
+.diag-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.diag-list li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 2px;
+  border-top: 1px solid var(--v-line);
+  animation: diag-in 0.2s var(--ease);
+}
+
+.diag-list li:first-child {
+  border-top: 0;
+}
+
+@keyframes diag-in {
+  from { opacity: 0; transform: translateY(3px); }
+}
+
+.diag-ico {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+}
+
+.diag-list li.ok .diag-ico { color: var(--v-ok); }
+.diag-list li.warn .diag-ico { color: var(--v-warn); }
+.diag-list li.bad .diag-ico { color: var(--v-bad); }
+
+.diag-title {
+  flex: none;
+  width: 62px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--v-text);
+}
+
+.diag-detail {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--v-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diag-ft {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--v-line);
+  font-size: 10px;
+  color: var(--v-text-4);
+}
+
+.diag-ft .btn {
+  margin-left: auto;
+  height: 28px;
+  font-size: 11px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

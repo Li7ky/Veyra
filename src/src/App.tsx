@@ -83,6 +83,7 @@ import { ProxiesVisualEditor, GroupsVisualEditor } from "./VisualEditors";
 import { ipcErrorText } from "./errors";
 import { stripFlagEmoji } from "./nodeName";
 import ConnectOrb from "./ConnectOrb";
+import HomePulse from "./HomePulse";
 import ConfirmDialog, { useFocusTrap, type ConfirmRequest } from "./ConfirmDialog";
 import { applyTheme, type ThemeMode } from "./theme";
 import { getLocale, setLocale, t } from "./i18n";
@@ -2340,6 +2341,18 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
           <div className="col-main">
             <main className="stage">
               <div className="pane v-home" hidden={tab !== "home"}>
+                  {/* 首屏常驻状态条：状态 / 速率 / 节点 / 延迟 / 连接 / 体检入口 */}
+                  <HomePulse
+                    running={running}
+                    sysProxy={sysProxy}
+                    downRate={downRate}
+                    upRate={upRate}
+                    connCount={connCount}
+                    nodeName={currentNode}
+                    delay={currentNodeInfo.delay}
+                    nodeCount={nodes.length}
+                    startedAt={coreStartTime}
+                  />
                   {/* HERO · 连接状态 */}
                   <ConnectOrb
                     running={running}

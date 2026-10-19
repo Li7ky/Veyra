@@ -6,16 +6,25 @@ function nowMs() {
   return Date.now();
 }
 
+// Windows 保留设备名：这些名字（含带扩展名的）无法作为普通文件名使用
+const WIN_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
 function sanitizeName(name) {
-  const s = String(name || "profile")
+  let s = String(name || "profile")
     .trim()
-    .replace(/[/\\:*?"<>|]/g, "_");
-  return (
-    s
-      .replace(/\.ya?ml$/i, "")
-      .replace(/\.js$/i, "")
-      .slice(0, 64) || "profile"
-  );
+    .replace(/[/\\:*?"<>|]/g, "_")
+    .replace(/\.ya?ml$/i, "")
+    .replace(/\.js$/i, "")
+    // 防御性处理：当前落盘名是 `${uid}_${safe}.yaml`，前缀让 `..` 与保留名
+    // 实际上无法生效（不可利用），但一旦将来有人改掉命名规则就会立刻变成
+    // 路径穿越 / 建不出文件。这里按最小代价先把口子堵上。
+    .replace(/\.{2,}/g, "_")
+    .replace(/^\.+/, "_")
+    .slice(0, 64)
+    .replace(/[. ]+$/, ""); // Windows 不允许文件名以点或空格结尾
+  if (!s) s = "profile";
+  if (WIN_RESERVED.test(s)) s = `_${s}`;
+  return s;
 }
 
 function loadIndex(profilesDir) {

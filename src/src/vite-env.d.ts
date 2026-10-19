@@ -184,15 +184,24 @@ export interface VeyraAPI {
     assetName?: string;
     assetUrl?: string;
     assetSize?: number;
+    /** "sha256:..."：下载完成后用于完整性校验 */
+    assetDigest?: string;
   }>;
   downloadAppUpdate: () => Promise<{
     current: string;
     latest: string;
     hasUpdate: boolean;
     started: boolean;
+    /** 下载完成、等待用户选择「覆盖安装 / 卸载后重装」 */
+    downloaded?: boolean;
+    /** 用户主动取消：不是失败，界面据此显示「已取消」 */
+    cancelled?: boolean;
     path?: string;
     assetName?: string;
+    sha256?: string;
   }>;
+  /** 安装已下载的更新：overwrite 覆盖安装，clean 卸载后重装 */
+  installAppUpdate: (mode: "overwrite" | "clean") => Promise<{ ok: boolean; mode?: string }>;
   /** 启动后自动检查到新版本时由主进程推送 */
   onUpdateAvailable: (
     cb: (data: {
@@ -208,7 +217,13 @@ export interface VeyraAPI {
     }) => void
   ) => () => void;
   /** 安装包下载进度 */
-  onUpdateProgress: (cb: (data: { pct: number; received: number; total: number }) => void) => () => void;
+  onUpdateProgress: (cb: (data: {
+    pct: number;
+    received: number;
+    total: number;
+    /** proxy | direct | fallback | done */
+    phase?: string;
+  }) => void) => () => void;
   cancelAppUpdate: () => Promise<{ ok: boolean }>;
   updateCore: () => Promise<unknown>;
   matchCoreBuild: () => Promise<unknown>;
@@ -332,7 +347,7 @@ export interface VeyraAPI {
   validateDns?: (ns: string) => Promise<{ ok: boolean; host?: string; error?: string }>;
   serviceStatus?: () => Promise<{ installed: boolean }>;
   serviceInstall?: () => Promise<unknown>;
-  serviceUninstall?: () => Promise<unknown>;
+  serviceUninstall?: () => Promise<{ ok: boolean; error?: string }>;
   enableUwpLoopback?: () => Promise<unknown>;
   backupExport?: () => Promise<{ ok: boolean; path: string; bytes?: number }>;
   backupImport?: () => Promise<{ ok: boolean; canceled?: boolean }>;
@@ -400,6 +415,8 @@ export interface VeyraAPI {
     settings: AppSettings;
     mixedPort: number;
     controller: string;
+    /** 端口被占用等情况下的提示；渲染层据此提示用户实际生效的值 */
+    warnings?: string[];
   }>;
   openPath: (which: string) => Promise<unknown>;
   copyText: (text: string) => Promise<unknown>;

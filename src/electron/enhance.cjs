@@ -3,6 +3,7 @@ const path = require("path");
 const vm = require("vm");
 const yaml = require("js-yaml");
 const { loadIndex } = require("./profiles.cjs");
+const { writeFileAtomic } = require("./fs-utils.cjs");
 
 function asMap(obj) {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return {};
@@ -94,6 +95,13 @@ function applyMerge(config, mergeText) {
       case "proxy-groups":
       case "proxy-providers":
       case "rule-providers":
+        // 空键（YAML 里写了 `rules:` 但没内容）会被 js-yaml 载入为 null，
+        // 直接赋值会让配置里出现 `rules: null`，mihomo 判定规则集非数组后
+        // 拒绝整份配置 —— 分流全失效甚至内核起不来。空值一律忽略并告警。
+        if (v == null) {
+          warnings.push(`${key}: 内容为空，已忽略`);
+          break;
+        }
         cfg[key] = v;
         break;
       default:
@@ -310,7 +318,9 @@ function enhance(profilesDir, runtimePath, opts) {
 
 function enhanceAndWrite(profilesDir, runtimePath, opts) {
   const r = enhance(profilesDir, runtimePath, opts);
-  fs.writeFileSync(runtimePath, r.text, "utf8");
+  // 原子写：写一半被中断会让 runtime 配置只剩半截，热重载失败且内核起不来，
+  // 代理整体不可用（对比 profiles.cjs 的 saveIndex 已用 tmp+rename 的做法）
+  writeFileAtomic(runtimePath, r.text, "utf8");
   return r;
 }
 

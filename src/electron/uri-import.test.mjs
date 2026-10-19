@@ -56,6 +56,23 @@ describe("parseNodeUri - SS", () => {
     expect(node.password).toBe("pa:ss:word");
   });
 
+  it("明文形态的密码做 percent-decode（含 @ : / %）", () => {
+    // 修复前不做解码，密码会带着 %40 去鉴权 —— 节点永远连不上且没有任何报错
+    expect(parseNodeUri("ss://aes-256-gcm:p%40ss@1.2.3.4:8388#T").password).toBe("p@ss");
+    expect(parseNodeUri("ss://aes-256-gcm:a%2Fb%3Ac@1.2.3.4:8388#T").password).toBe("a/b:c");
+    expect(parseNodeUri("ss://aes-256-gcm:100%25@1.2.3.4:8388#T").password).toBe("100%");
+  });
+
+  it("base64 形态的密码保持原样（不能被二次解码）", () => {
+    // base64 里装的是原始字节，密码中的 % 是字面量，解码会破坏它
+    const inner = b64("aes-128-gcm:raw%pw@5.6.7.8:443");
+    expect(parseNodeUri(`ss://${inner}#Node`).password).toBe("raw%pw");
+  });
+
+  it("非法百分号转义不应抛错，按原样保留", () => {
+    expect(parseNodeUri("ss://aes-256-gcm:ab%ZZcd@1.2.3.4:8388#T").password).toBe("ab%ZZcd");
+  });
+
   it("拒绝超出 TCP 端口范围的端口", () => {
     expect(() => parseNodeUri("ss://aes-256-gcm:pw@9.9.9.9:65536#T")).toThrow(/port 非法/);
   });

@@ -63,6 +63,16 @@ export function ProxiesVisualEditor({
   }, []);
 
   async function save() {
+    // 端口校验前置：`Number(r.port) || 443` 会把空值 / "abc" / 0 / 65536 全都
+    // 静默改成 443，用户填错也不知道，配置里出现一个连不上的节点。
+    const bad = rows.find((r) => {
+      const p = Number(r.port);
+      return !Number.isInteger(p) || p < 1 || p > 65535;
+    });
+    if (bad) {
+      onToast(`「${bad.name || "未命名"}」的端口无效，请填写 1-65535 的整数`);
+      return;
+    }
     onBusy(true);
     try {
       const proxies = rows.map((r) => {
@@ -70,7 +80,7 @@ export function ProxiesVisualEditor({
           name: r.name,
           type: r.type,
           server: r.server,
-          port: Number(r.port) || 443,
+          port: Number(r.port),
           udp: true,
         };
         if (r.type === "ss") {
@@ -165,6 +175,11 @@ export function ProxiesVisualEditor({
             className="btn ghost btn-sm"
             onClick={() => {
               if (!draft.name || !draft.server) return onToast(t("proxies.nameServerRequired"));
+              // 同样在入口校验，避免非法端口一路带到 save 才被静默改成 443
+              const pp = Number(draft.port);
+              if (!Number.isInteger(pp) || pp < 1 || pp > 65535) {
+                return onToast("端口需为 1-65535 的整数");
+              }
               setRows((prev) => [{ ...draft }, ...prev]);
               setDraft({ ...EMPTY_PROXY });
             }}

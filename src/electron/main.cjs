@@ -26,6 +26,10 @@ const fs = require("fs");
 const { spawn, execFile, execFileSync } = require("child_process");
 const http = require("http");
 const https = require("https");
+const tls = require("tls");
+const net = require("net");
+const crypto = require("crypto");
+const { writeFileAtomic } = require("./fs-utils.cjs");
 
 /** 软件自身的 GitHub 发布仓库。检查更新与下载安装包都走这里。 */
 const APP_UPDATE_REPO = "Li7ky/Veyra-omini";
@@ -44,7 +48,7 @@ let tray = null;
 let coreProc = null;
 let stoppingCore = null;
 let startingCore = null;
-let coreMemCache = { mb: 0, t: 0 };
+let coreMemCache = { mb: null, t: 0 };
 // 内核进程内存占用（MB），带 5s 缓存避免频繁起子进程。
 // 改为异步 execFile：原先的 execFileSync 由 connections/info 高频轮询调用，
 // 每 5s 同步阻塞主进程一次（tasklist 50-200ms），托盘/热键/IPC 全部跟着卡。
@@ -54,10 +58,12 @@ async function coreMemoryMB() {
   if (now - coreMemCache.t < 5000) return coreMemCache.mb;
   if (coreMemPending) return coreMemPending;
   coreMemPending = (async () => {
-    let mb = 0;
+    // null 表示「拿不到」：收养外部内核时 coreProc 为空，返回 0 会显示成 "0 MB"，像真占了 0
+    let mb = null;
     try {
       const pid = coreProc && !coreProc.killed ? coreProc.pid : 0;
       if (pid) {
+        mb = 0;
         const run = (cmd, args) =>
           new Promise((res) => {
             try {
@@ -211,7 +217,9 @@ function loadSettings() {
 function saveSettings(patch = {}) {
   appSettings = { ...(appSettings || DEFAULT_SETTINGS), ...patch };
   fs.mkdirSync(userData(), { recursive: true });
-  fs.writeFileSync(settingsPath(), JSON.stringify(appSettings, null, 2), "utf8");
+  // 原子写：托盘菜单/IPC/定时器会并发保存，直接 writeFileSync 写一半被杀，
+  // 下次启动 loadSettings 的 catch 会静默回退 DEFAULT_SETTINGS，用户设置无声全丢。
+  writeFileAtomic(settingsPath(), JSON.stringify(appSettings, null, 2), "utf8");
   if (patch.mixedPort != null) MIXED_PORT = Number(patch.mixedPort) || MIXED_PORT;
   if (patch.controllerPort != null) {
     CONTROLLER = `127.0.0.1:${Number(patch.controllerPort) || DEFAULT_CTRL}`;
@@ -768,6 +776,9 @@ function applyProxyGuardLoop() {
     intervalMs: 4000,
     getDesired: () => {
       if (!appSettings?.proxyGuard) return null;
+      // 内核没在跑时必须关掉系统代理：否则内核崩溃后 guard 会把注册表重新指向
+      // 已经没人监听的 MIXED_PORT，整机断网，而托盘仍是灰色（用户完全看不出原因）。
+      if (!coreOnline) return { enabled: false };
       if (appSettings.proxyMode === "off") return { enabled: false };
       return {
         enabled: true,
@@ -953,7 +964,7 @@ function setLightweight(on) {
     mainWindow.show();
     mainWindow.focus();
     mainWindow.setOpacity(1);
-    mainWindow.setMinimumSize(960, 640);
+    mainWindow.setMinimumSize(1100, 700);
     try {
       mainWindow.webContents.setBackgroundThrottling(false);
     } catch {}
@@ -1216,18 +1227,36 @@ function findPidListeningOn(port) {
   });
 }
 
-/** Windows：查询进程可执行文件路径（wmic 不可用时返回 null） */
+/** Windows：查询进程可执行文件路径（查询手段全部不可用时返回 null） */
 function findProcessExePath(pid) {
   return new Promise((resolve) => {
     if (process.platform !== "win32" || !pid) return resolve(null);
+    // 首选 PowerShell：Windows 11 24H2 / Server 2025 已移除 wmic（默认不装
+    // 「WMIC」可选功能），而这里的结果决定「遗留内核算不算自家进程」——
+    // 恒返回 null 会导致点「停止」后孤儿内核杀不掉、并把它误报成外部代理软件。
     execFile(
-      "wmic",
-      ["process", "where", `ProcessId=${pid}`, "get", "ExecutablePath", "/value"],
-      { windowsHide: true, timeout: 4000 },
+      "powershell",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").ExecutablePath`,
+      ],
+      { windowsHide: true, timeout: 6000 },
       (err, stdout) => {
-        if (err) return resolve(null);
-        const m = String(stdout || "").match(/ExecutablePath=(.+)/i);
-        resolve(m ? m[1].trim() : null);
+        const out = String(stdout || "").trim();
+        if (!err && out) return resolve(out.split(/\r?\n/)[0].trim() || null);
+        // 回退 wmic（老系统上仍可用）
+        execFile(
+          "wmic",
+          ["process", "where", `ProcessId=${pid}`, "get", "ExecutablePath", "/value"],
+          { windowsHide: true, timeout: 4000 },
+          (err2, stdout2) => {
+            if (err2) return resolve(null);
+            const m = String(stdout2 || "").match(/ExecutablePath=(.+)/i);
+            resolve(m ? m[1].trim() : null);
+          }
+        );
       }
     );
   });
@@ -1254,6 +1283,16 @@ function startCore() {
   // 否则两次调用都会走到 spawn，拉起两个内核进程互相抢端口。
   if (startingCore) return startingCore;
   startingCore = (async () => {
+    // 必须等停止流程走完再启动：_doStopCore 在进程真正退出前就把 coreProc 置空了，
+    // 此时探活可能命中「还没死透」的旧内核并走收养分支，或直接 spawn 出第二个实例，
+    // 两者与正在退出的旧进程抢 mixed/controller 端口，界面出现「显示已运行但马上掉线」。
+    if (stoppingCore) {
+      try {
+        await stoppingCore;
+      } catch {
+        /* 停止失败不阻塞启动，下面照常探活/拉起 */
+      }
+    }
     const { conflicts, severity, rawConflicts } = await checkConflictForStart();
     if (conflicts.length > 0) {
       const msg = `检测到其他软件已启用系统代理：${conflicts.join("、")}。已阻止启动，请先停止外部系统代理并退出对应软件后重试。`;
@@ -1385,7 +1424,7 @@ async function _doStartCore() {
     if (coreProc !== spawned) return;
     coreProc = null;
     conflictGuard.setOwnCorePids([]);
-    coreMemCache = { mb: 0, t: 0 };
+    coreMemCache = { mb: null, t: 0 };
     // 非主动停止的异常退出：有限次数自动重启（防杀软误杀/OOM/panic 后永久掉线）
     if (!isQuitting && !stoppingCore && code !== 0 && coreAutoRestarts < 3) {
       coreAutoRestarts += 1;
@@ -1505,7 +1544,7 @@ async function _doStopCore(opts = {}) {
     const p = coreProc;
     coreProc = null;
     conflictGuard.setOwnCorePids([]);
-    coreMemCache = { mb: 0, t: 0 };
+    coreMemCache = { mb: null, t: 0 };
     let settled = false;
     const done = () => {
       if (settled) return;
@@ -1586,16 +1625,21 @@ function _startRuntimeConflictMonitor() {
         }
       }
     },
-    // 冲突已消失
-    () => {
+    // 冲突已消失（remaining 非空表示「部分解除」，仍有冲突存在）
+    (remaining) => {
+      const stillConflicting = Array.isArray(remaining) && remaining.length > 0;
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("conflict:resolved", {
           at: new Date().toISOString(),
-          autoRecover: conflictStoppedCore,
+          // 只有全部解除才算真正恢复，否则界面会显示「已恢复」但冲突仍在
+          autoRecover: conflictStoppedCore && !stillConflicting,
+          remaining: Array.isArray(remaining) ? remaining.map((c) => c.label) : [],
         });
       }
-      // 之前因为严重冲突被停掉的内核，现在冲突消失则自动恢复
-      if (conflictStoppedCore) {
+      // 已被停掉的内核必须等所有冲突都清空才能恢复：
+      // 只要还有一项冲突没解除就重启内核，会立刻再次撞上同一个端口而被停掉，
+      // 表现为内核反复重启、界面来回跳「已暂停/已恢复」。
+      if (conflictStoppedCore && !stillConflicting) {
         conflictStoppedCore = false;
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send("core:log", `[veyra] 端口冲突已解除，自动恢复代理服务。\n`);
@@ -1604,7 +1648,17 @@ function _startRuntimeConflictMonitor() {
       }
     },
     5000,
-    [],
+    // 自身端口被占时才能升级成 critical（conflict-guard 只在 scanCustomPorts
+    // 命中时给 critical）。原先恒传空数组，导致上面注释里承诺的
+    // 「critical → 弹窗 + 暂停内核 + 冲突解除自动恢复」整条链路永远不可达。
+    // 传函数而非静态数组：端口是否算「自身端口」取决于内核当下是否在跑——
+    // 在跑时占用的是自己，不能报 critical；掉线后才需要探。
+    // 内核在跑时这两个端口本来就是自己在监听，必须排除，否则会把自家端口报成冲突
+    // （与 system:fullConflictScan 的处理保持一致）。
+    () =>
+      coreOnline
+        ? []
+        : [MIXED_PORT, Number(String(CONTROLLER).split(":")[1]) || 0],
     {
       includeSystemProxy: true,
       filterConflicts: (items) => items.filter((c) =>
@@ -1870,84 +1924,207 @@ function coreInfo() {
   };
 }
 
-function httpsGet(url, headers, redirects = 0) {
+/**
+ * 建立到目标主机的 CONNECT 隧道（用于经本地混合端口访问 HTTPS）。
+ * 返回代理上的裸 socket，再由调用方在其上做 TLS。
+ */
+function proxyTunnel(proxyUrl, host, port) {
   return new Promise((resolve, reject) => {
-    if (redirects > 5) {
-      reject(new Error("重定向次数过多"));
+    let p;
+    try {
+      p = new URL(proxyUrl);
+    } catch {
+      reject(new Error("代理地址无效"));
       return;
     }
-    const req = https.get(url, { headers }, (res) => {
-      const code = res.statusCode || 0;
-      if (code >= 300 && code < 400 && res.headers.location) {
-        res.resume();
-        const next = new URL(res.headers.location, url).href;
-        resolve(httpsGet(next, headers, redirects + 1));
-        return;
-      }
-      if (code !== 200) {
-        res.resume();
-        const err = new Error(`HTTP ${code}`);
-        err.status = code;
-        reject(err);
-        return;
-      }
-      resolve(res);
+    const req = http.request({
+      host: p.hostname,
+      port: Number(p.port) || 80,
+      method: "CONNECT",
+      path: `${host}:${port}`,
+      headers: { Host: `${host}:${port}`, "Proxy-Connection": "keep-alive" },
+      timeout: 15000,
     });
-    req.on("error", reject);
-    req.setTimeout(60000, () => req.destroy(new Error("请求超时")));
+    req.once("connect", (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        reject(new Error(`代理 CONNECT 失败（HTTP ${res.statusCode}）`));
+        return;
+      }
+      // 清掉 CONNECT 请求留下的 15s socket 超时，否则隧道会被误杀
+      socket.setTimeout(0);
+      resolve(socket);
+    });
+    req.once("timeout", () => req.destroy(new Error("代理连接超时")));
+    req.once("error", reject);
+    req.end();
   });
 }
 
-function readHttpsJson(url) {
-  return httpsGet(url, {
-    "User-Agent": "Veyra-omini",
-    Accept: "application/vnd.github+json",
-  }).then(
-    (res) =>
-      new Promise((resolve, reject) => {
-        const chunks = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          try {
-            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-          } catch (e) {
-            reject(e);
-          }
-        });
-        res.on("error", reject);
-      })
-  );
+/**
+ * GET 并返回响应流：支持 CONNECT 代理、自动跟随 ≤5 次重定向、AbortSignal。
+ * 更新检查与安装包下载共用这一条通道——不再依赖 PowerShell 的 TLS 栈：
+ * 实测 .NET(HttpWebRequest) 经本地代理访问 github.com 会握手失败
+ * （"remote party has closed the transport stream"），导致下载永远停在 0%。
+ */
+async function openStream(url, { headers = {}, proxy = null, signal, timeoutMs = 60000 } = {}, redirects = 0) {
+  if (redirects > 5) throw new Error("重定向次数过多");
+  const u = new URL(url);
+  const isHttps = u.protocol === "https:";
+  const mod = isHttps ? https : http;
+  const port = Number(u.port) || (isHttps ? 443 : 80);
+  let socket = null;
+  let proxyAgent = null;
+  let proxyTarget = null;
+  if (proxy && isHttps) {
+    // HTTPS：走 CONNECT 隧道，再在裸 socket 上做 TLS
+    socket = await proxyTunnel(proxy, u.hostname, port);
+  } else if (proxy) {
+    // 明文 http:// 目标：原来落到下面 else 分支直连，真实 IP 会泄漏
+    // （订阅/更新地址若为 http 就会出现「走了代理却仍是本机出口」）。
+    // 明文代理转发 = 连到代理 + 请求行填绝对 URI，因此用专属 Agent 承载连接。
+    proxyTarget = new URL(/^https?:\/\//i.test(proxy) ? proxy : `http://${proxy}`);
+    proxyAgent = new http.Agent({ keepAlive: false });
+    proxyAgent.createConnection = (_opts, cb) =>
+      net.connect(Number(proxyTarget.port) || 80, proxyTarget.hostname, cb);
+  }
+
+  const res = await new Promise((resolve, reject) => {
+    // 注意：Node 22+ 的 http(s).request 在 `agent: false` 时会忽略传入的
+    // createConnection，请求会悄悄退回「直连」——更新下载走代理时因此永远卡 0%，
+    // 直到 25s 超时。这里必须用一个专属 Agent 来承载隧道 socket。
+    const opts = {
+      host: u.hostname,
+      port,
+      path: `${u.pathname}${u.search}`,
+      method: "GET",
+      headers: { "User-Agent": "Veyra-omini", ...headers, Host: u.host },
+      signal,
+    };
+    if (socket) {
+      const agent = new https.Agent({ keepAlive: false });
+      agent.createConnection = () => {
+        // CONNECT 请求上设过 15s 超时；隧道建立后要清掉，否则空闲 15s 会被掐断
+        socket.setTimeout(0);
+        return tls.connect({ socket, servername: u.hostname, ALPNProtocols: ["http/1.1"] });
+      };
+      opts.agent = agent;
+    } else if (proxyAgent && proxyTarget) {
+      // 明文代理转发：请求行必须是绝对 URI，Host 头仍为目标主机
+      opts.path = url;
+      opts.agent = proxyAgent;
+      opts.host = proxyTarget.hostname;
+      opts.port = Number(proxyTarget.port) || 80;
+    } else {
+      opts.agent = false;
+    }
+    const req = mod.request(opts, resolve);
+    req.once("error", (e) => {
+      if (socket) {
+        try {
+          socket.destroy();
+        } catch {}
+      }
+      reject(e);
+    });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error("请求超时")));
+    req.end();
+  });
+
+  const code = res.statusCode || 0;
+  if (code >= 300 && code < 400 && res.headers.location) {
+    res.resume();
+    return openStream(
+      new URL(res.headers.location, url).href,
+      { headers, proxy, signal, timeoutMs },
+      redirects + 1
+    );
+  }
+  if (code !== 200) {
+    res.resume();
+    const err = new Error(`HTTP ${code}`);
+    err.status = code;
+    throw err;
+  }
+  return res;
 }
 
-function parseAppVersion(v) {
-  const m = String(v || "")
-    .replace(/^v/i, "")
-    .match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$/);
-  if (!m) return null;
-  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), pre: m[4] || "" };
+function readJsonStream(res) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    res.on("data", (c) => chunks.push(c));
+    res.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    res.on("error", reject);
+  });
 }
 
-/** 正数表示 a 比 b 新。正式版高于同号测试版。 */
-function compareAppVersion(a, b) {
-  const pa = parseAppVersion(a);
-  const pb = parseAppVersion(b);
-  if (!pa || !pb) return String(a).localeCompare(String(b));
-  if (pa.major !== pb.major) return pa.major - pb.major;
-  if (pa.minor !== pb.minor) return pa.minor - pb.minor;
-  if (pa.patch !== pb.patch) return pa.patch - pb.patch;
-  if (pa.pre === pb.pre) return 0;
-  if (!pa.pre) return 1;
-  if (!pb.pre) return -1;
-  return pa.pre.localeCompare(pb.pre, undefined, { numeric: true });
+/**
+ * 内核在跑时优先经本地混合端口访问 GitHub API，失败回退直连。
+ * 否则「直连 API 被墙、下载却能走代理」的用户永远发现不了新版本。
+ */
+async function readHttpsJson(url) {
+  const headers = { Accept: "application/vnd.github+json" };
+  // 通道候选与下载共用：内核端口 → 外部系统代理 → 直连
+  const channels = await updateChannels();
+  let lastErr = null;
+  for (const { proxy } of channels) {
+    try {
+      return await readJsonStream(await openStream(url, { headers, proxy }));
+    } catch (e) {
+      lastErr = e;
+      // 404 是语义结果（仓库没有 latest release），换通道也没用
+      if (e.status === 404) throw e;
+    }
+  }
+  throw lastErr || new Error("请求失败");
 }
 
-function pickSetupAsset(assets) {
-  const list = Array.isArray(assets) ? assets : [];
-  return (
-    list.find((a) => /Setup-.*-x64\.exe$/i.test(a.name || "")) ||
-    list.find((a) => /\.exe$/i.test(a.name || "") && !/blockmap/i.test(a.name || "")) ||
-    null
-  );
+// 版本比较/资产挑选是纯逻辑，独立成模块以便单测（main.cjs 无法被测试 require）
+const {
+  compareAppVersion,
+  pickSetupAsset,
+  buildUpdateScript,
+  parseReleaseNotes,
+  parseWinProxyServer,
+  isOurLoopbackPort,
+} = require("./update-utils.cjs");
+
+/** 检查更新时缓存的 release 告示（供安装重启后弹「本次更新内容」兜底）。
+ *  数据在 userData 下落地一份，跨重启可用。 */
+const UPDATE_NOTES_CACHE = path.join(
+  app.getPath("userData"),
+  "update-notes-cache.json"
+);
+
+/**
+ * 更新链路（检查/下载共用）的候选出站通道，按可用性从优到劣：
+ *   1. 本地内核混合端口 —— 自家内核在跑时首选（coreOnline）。
+ *   2. 外部系统代理 —— 冲突互斥下内核被阻止时（coreOnline=false），外部代理
+ *      软件（如 Clash Verge）恰恰开着系统代理，这是现成可用的通道，不用白不用。
+ *      只取 127.0.0.1/localhost 回环地址，且排除指向 Veyra 自家端口的项。
+ *   3. 直连 —— 兜底（GitHub 直连可达的网络环境）。
+ * 每个通道都独立可失败：openStream 失败后自动尝试下一个。
+ */
+async function updateChannels() {
+  const channels = [];
+  if (coreOnline) channels.push({ proxy: `http://127.0.0.1:${MIXED_PORT}`, phase: "proxy" });
+  try {
+    // 不只看 ProxyEnable：实测 Clash Verge 关系统代理时只清开关、残留 ProxyServer，
+    // 而端口上常有活代理（本次实测 7897 可用）。死通道由 openStream 超时自然淘汰。
+    const st = await systemProxyStatusRaw();
+    const ext = parseWinProxyServer(st.server);
+    if (ext && !isOurLoopbackPort(ext, [MIXED_PORT, DEFAULT_MIXED])) {
+      channels.push({ proxy: ext, phase: "sysproxy" });
+    }
+  } catch {}
+  channels.push({ proxy: null, phase: "direct" });
+  return channels;
 }
 
 async function checkAppUpdate() {
@@ -1963,6 +2140,12 @@ async function checkAppUpdate() {
   if (!data || !data.tag_name) throw new Error("GitHub 上还没有可安装的发布版本");
   const latest = String(data.tag_name).replace(/^v/i, "");
   const asset = pickSetupAsset(data.assets);
+  // release 告示解析并缓存：新版本包里固化的 changelog.json 不一定包含它自身
+  // 的条目（beta.5 实测如此），安装重启后 updateNotes 需要用这份缓存兜底。
+  try {
+    const entry = parseReleaseNotes(data.body, data.tag_name);
+    if (entry) writeFileAtomic(UPDATE_NOTES_CACHE, JSON.stringify(entry, null, 2), "utf8");
+  } catch {}
   return {
     current,
     latest,
@@ -1973,30 +2156,78 @@ async function checkAppUpdate() {
     assetName: asset?.name || "",
     assetUrl: asset?.browser_download_url || "",
     assetSize: asset?.size || 0,
+    // GitHub 会返回 "sha256:..."；下载完成后据此校验完整性
+    assetDigest: asset?.digest || "",
   };
 }
 
-function downloadToFile(url, dest) {
-  return httpsGet(url, { "User-Agent": "Veyra-omini", Accept: "application/octet-stream" }).then(
+function removeFile(p) {
+  try {
+    fs.unlinkSync(p);
+  } catch {}
+}
+
+/**
+ * 流式下载并同时计算 SHA256；onProgress(received, total) 供进度条使用。
+ * 取消通过 AbortSignal 生效：请求被销毁 → reject 并删除半截文件。
+ */
+function downloadToFile(url, dest, { proxy = null, signal, onProgress } = {}) {
+  return openStream(url, {
+    headers: { Accept: "application/octet-stream" },
+    proxy,
+    signal,
+    // 直连被墙时 60s 太长：25s 没有任何数据就判定失败，尽快回退/报错
+    timeoutMs: 25000,
+  }).then(
     (res) =>
       new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(dest);
-        res.pipe(file);
-        file.on("finish", () => file.close(() => resolve(dest)));
-        file.on("error", (err) => {
-          try {
-            fs.unlinkSync(dest);
-          } catch {}
+        const total = Number(res.headers["content-length"]) || 0;
+        const hash = crypto.createHash("sha256");
+        let received = 0;
+        let settled = false;
+        const fail = (err) => {
+          if (settled) return;
+          settled = true;
+          removeFile(dest);
           reject(err);
+        };
+        const file = fs.createWriteStream(dest);
+        res.on("data", (chunk) => {
+          received += chunk.length;
+          hash.update(chunk);
+          if (onProgress) onProgress(received, total);
         });
-        res.on("error", reject);
+        res.on("error", (e) => {
+          file.destroy();
+          fail(e);
+        });
+        res.on("aborted", () => {
+          file.destroy();
+          fail(new Error("ABORTED"));
+        });
+        file.on("error", (e) => {
+          res.destroy();
+          fail(e);
+        });
+        file.on("finish", () => {
+          if (settled) return;
+          file.close(() => {
+            settled = true;
+            resolve({ size: received, sha256: hash.digest("hex"), total });
+          });
+        });
+        res.pipe(file);
       })
   );
 }
 
-/** 正在跑的 PowerShell 下载进程（取消用）与取消标记 */
-let updateDownloadProc = null;
-let updateDownloadCancelled = false;
+/** 正在进行的下载：取消靠 AbortController，避免「点了取消却继续装」 */
+let updateAbort = null;
+let updateInFlight = null;
+/** 已下载、等待用户选择安装方式的安装包路径 */
+let pendingInstaller = "";
+// 取消可能发生在「检查更新」阶段（此时控制器还没创建），先记意图
+let updateCancelRequested = false;
 
 function statSize(p) {
   try {
@@ -2006,120 +2237,161 @@ function statSize(p) {
   }
 }
 
-function emitUpdateProgress(received, total) {
-  const pct = total > 0 ? Math.min(99, Math.round((received / total) * 100)) : 0;
+/**
+ * phase: proxy | direct | fallback | done
+ * 下载阶段由主进程告诉界面，用户能看出「代理失败后正在直连」，
+ * 而不是盯着 0% 猜。
+ */
+function emitUpdateProgress(received, total, phase = "") {
+  const pct = total > 0 ? Math.min(100, Math.round((received / total) * 100)) : 0;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("app:updateProgress", { pct, received, total });
+    mainWindow.webContents.send("app:updateProgress", { pct, received, total, phase });
   }
 }
 
 /**
- * 经本地混合端口下载（HTTPS 走 PowerShell WebProxy 的 CONNECT 隧道）。
- * 背景：GitHub release 资源会 302 到 objects.githubusercontent.com，国内直连经常被重置；
- * 内核本来就在本机跑着，走一次本地代理最省事，也不要求用户先开系统代理。
- * 进度：PowerShell 直接写目标文件，这里每 600ms 看一次文件大小推给渲染层。
+ * 下载安装包：内核在跑时先走本地混合端口，失败自动回退直连。
+ * 两种通道都走同一个 Node 流式下载器，因此「取消」在两种情况下都真正生效。
  */
-function downloadViaProxy(urlStr, dest, proxyUrl, timeoutMs = 10 * 60_000, onTick = null) {
-  const q = (s) => String(s).replace(/'/g, "''");
-  const script = `
-$ProgressPreference='SilentlyContinue'
-[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
-try {
-  $req = [System.Net.HttpWebRequest]::Create('${q(urlStr)}')
-  $req.UserAgent = 'Veyra-omini'
-  $req.Timeout = 20000
-  $req.ReadWriteTimeout = 120000
-  $req.AllowAutoRedirect = $true
-  $req.Proxy = New-Object System.Net.WebProxy('${q(proxyUrl)}', $true)
-  $resp = $req.GetResponse()
-  $fs = [System.IO.File]::Create('${q(dest)}')
-  $resp.GetResponseStream().CopyTo($fs)
-  $fs.Close()
-  $resp.Close()
-} catch {
-  [Console]::Error.WriteLine($_.Exception.GetBaseException().Message)
-  exit 1
-}
-`;
-  return new Promise((resolve, reject) => {
-    let tick = null;
-    const child = execFile(
-      "powershell",
-      ["-NoProfile", "-Command", script],
-      { timeout: timeoutMs + 5000, windowsHide: true },
-      (err, _stdout, stderr) => {
-        if (tick) clearInterval(tick);
-        updateDownloadProc = null;
-        if (err) {
-          try {
-            fs.unlinkSync(dest);
-          } catch {}
-          const msg = updateDownloadCancelled
-            ? "已取消下载"
-            : (stderr || err.message || "download failed").toString().trim().slice(0, 240);
-          reject(new Error(msg));
-          return;
-        }
-        resolve(dest);
-      }
-    );
-    updateDownloadProc = child;
-    if (onTick) tick = setInterval(onTick, 600);
-  });
-}
-
 async function downloadAppUpdate() {
-  const info = await checkAppUpdate();
-  if (!info.hasUpdate) return { ...info, started: false };
-  if (!info.assetUrl) throw new Error("发布页没有 Windows 安装包");
-  const dest = path.join(app.getPath("temp"), info.assetName || "Veyra-omini-Setup.exe");
-  const total = Number(info.assetSize) || 0;
-  const tick = () => emitUpdateProgress(statSize(dest), total);
-  try {
-    fs.unlinkSync(dest);
-  } catch {}
-  updateDownloadCancelled = false;
-  let lastErr = null;
+  // 并发保护：重复点击/两处入口同时触发时复用同一次下载
+  if (updateInFlight) return updateInFlight;
+  updateInFlight = (async () => {
+    updateCancelRequested = false;
+    const info = await checkAppUpdate();
+    if (!info.hasUpdate) return { ...info, started: false };
+    if (!info.assetUrl) throw new Error("发布页没有 Windows 安装包");
 
-  // 内核在跑时先走本地混合端口：国内直连 GitHub 发布资源经常被重置
-  if (coreOnline) {
-    try {
-      await downloadViaProxy(info.assetUrl, dest, `http://127.0.0.1:${MIXED_PORT}`, 10 * 60_000, tick);
-      tick();
-    } catch (e) {
-      lastErr = e;
-      if (updateDownloadCancelled) throw e;
+    const dest = path.join(app.getPath("temp"), info.assetName || "Veyra-omini-Setup.exe");
+    const total = Number(info.assetSize) || 0;
+    removeFile(dest);
+
+    const ac = new AbortController();
+    updateAbort = ac;
+    if (updateCancelRequested) ac.abort();
+    const cancelled = () => ac.signal.aborted || updateCancelRequested;
+
+    // 通道候选与检查更新共用：内核端口 → 外部系统代理 → 直连。
+    // 冲突互斥（内核被外部系统代理阻止）时，外部代理就是现成通道，不会只剩直连。
+    const attempts = await updateChannels();
+
+    let lastErr = null;
+    let verifiedSha = "";
+    for (let i = 0; i < attempts.length; i++) {
+      if (cancelled()) return { ...info, started: false, cancelled: true };
+      const { proxy, phase } = attempts[i];
+      emitUpdateProgress(0, total, phase);
+      try {
+        const r = await downloadToFile(info.assetUrl, dest, {
+          proxy,
+          signal: ac.signal,
+          onProgress: (recv, len) => emitUpdateProgress(recv, len || total, phase),
+        });
+        verifiedSha = r.sha256;
+        lastErr = null;
+        break;
+      } catch (e) {
+        if (cancelled() || (e && e.message === "ABORTED")) {
+          removeFile(dest);
+          return { ...info, started: false, cancelled: true };
+        }
+        lastErr = e;
+        removeFile(dest);
+        // 代理通道失败：明确告诉界面接下来要换下一个通道（直连/其它），而不是卡在 0%
+        if (proxy) emitUpdateProgress(0, total, "fallback");
+      }
     }
-  }
-  // 回退直连
-  if (statSize(dest) < 1024) {
-    const timer = setInterval(tick, 700);
-    try {
-      await downloadToFile(info.assetUrl, dest);
-    } catch (e) {
-      lastErr = e;
-    } finally {
-      clearInterval(timer);
+    if (lastErr) {
+      const reason = String((lastErr && lastErr.message) || lastErr || "下载失败");
+      // 失败时给下一步：代理没开 / 规则把 github 走了直连 / 手动下载
+      throw new Error(
+        `${reason}。若代理已开启仍失败，请确认规则没有把 github.com 走直连（可临时切全局模式），或到发布页手动下载。`
+      );
     }
+
+    const size = statSize(dest);
+    if (size < 1024) {
+      removeFile(dest);
+      throw new Error("安装包下载失败");
+    }
+    // 大小对不上就当作下载被截断：宁可报错，也不要运行半截的安装包
+    if (total && Math.abs(size - total) > 1024) {
+      removeFile(dest);
+      throw new Error(`安装包不完整（${size} / ${total} 字节），请重试`);
+    }
+    // 完整性校验：GitHub API 的 asset.digest 形如 "sha256:xxx"；有摘要就强校验
+    const expected = String(info.assetDigest || "")
+      .replace(/^sha256:/i, "")
+      .toLowerCase();
+    if (expected && verifiedSha && verifiedSha !== expected) {
+      removeFile(dest);
+      throw new Error("安装包校验失败（SHA256 不匹配），已删除。请重试或到发布页手动下载。");
+    }
+    emitUpdateProgress(size, total || size, "done");
+
+    // 下载完先不急着拉起安装包：界面会询问「覆盖安装」还是「卸载后重装」
+    pendingInstaller = dest;
+    return { ...info, started: false, downloaded: true, path: dest, sha256: verifiedSha };
+  })().finally(() => {
+    updateInFlight = null;
+    updateAbort = null;
+    updateCancelRequested = false;
+  });
+  return updateInFlight;
+}
+
+/**
+ * 安装已下载的更新包。
+ * mode = "overwrite"：直接运行 NSIS 安装包，覆盖安装（保留配置与数据）；
+ * mode = "clean"：退出当前进程 → 静默卸载 → 再运行安装包（配置默认保留）。
+ * 卸载重装只在已安装的打包版里可用：开发模式没有卸载器。
+ */
+async function installAppUpdate(mode) {
+  const installer = pendingInstaller;
+  if (!installer || !fs.existsSync(installer)) {
+    throw new Error("安装包不存在或已被清理，请重新下载");
   }
-  const size = statSize(dest);
-  if (size < 1024) {
+  if (String(mode) === "clean") {
+    if (!app.isPackaged) {
+      throw new Error("开发模式无法卸载重装，请直接运行安装包");
+    }
+    const exeDir = path.dirname(app.getPath("exe"));
+    let uninstaller = "";
     try {
-      fs.unlinkSync(dest);
-    } catch {}
-    throw lastErr || new Error("安装包下载失败");
-  }
-  // 大小对不上就当作下载被截断：宁可报错，也不要运行半截的安装包
-  if (total && Math.abs(size - total) > 1024) {
+      const found = fs.readdirSync(exeDir).find((n) => /^Uninstall .*\.exe$/i.test(n));
+      if (found) uninstaller = path.join(exeDir, found);
+    } catch {
+      /* 目录不可读：走下面的报错 */
+    }
+    if (!uninstaller) throw new Error("找不到卸载程序，请手动卸载后运行安装包");
+    // 当前进程占着 exe，必须退出后再卸载：等 2s → 静默卸载 → 等 5s → 启动新安装包。
+    //
+    // 两个必须避开的坑（都实测复现过）：
+    // 1. 不能 spawn("cmd.exe", ["/c", cmd]) 传数组——Node 会重新转义参数内引号，
+    //    cmd 收到的是字面量 \"C:\...\"（NSIS 默认装在 Program Files，路径含空格，必现），
+    //    卸载器根本不会执行。写临时 .cmd 落盘可彻底绕开这层重解析。
+    // 2. 不能用 timeout /t 做延时——stdio 忽略后 stdin 指向 NUL，timeout 立刻以
+    //    「Input redirection is not supported」退出，两个等待都变成 0 秒，
+    //    卸载器会在主进程还活着时启动。改用 ping 计数计时（不依赖 stdin）。
+    const scriptPath = path.join(app.getPath("temp"), `veyra-update-${process.pid}.cmd`);
     try {
-      fs.unlinkSync(dest);
-    } catch {}
-    throw new Error(`安装包不完整（${size} / ${total} 字节），请重试`);
+      fs.writeFileSync(scriptPath, `${buildUpdateScript(uninstaller, installer)}\r\n`, "utf8");
+    } catch (e) {
+      throw new Error(`无法写入更新脚本，请手动卸载后运行安装包：${(e && e.message) || e}`);
+    }
+    spawn("cmd.exe", ["/c", scriptPath], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    }).unref();
+    setTimeout(() => app.quit(), 400);
+    return { ok: true, mode: "clean" };
   }
-  emitUpdateProgress(size, total || size);
-  const opened = await shell.openPath(dest);
+  // 覆盖安装：NSIS 向导会保留安装目录与数据
+  const opened = await shell.openPath(installer);
   if (opened) throw new Error(opened);
-  return { ...info, started: true, path: dest };
+  setTimeout(() => app.quit(), 800);
+  return { ok: true, mode: "overwrite" };
 }
 
 /** 启动后静默检查一次更新：有新版就推给渲染层弹提醒（每次启动只弹一次） */
@@ -2385,8 +2657,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: winW,
     height: winH,
-    minWidth: 980,
-    minHeight: 640,
+    minWidth: 1100,
+    minHeight: 700,
     x: typeof saved?.x === "number" ? saved.x : undefined,
     y: typeof saved?.y === "number" ? saved.y : undefined,
     useContentSize: false,
@@ -2409,7 +2681,7 @@ function createWindow() {
   });
 
   // 宽高均可自由缩放：最小 980×640（渲染层 .app 最小 880×560 之上留足裕量），最大不超过屏幕工作区
-  mainWindow.setMinimumSize(980, 640);
+  mainWindow.setMinimumSize(1100, 700);
   mainWindow.setMaximumSize(Math.max(1500, wa.width), Math.max(900, wa.height - 40));
 
   if (icon) {
@@ -2982,7 +3254,10 @@ function registerIpc() {
     preferredPort: Number(appSettings?.mixedPort) || DEFAULT_MIXED,
   }));
 
-  ipcMain.handle("settings:get", async () => loadSettings());
+  // 读接口不能走 loadSettings()：那会用 settings.json 里的「首选端口」覆盖
+  // pickPorts() 已漂移到 +10003 的运行时 MIXED_PORT/CONTROLLER，导致内核明明在跑、
+  // 后续 api() 却打到死端口，界面报离线并触发自动重启循环。
+  ipcMain.handle("settings:get", async () => ({ ...(appSettings || DEFAULT_SETTINGS) }));
   ipcMain.handle("settings:set", async (_e, patch) => {
     const p = { ...(patch || {}) };
     if (p.webdavPass && !String(p.webdavPass).startsWith("enc:")) {
@@ -3008,21 +3283,31 @@ function registerIpc() {
       registerHotkeys();
     }
     if (patch && "lightweightMode" in patch) setLightweight(!!next.lightweightMode);
+    // 判断「这次改动是否需要重建运行时配置」。
+    // 原先是一串手写键名白名单，漏了 dnsIpv6 / tunAutoDetect / dnsEnable /
+    // dnsListen / dnsFakeIpRange / dnsFallback / tunMtu / tunDevice ——
+    // 这些键都会被 buildTunConfig / buildDnsConfig 读取，用户勾选后值写进了
+    // settings.json 却不重建配置，要等碰巧改到白名单里的键才生效，表现得像「设置没保存」。
+    // 改成按前缀判定，tun/dns 系列新增字段不会再漏。
+    const RUNTIME_KEY_PREFIXES = ["tun", "dns", "sniff"];
+    const RUNTIME_KEYS = [
+      "bindAddress",
+      "allowLan",
+      "unifiedDelay",
+      "tcpConcurrent",
+      "mixedPort",
+      "controllerPort",
+      "secret",
+      "logLevel",
+      "core",
+    ];
     const needEnhance =
       patch &&
-      ("tunEnable" in patch ||
-        "tunStack" in patch ||
-        "tunAutoRoute" in patch ||
-        "tunStrictRoute" in patch ||
-        "tunSniff" in patch ||
-        "dnsOverride" in patch ||
-        "dnsMode" in patch ||
-        "dnsNameserver" in patch ||
-        "dnsHosts" in patch ||
-        "bindAddress" in patch ||
-        "allowLan" in patch ||
-        "unifiedDelay" in patch ||
-        "tcpConcurrent" in patch);
+      Object.keys(patch).some((k) =>
+        RUNTIME_KEYS.includes(k)
+          ? true
+          : RUNTIME_KEY_PREFIXES.some((p) => k.toLowerCase().startsWith(p))
+      );
     if (needEnhance) {
       try {
         await runEnhanceAndReload();
@@ -3040,14 +3325,21 @@ function registerIpc() {
     // 「被占用」而漂移到 +10003 并写进 runtime 配置。仅内核未运行时重新挑选，
     // 运行中只处理本次显式传入的端口。
     if (!coreProc && !coreOnline) await pickPorts();
-    // 强制使用用户设置的端口（若空闲）
-    if (patch?.mixedPort) {
+    // 强制使用用户设置的端口（若空闲）。
+    // 不可用时必须如实上报：saveSettings 已经把新端口写进 settings.json 了，
+    // 若这里静默沿用旧值、渲染层又无条件提示「已应用」，就会出现
+    // 「磁盘写的是 7891、运行时是 17897」的持久不一致，用户还被明确告知成功。
+    // 注意用 != null 判断：端口填 0 时 `if (patch?.mixedPort)` 会整段跳过。
+    const warnings = [];
+    if (patch?.mixedPort != null) {
       const want = Number(patch.mixedPort);
       if (await portUsable(want)) MIXED_PORT = want;
+      else warnings.push(`混合端口 ${want} 已被占用，仍使用 ${MIXED_PORT}`);
     }
-    if (patch?.controllerPort) {
+    if (patch?.controllerPort != null) {
       const want = Number(patch.controllerPort);
       if (await portUsable(want)) CONTROLLER = `127.0.0.1:${want}`;
+      else warnings.push(`控制端口 ${want} 已被占用，仍使用 ${CONTROLLER.split(":")[1]}`);
     }
     if (patch?.secret) SECRET = String(patch.secret);
     patchRuntimePorts();
@@ -3063,7 +3355,7 @@ function registerIpc() {
     }
     // 内核离线时改端口不经 setCoreOnline，托盘 tooltip/菜单里的端口会停在旧值
     updateTray();
-    return { settings: next, mixedPort: MIXED_PORT, controller: CONTROLLER };
+    return { settings: next, mixedPort: MIXED_PORT, controller: CONTROLLER, warnings };
   });
   ipcMain.handle("settings:openPath", async (_e, which) => {
     const map = {
@@ -3121,7 +3413,15 @@ function registerIpc() {
     const list = readChangelog();
     const current = app.getVersion();
     const seen = String(appSettings?.seenVersion || "");
-    const entry = list.find((e) => e.version === current) || null;
+    let entry = list.find((e) => e.version === current) || null;
+    // 兜底：新版本包里的 changelog.json 不一定含它自身条目（beta.5 实测漏了）。
+    // 用检查更新时缓存的 release 告示补位，否则「重启后弹更新内容」永远不触发。
+    if (!entry && seen !== current && seen) {
+      try {
+        const cached = JSON.parse(fs.readFileSync(UPDATE_NOTES_CACHE, "utf8"));
+        if (cached && cached.version === current) entry = cached;
+      } catch {}
+    }
     return { current, seen, isNew: seen !== current, entry };
   });
   ipcMain.handle("app:markVersionSeen", () => {
@@ -3130,11 +3430,16 @@ function registerIpc() {
   });
   ipcMain.handle("app:checkUpdate", async () => checkAppUpdate());
   ipcMain.handle("app:downloadUpdate", async () => downloadAppUpdate());
+  ipcMain.handle("app:installUpdate", async (_e, mode) => installAppUpdate(mode));
   ipcMain.handle("app:cancelUpdate", async () => {
-    updateDownloadCancelled = true;
-    try {
-      updateDownloadProc?.kill();
-    } catch {}
+    // 只有确实有下载在进行时才记「取消意图」：
+    // 否则一次误触/上一次的取消会在下一次下载开始时被继承，界面直接显示「已取消下载」。
+    if (updateInFlight) {
+      updateCancelRequested = true;
+      try {
+        updateAbort?.abort();
+      } catch {}
+    }
     return { ok: true };
   });
   ipcMain.handle("connections:closeAll", async () => {
@@ -3404,7 +3709,13 @@ function registerIpc() {
       const full = path.join(logDir, f);
       try {
         const st = fs.statSync(full);
-        if (days > 0 && now - st.mtimeMs > days * 86400000) {
+        if (!st.isFile()) continue;
+        // days === 0 表示「不自动清理」，但用户点按钮是显式要求清理，
+        // 不能沿用自动清理的策略：原实现让条件恒为假，按钮永远报「已清理 0 个」。
+        // days > 0 时沿用按时间筛选的既有语义。
+        if (days === 0 || now - st.mtimeMs > days * 86400000) {
+          // 正在被写入的日志文件在 Windows 上会被句柄锁住，unlink 抛 EPERM/EBUSY，
+          // 由外层 catch 跳过——不会删掉正在写的文件，也不会中断循环。
           fs.unlinkSync(full);
           removed++;
         }
@@ -3457,12 +3768,31 @@ function registerIpc() {
         updatedAt: p.updatedAt,
       }));
     }
+    // 兜底分支：index 为空但目录里还有文件（例如只剩 .js 脚本、或 index.json 损坏）。
+    // 原实现只回 name/path/size，缺 uid/type/enabled/global/url，
+    // 与主分支结构不一致；渲染层拿 uid 去激活或开关时直接失败，
+    // 且会因为 uid 为 undefined 而把所有条目当成同一条。
     const files = fs.readdirSync(profilesDir()).filter((f) => /\.(ya?ml|js)$/i.test(f) && f !== "index.json");
-    return files.map((f) => ({
-      name: f,
-      path: path.join(profilesDir(), f),
-      size: fs.statSync(path.join(profilesDir(), f)).size,
-    }));
+    return files.map((f) => {
+      const full = path.join(profilesDir(), f);
+      let size = 0;
+      try {
+        size = fs.statSync(full).size;
+      } catch {
+        /* 文件可能刚被删除，size 保持 0 */
+      }
+      return {
+        name: f,
+        path: full,
+        size,
+        uid: f,
+        type: "local",
+        enabled: true,
+        global: false,
+        url: null,
+        updatedAt: 0,
+      };
+    });
   });
 
   ipcMain.handle("profile:listRich", async () => {
@@ -3837,6 +4167,13 @@ app.whenReady().then(async () => {
   migrateLegacyData();
   loadSettings();
   ensureDirs();
+  // 清理上一次「卸载后重装」留下的临时脚本（脚本执行完时进程已退出，无法自删）
+  try {
+    const tmpDir = app.getPath("temp");
+    for (const n of fs.readdirSync(tmpDir)) {
+      if (/^veyra-update-\d+\.cmd$/i.test(n)) removeFile(path.join(tmpDir, n));
+    }
+  } catch {}
   try {
     profilesLib.migrateLegacyFiles(profilesDir());
   } catch {}

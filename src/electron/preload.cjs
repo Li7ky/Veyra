@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("veyra", {
   checkCoreUpdate: () => ipcRenderer.invoke("core:checkUpdate"),
   checkAppUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
   downloadAppUpdate: () => ipcRenderer.invoke("app:downloadUpdate"),
+  installAppUpdate: (mode) => ipcRenderer.invoke("app:installUpdate", mode),
   updateCore: () => ipcRenderer.invoke("core:update"),
   matchCoreBuild: () => ipcRenderer.invoke("core:matchBuild"),
   switchCore: (core) => ipcRenderer.invoke("core:switch", core),

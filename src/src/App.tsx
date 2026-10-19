@@ -81,6 +81,8 @@ import Sparkline from "./Sparkline";
 // 只有用户首次切到「YAML」子标签时才加载编辑器 chunk。
 const YamlEditor = lazy(() => import("./YamlEditor"));
 import { ProxiesVisualEditor, GroupsVisualEditor } from "./VisualEditors";
+import { ipcErrorText } from "./errors";
+import { stripFlagEmoji } from "./nodeName";
 import ConnectOrb from "./ConnectOrb";
 import ConfirmDialog, { useFocusTrap, type ConfirmRequest } from "./ConfirmDialog";
 import { applyTheme, type ThemeMode } from "./theme";
@@ -134,6 +136,16 @@ function formatBytes(n = 0) {
   if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(2)} MB`;
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
+}
+
+/** 更新下载阶段 → 提示文案（代理/系统代理/直连/回退/校验） */
+function updatePhaseText(phase: string): string {
+  if (phase === "proxy") return t("update.phaseProxy", "正在通过本地代理下载…");
+  if (phase === "sysproxy") return t("update.phaseSysProxy", "正在通过系统代理下载…");
+  if (phase === "direct") return t("update.phaseDirect", "正在直连下载…");
+  if (phase === "fallback") return t("update.phaseFallback", "代理不可用，正在改用直连…");
+  if (phase === "done") return t("update.phaseDone", "下载完成，正在校验…");
+  return "";
 }
 
 /** 订阅页顶部概览：所有订阅的剩余流量之和（没有流量信息的订阅跳过） */
@@ -246,7 +258,8 @@ function delayClass(d?: number) {
 function delayText(d?: number) {
   if (d == null) return "—";
   if (d <= 0) return t("delay.timeout", "Timeout");
-  return `${d}`;
+  // 只有数字没有单位会被误读成序号/跳数
+  return `${Math.round(d)} ms`;
 }
 
 const COUNTRY_FLAGS: [RegExp, string][] = [
@@ -427,6 +440,31 @@ function countryFlagSvg(name: string) {
     }
   }
   return null;
+}
+
+/** 节点旗帜：加载失败（离线/被墙）时回退成国家码，不显示破图 */
+function NodeFlag({ name }: { name: string }) {
+  const [failed, setFailed] = useState(false);
+  const src = countryFlagSvg(name);
+  if (!src || failed) {
+    const code = COUNTRY_FLAGS.find(([re]) => re.test(name))?.[1] || "🌐";
+    return <span className="px-flag-code">{code}</span>;
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      style={{
+        width: 20,
+        height: 14,
+        borderRadius: 2,
+        verticalAlign: "middle",
+        boxShadow: "var(--shadow-sm)",
+      }}
+    />
+  );
 }
 
 function isTestableNode(name: string) {
@@ -671,6 +709,10 @@ export default function App() {
   } | null>(null);
   const [updPct, setUpdPct] = useState(-1);
   const [updBusy, setUpdBusy] = useState(false);
+  // 安装包已下载、等待用户选择安装方式（覆盖 / 卸载重装）
+  const [updReady, setUpdReady] = useState(false);
+  // proxy | direct | fallback | done：让用户知道当前走的是哪条通道
+  const [updPhase, setUpdPhase] = useState("");
   const [updMsg, setUpdMsg] = useState("");
   useEffect(() => {
     let alive = true;
@@ -699,6 +741,21 @@ export default function App() {
     setUpdateNotes(null);
     window.veyra?.markVersionSeen?.().catch(() => {});
   };
+  // 两个更新弹窗的 Esc 支持。自动更新弹窗在下载中被 updBusy 锁住，
+  // 与点遮罩/关闭按钮的行为保持一致，避免中途取消掉正在进行的安装包下载。
+  useEffect(() => {
+    if (!autoUpdate && !updateNotes) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (updateNotes) {
+        closeUpdateNotes();
+        return;
+      }
+      if (autoUpdate && !updBusy) setAutoUpdate(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [autoUpdate, updateNotes, updBusy]);
   // 主进程启动 6s 后静默检查更新：有新版本就弹提醒；下载进度实时回填
   useEffect(() => {
     const offAvailable = window.veyra?.onUpdateAvailable?.((info) => {
@@ -714,7 +771,9 @@ export default function App() {
       setUpdMsg("");
     });
     const offProgress = window.veyra?.onUpdateProgress?.((p) => {
-      if (p && typeof p.pct === "number") setUpdPct(p.pct);
+      if (!p) return;
+      if (typeof p.pct === "number") setUpdPct(p.pct);
+      if (typeof p.phase === "string") setUpdPhase(p.phase);
     });
     return () => {
       offAvailable?.();
@@ -725,17 +784,43 @@ export default function App() {
     setUpdBusy(true);
     setUpdMsg("");
     setUpdPct(-1);
+    setUpdPhase("");
+    setUpdReady(false);
     try {
       const r = await window.veyra!.downloadAppUpdate();
-      if (r.started) {
-        setUpdMsg("安装程序已启动，请按提示完成升级");
+      if (r?.cancelled) {
+        setUpdMsg(t("update.cancelled", "已取消下载"));
+        setUpdPct(-1);
+      } else if (r?.downloaded) {
+        // 下载完成，交给用户选安装方式
+        setUpdReady(true);
+      } else if (r?.started) {
+        setUpdMsg(t("update.started", "安装程序已启动，请按提示完成升级"));
       } else {
-        setUpdMsg("已是最新版本");
+        setUpdMsg(t("update.latest", "已是最新版本"));
       }
     } catch (e) {
-      setUpdMsg(`下载失败：${(e as Error).message || e}`);
+      setUpdMsg(
+        t("update.failed", "下载失败：{msg}").replace("{msg}", ipcErrorText(e))
+      );
     } finally {
       setUpdBusy(false);
+      setUpdPhase("");
+    }
+  };
+  const applyAppUpdate = async (mode: "overwrite" | "clean") => {
+    try {
+      await window.veyra!.installAppUpdate(mode);
+      setUpdMsg(
+        mode === "clean"
+          ? t("update.reinstalling", "正在卸载并重新安装，请稍候…")
+          : t("update.launching", "安装程序已启动，请按提示完成升级")
+      );
+      setUpdReady(false);
+    } catch (e) {
+      setUpdMsg(
+        t("update.installFailed", "安装失败：{msg}").replace("{msg}", ipcErrorText(e))
+      );
     }
   };
   useEffect(() => {
@@ -872,6 +957,46 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   const [blockStartupMessage, setBlockStartupMessage] = useState("");
   // 危险操作（清理日志等）统一走二次确认弹窗
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
+
+  /**
+   * 关闭外部系统代理并退出其它代理软件。
+   * 破坏性操作：会杀掉用户正在用的 Clash Verge 等，必须经 ConfirmDialog 二次确认。
+   */
+  async function runResolveExternal() {
+    setBlockStartupKilling(true);
+    setBlockStartupMessage(t("conflict.blockStartupKilling", "正在停止外部系统代理并退出代理软件…"));
+    try {
+      const result = window.veyra?.resolveExternalProxy ? await window.veyra.resolveExternalProxy() : null;
+      if (result?.ok) {
+        const started = window.veyra?.retryStartAfterConflict
+          ? await window.veyra.retryStartAfterConflict()
+          : null;
+        if (started?.ok) {
+          setBlockStartupMessage(t("conflict.blockStartupSuccess", "系统代理已恢复正常，正在启动…"));
+          setTimeout(() => setBlockStartupOpen(false), 1000);
+        } else {
+          setBlockStartupMessage(
+            t("conflict.blockStartupCoreFailed", "系统代理已恢复，但 Veyra 内核启动失败，请重试")
+          );
+        }
+      } else if (result?.conflicts && result.conflicts.length > 0) {
+        setBlockStartupMessage(
+          t("conflict.blockStartupStillConflict", "系统代理仍未恢复正常，请关闭外部代理的系统代理后重试")
+        );
+        setBlockStartupData((prev) => (prev ? { ...prev, conflicts: result.conflicts! } : prev));
+      } else {
+        setBlockStartupMessage(
+          t("conflict.blockStartupKillFailed", "无法自动恢复系统代理，请手动关闭外部代理的系统代理后重试")
+        );
+      }
+    } catch {
+      setBlockStartupMessage(
+        t("conflict.blockStartupKillFailed", "无法自动恢复系统代理，请手动关闭外部代理的系统代理后重试")
+      );
+    } finally {
+      setBlockStartupKilling(false);
+    }
+  }
   // 首页系统信息卡的真实数据（此前版本硬编码「未启用 / v1.1 / Windows 10/11」）
   const [appVersion, setAppVersion] = useState("");
   const [platformLabel, setPlatformLabel] = useState("Windows");
@@ -884,6 +1009,11 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   const homeCfgTriggerRef = useRef<HTMLButtonElement | null>(null);
   // 焦点圈闭：Tab 不再逃到遮罩后的背景页面（Esc/关闭逻辑见下方 effect）
   const homeCfgBoxRef = useFocusTrap<HTMLDivElement>(homeCfgOpen);
+  // 自动更新弹窗 / 更新日志弹窗同样带 role="dialog" aria-modal="true"，
+  // 但原先既没有焦点圈闭也没有 Esc 关闭，键盘用户 Tab 会跑到遮罩后的页面上。
+  // 与项目「模态框统一 useFocusTrap + Esc + 焦点回归」的约定保持一致。
+  const autoUpdateBoxRef = useFocusTrap<HTMLDivElement>(!!autoUpdate);
+  const updateNotesBoxRef = useFocusTrap<HTMLDivElement>(!!updateNotes);
   const closeHomeCfg = useCallback(() => {
     setHomeCfgOpen(false);
     // 关闭后焦点回到入口按钮；延迟一帧，等遮罩真正卸载再 focus
@@ -892,7 +1022,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
   const toastTimer = useRef<number | null>(null);
   const lastSeqRef = useRef(0);
-  // 侧栏底部状态区：它的上边距要按首页信息表的实际位置算（见下面的 useLayoutEffect）
+  // 侧栏状态区：与首页信息表最后一行对齐（见 useLayoutEffect）
   const railStatusRef = useRef<HTMLElement | null>(null);
   const trafficRef = useRef<{ up: number; down: number; t: number } | null>(null);
   // 速率显示平滑：轮询间隔抖动会让差值速率忽大忽小，用 EMA 压平
@@ -1372,48 +1502,106 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     setPfSeen((seen) => (seen[pfTab] ? seen : { ...seen, [pfTab]: true }));
   }, [pfTab]);
 
-  // 侧栏状态区的最后一行（内核 / Mihomo）与首页右下信息表的最后一行（运行环境）齐平。
-  // 信息表的位置取决于上方流量卡的高度（随窗口尺寸变化），CSS 固定 margin 做不到，
-  // 所以按实际几何量补上边距：窗口 resize / 信息表尺寸变化时重算，只写回整数 px。
+  // 侧栏状态区与首页信息表最后一行（运行环境 / 代理内核 / 实时流量）对齐。
+  // 约束：
+  //  1) 与上方导航至少留 24px 间距，不能贴在一起；
+  //  2) 必须在开屏遮罩结束（bootReady）后再算——遮罩期间主界面还没挂载；
+  //  3) 用「清空 margin → 测量 → 设定」的绝对值算法，再做一次残差修正，
+  //     避免「当前 margin + delta」在重排后累积漂移。
   useLayoutEffect(() => {
-    if (tab !== "home") return;
+    if (!bootReady || tab !== "home") return;
     const status = railStatusRef.current;
-    const table = document.querySelector<HTMLElement>(".home-sysinfo");
     if (!status) return;
-    if (!table) {
-      // 关掉「系统」卡片组时没有信息表，回到 CSS 里的默认间距
-      status.style.marginTop = "";
-      return;
-    }
+
     let raf = 0;
-    const align = () => {
-      raf = 0;
+    const MIN_GAP = 24;
+    const measure = () => {
+      const table = document.querySelector<HTMLElement>(".home-sysinfo");
       const lastRow = status.querySelector<HTMLElement>(".rail-metrics li:last-child");
+      if (!table || !lastRow) return null;
       const cells = table.querySelectorAll<HTMLElement>(".sysinfo-item");
       const lastCell = cells[cells.length - 1];
-      if (!lastRow || !lastCell) return;
+      if (!lastCell) return null;
       const a = lastRow.getBoundingClientRect();
       const b = lastCell.getBoundingClientRect();
-      if (a.height < 1 || b.height < 1) return;
-      const delta = b.top + b.height / 2 - (a.top + a.height / 2);
-      const cur = parseFloat(getComputedStyle(status).marginTop) || 0;
-      const next = Math.max(16, Math.round(cur + delta));
-      if (Math.abs(next - cur) > 0.5) status.style.marginTop = `${next}px`;
+      if (a.height < 1 || b.height < 1) return null;
+      return { rowCenter: a.top + a.height / 2, cellCenter: b.top + b.height / 2 };
     };
+
+    const align = () => {
+      raf = 0;
+      // 没有信息表：回到 CSS 的 24px 间距
+      if (!document.querySelector(".home-sysinfo")) {
+        status.style.marginTop = "";
+        return;
+      }
+      // 先从基线量一次，得到基准位置
+      status.style.marginTop = "";
+      const base = parseFloat(getComputedStyle(status).marginTop) || MIN_GAP;
+      let margin = base;
+      // 多轮收敛：设完 margin 后布局可能有几像素反馈（卡片变高会带动整行重排），
+      // 每轮用残差修正，最多 4 轮；正常 2 轮内就 < 1px。
+      for (let i = 0; i < 4; i++) {
+        const m = measure();
+        if (!m) {
+          status.style.marginTop = `${MIN_GAP}px`;
+          return;
+        }
+        const resid = m.cellCenter - m.rowCenter;
+        if (Math.abs(resid) < 1) break;
+        margin = Math.max(MIN_GAP, Math.round(margin + resid));
+        status.style.marginTop = `${margin}px`;
+      }
+      // 兜底：任何情况下不允许贴住导航
+      if ((parseFloat(status.style.marginTop) || 0) < MIN_GAP) {
+        status.style.marginTop = `${MIN_GAP}px`;
+      }
+    };
+
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(align);
     };
     align();
     window.addEventListener("resize", schedule);
+    // 首帧之后字体/数据还可能把信息表往下推几像素（表格自身尺寸不变、只是位移），
+    // ResizeObserver 捕捉不到，这里补两次延时重算；算法是绝对定位，重复执行无副作用。
+    const t1 = window.setTimeout(schedule, 250);
+    const t2 = window.setTimeout(schedule, 900);
+
     const ro = new ResizeObserver(schedule);
-    ro.observe(table);
     ro.observe(status);
+    const table = document.querySelector<HTMLElement>(".home-sysinfo");
+    if (table) {
+      ro.observe(table);
+      const mo = new MutationObserver(schedule);
+      mo.observe(table, { childList: true, subtree: true });
+      return () => {
+        window.removeEventListener("resize", schedule);
+        clearTimeout(t1);
+        clearTimeout(t2);
+        ro.disconnect();
+        mo.disconnect();
+        if (raf) cancelAnimationFrame(raf);
+      };
+    }
     return () => {
       window.removeEventListener("resize", schedule);
+      clearTimeout(t1);
+      clearTimeout(t2);
       ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [tab, homeCards]);
+  }, [
+    bootReady,
+    tab,
+    homeCards,
+    platformLabel,
+    systemMem,
+    appVersion,
+    electronVersion,
+    mihomoChannel,
+    running,
+  ]);
 
   const currentGroup = useMemo(() => groups.find((g) => g.name === selectedGroup), [groups, selectedGroup]);
 
@@ -2450,7 +2638,9 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                             </span>
                             <span className="gt-txt">
                               <b>{g.name}</b>
-                              <small>{g.now || g.type}</small>
+                              <small>
+                                {g.now && !isInfoNode(g.now) ? stripFlagEmoji(g.now) : g.type}
+                              </small>
                             </span>
                           </button>
                         ))
@@ -2545,11 +2735,14 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                   </div>
 
                   {!sortedNodes.length ? (
-                    <div className="empty">{t("proxies.noNodes", "No nodes to display")}</div>
+                    // 没有代理组时上面已经给了「导入配置」的唯一空态，不再叠加第二句
+                    groups.length ? <div className="empty">{t("proxies.noNodes", "No nodes to display")}</div> : null
                   ) : (
                     <div className={`px-grid density-${nodeDensity}`}>
                       {sortedNodes.slice(0, pxNodeLimit).map((n) => {
-                        const d = delays[n];
+                        // 优先用本次会话的测速结果；没有则回落到内核 history（重启后不必重新测一遍才有数字）
+                        const histDelay = proxyMap[n]?.history?.slice(-1)[0]?.delay;
+                        const d = typeof delays[n] === "number" ? delays[n] : histDelay;
                         const cls = delayClass(d);
                         const active = currentGroup?.now === n;
                         const isBest = bestNode?.name === n;
@@ -2559,7 +2752,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         const isGroup = GROUP_TYPES.has(info?.type || "");
                         const hist = delayHistory[n]?.slice(-15) || [];
                         const maxMs = Math.max(...hist.map((h) => (h.ms > 0 ? h.ms : 0)), 50);
-                        const flagSvg = countryFlagSvg(n);
+                        const displayName = stripFlagEmoji(n);
                         return (
                           <button
                             key={n}
@@ -2576,26 +2769,12 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                             title={testingNode === n ? t("proxies.testingNode", "Testing…") : `${t("proxies.switchTo", "Switch to")} ${n}`}
                           >
                             <span className="px-flag">
-                              {flagSvg ? (
-                                <img
-                                  src={flagSvg}
-                                  alt=""
-                                  style={{
-                                    width: 20,
-                                    height: 14,
-                                    borderRadius: 2,
-                                    verticalAlign: "middle",
-                                    boxShadow: "var(--shadow-sm)",
-                                  }}
-                                />
-                              ) : (
-                                <span style={{ fontSize: 14, opacity: 0.5 }}>🌐</span>
-                              )}
+                              <NodeFlag name={n} />
                             </span>
                             <span className={`px-dot ${active ? "on" : ""}`} />
                             <span className="px-card-main">
                               <span className="px-card-name" title={n}>
-                                {n}
+                                {displayName}
                               </span>
                               <span className="px-card-meta">
                                 {ptype ? <em>{ptype}</em> : null}
@@ -2626,15 +2805,21 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                               className={`px-card-delay ${cls}`}
                               title={(() => {
                                 const h = delayHistory[n];
-                                if (!h?.length) return t("proxies.noDelayHistory", "No delay history");
-                                return h
-                                  .slice(-5)
-                                  .reverse()
-                                  .map(
-                                    (r) =>
-                                      `${new Date(r.t).toLocaleString(getLocale(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}: ${r.ms}ms`
-                                  )
-                                  .join("\n");
+                                if (h?.length) {
+                                  return h
+                                    .slice(-5)
+                                    .reverse()
+                                    .map(
+                                      (r) =>
+                                        `${new Date(r.t).toLocaleString(getLocale(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}: ${r.ms}ms`
+                                    )
+                                    .join("\n");
+                                }
+                                // 本次会话还没测过：显示内核缓存的上次结果，而不是「暂无」
+                                if (typeof histDelay === "number") {
+                                  return `${t("proxies.lastDelay", "上次延迟")}: ${histDelay > 0 ? `${histDelay}ms` : t("delay.timeout", "超时")}`;
+                                }
+                                return t("proxies.noDelayHistory", "No delay history");
                               })()}
                             >
                               {testingNode === n ? "…" : delayText(d)}
@@ -3325,7 +3510,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
               </div>
 
               <div className="pane conn-wrap" hidden={tab !== "connections"}>
-                <ConnectionsPage onToast={showToast} active={tab === "connections"} />
+                <ConnectionsPage onToast={showToast} active={tab === "connections"} running={running} />
               </div>
 
               <div className="pane term" hidden={tab !== "logs"}>
@@ -3399,6 +3584,12 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     themeMode={themeMode}
                     onThemeChange={changeTheme}
                     onToast={showToast}
+                    onUpdateFound={(info) => {
+                      setAutoUpdate(info);
+                      setUpdPct(-1);
+                      setUpdBusy(false);
+                      setUpdMsg("");
+                    }}
                     onBusy={setBusy}
                     onPorts={handlePorts}
                     onPrefs={handlePrefs}
@@ -3595,6 +3786,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
             role="dialog"
             aria-modal="true"
             aria-label={t("update.available", "发现新版本")}
+            ref={autoUpdateBoxRef}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="upd-hd">
@@ -3624,15 +3816,23 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
             </div>
             <div className="upd-body">
               <p className="upd-desc">
-                {t("update.desc", "新版本已发布。下载完成后会自动打开安装程序，按提示完成升级即可。")}
+                {updReady
+                  ? t(
+                      "update.choiceDesc",
+                      "安装包已下载并通过校验。请选择安装方式：覆盖安装会保留当前配置与数据；卸载后重装会先卸载当前版本再安装。"
+                    )
+                  : t("update.desc", "新版本已发布。下载完成后会自动打开安装程序，按提示完成升级即可。")}
               </p>
               {updBusy && (
-                <div className="upd-progress">
-                  <div className="upd-bar">
-                    <i style={{ width: `${updPct < 0 ? 4 : Math.max(4, updPct)}%` }} />
+                <>
+                  <div className="upd-progress">
+                    <div className="upd-bar">
+                      <i style={{ width: `${updPct < 0 ? 4 : Math.max(4, updPct)}%` }} />
+                    </div>
+                    <span className="upd-pct">{updPct < 0 ? t("update.preparing", "准备中…") : `${updPct}%`}</span>
                   </div>
-                  <span className="upd-pct">{updPct < 0 ? t("update.preparing", "准备中…") : `${updPct}%`}</span>
-                </div>
+                  {updPhase ? <div className="upd-phase">{updatePhaseText(updPhase)}</div> : null}
+                </>
               )}
               {updMsg ? <div className="upd-msg">{updMsg}</div> : null}
             </div>
@@ -3642,13 +3842,34 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                   type="button"
                   className="btn ghost"
                   onClick={() => {
+                    // 只发起取消并进入「正在取消…」；真正的结果等 downloadAppUpdate 返回，
+                    // 避免出现「已取消」之后安装程序又弹出来的自相矛盾。
+                    setUpdMsg(t("update.cancelling", "正在取消…"));
                     window.veyra?.cancelAppUpdate?.().catch(() => {});
-                    setUpdMsg(t("update.cancelled", "已取消下载"));
-                    setUpdBusy(false);
                   }}
                 >
                   {t("update.cancel", "取消下载")}
                 </button>
+              ) : updReady ? (
+                <>
+                  <button type="button" className="btn ghost" onClick={() => setAutoUpdate(null)}>
+                    {t("update.later", "稍后")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => void applyAppUpdate("clean")}
+                  >
+                    {t("update.cleanInstall", "卸载后重装")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={() => void applyAppUpdate("overwrite")}
+                  >
+                    {t("update.overwrite", "覆盖安装")}
+                  </button>
+                </>
               ) : (
                 <>
                   <button type="button" className="btn ghost" onClick={() => setAutoUpdate(null)}>
@@ -3671,6 +3892,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
             role="dialog"
             aria-modal="true"
             aria-label="本次更新"
+            ref={updateNotesBoxRef}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="update-hd">
@@ -3861,56 +4083,30 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
             {blockStartupMessage && (
               <div className="conflict-block-message">{blockStartupMessage}</div>
             )}
+            <p className="conflict-block-hint">
+              {t(
+                "conflict.blockStartupKillHint",
+                "「关闭并接管」会退出 Clash Verge 等正在占用系统代理的软件，可能中断你当前的上网代理。"
+              )}
+            </p>
             <div className="conflict-block-actions">
               <button
                 type="button"
                 className="btn btn-primary"
                 disabled={blockStartupKilling}
                 onClick={async () => {
-                  setBlockStartupKilling(true);
-                  setBlockStartupMessage(t("conflict.blockStartupKilling", "正在停止外部系统代理并退出代理软件…"));
-                  try {
-                    const result = window.veyra?.resolveExternalProxy
-                      ? await window.veyra.resolveExternalProxy()
-                      : null;
-                    if (result?.ok) {
-                      const started = window.veyra?.retryStartAfterConflict
-                        ? await window.veyra.retryStartAfterConflict()
-                        : null;
-                      if (started?.ok) {
-                        setBlockStartupMessage(t("conflict.blockStartupSuccess", "系统代理已恢复正常，正在启动…"));
-                        setTimeout(() => setBlockStartupOpen(false), 1000);
-                      } else {
-                        setBlockStartupMessage(t("conflict.blockStartupKillFailed", "系统代理已恢复，但 Veyra 内核启动失败，请重试"));
-                      }
-                    } else if (result?.conflicts && result.conflicts.length > 0) {
-                      setBlockStartupMessage(t("conflict.blockStartupStillConflict", "系统代理仍未恢复正常，请关闭外部代理的系统代理后重试"));
-                      setBlockStartupData((prev) => prev ? { ...prev, conflicts: result.conflicts! } : prev);
-                    } else {
-                      setBlockStartupMessage(t("conflict.blockStartupKillFailed", "无法自动恢复系统代理，请手动关闭外部代理的系统代理后重试"));
-                    }
-                  } catch {
-                    setBlockStartupMessage(t("conflict.blockStartupKillFailed", "无法自动恢复系统代理，请手动关闭外部代理的系统代理后重试"));
-                  } finally {
-                    setBlockStartupKilling(false);
-                  }
-                }}
-              >
-                {t("conflict.blockStartupKill", "一键关闭其他代理软件")}
-              </button>
-              <button
-                type="button"
-                className="btn"
-                disabled={blockStartupKilling}
-                onClick={async () => {
                   setBlockStartupMessage("");
                   try {
-                    const result = window.veyra?.retryStartAfterConflict ? await window.veyra.retryStartAfterConflict() : null;
+                    const result = window.veyra?.retryStartAfterConflict
+                      ? await window.veyra.retryStartAfterConflict()
+                      : null;
                     if (result?.ok) {
                       setBlockStartupMessage(t("conflict.blockStartupSuccess", "冲突已解决，正在启动…"));
                       setTimeout(() => setBlockStartupOpen(false), 1000);
                     } else if (result && result.conflicts && result.conflicts.length > 0) {
-                      setBlockStartupData((prev) => prev ? { ...prev, conflicts: result.conflicts!, rawConflicts: prev.rawConflicts } : prev);
+                      setBlockStartupData((prev) =>
+                        prev ? { ...prev, conflicts: result.conflicts!, rawConflicts: prev.rawConflicts } : prev
+                      );
                     }
                   } catch {
                     // 忽略
@@ -3918,6 +4114,29 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 }}
               >
                 {t("conflict.blockStartupRetry", "重新检测")}
+              </button>
+              <button
+                type="button"
+                className="btn danger"
+                disabled={blockStartupKilling}
+                title={t(
+                  "conflict.blockStartupKillHint",
+                  "会退出 Clash Verge 等正在占用系统代理的软件，可能中断你当前的上网代理"
+                )}
+                onClick={() =>
+                  setConfirmReq({
+                    title: t("conflict.blockStartupKill", "关闭其他代理软件并接管"),
+                    message: t(
+                      "conflict.blockStartupKillHint",
+                      "会退出 Clash Verge 等正在占用系统代理的软件，可能中断你当前的上网代理"
+                    ),
+                    confirmText: t("conflict.blockStartupKillConfirm", "关闭并接管"),
+                    danger: true,
+                    onConfirm: () => void runResolveExternal(),
+                  })
+                }
+              >
+                {t("conflict.blockStartupKill", "关闭其他代理软件并接管")}
               </button>
             </div>
           </div>
@@ -3957,8 +4176,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     type="button"
                     className={`home-cfg-item${on ? " on" : ""}`}
                     onClick={() => setHomeCfgDraft({ ...homeCfgDraft, [key]: !on })}
+                    aria-pressed={on}
                   >
-                    <span className="home-cfg-check">{on && <Check size={13} />}</span>
                     <span className="home-cfg-text">
                       <span className="home-cfg-label">{label}</span>
                       <span className="home-cfg-desc">{desc}</span>

@@ -83,7 +83,12 @@ if ($svc) {
 `;
   try {
     await elevatedPowershell(script);
-  } catch {}
+  } catch (e) {
+    // 不能吞掉异常：拒绝 UAC 或 sc.exe delete 失败时若仍报成功，
+    // 界面会提示「已卸载」而服务其实还在跑并占着端口，
+    // 下次启动内核被服务实例抢占，用户完全不知道发生过什么。
+    return { ok: false, error: `服务卸载失败：${(e && e.message) || e}` };
+  }
   return { ok: true };
 }
 

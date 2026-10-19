@@ -635,6 +635,10 @@ function startMonitor(onConflict, onResolved, intervalMs = 5000, myCustomPorts =
   const filterConflicts = typeof scanOptions.filterConflicts === "function"
     ? scanOptions.filterConflicts
     : (items) => items;
+  // myCustomPorts 支持传函数：端口是否算「自身端口」取决于内核当下是否在跑
+  //（在跑时占用的是自己，不能报 critical；掉线后才需要探）。传静态数组会被
+  // 启动瞬间的工作目录状态固化，后续内核状态变化时整个 critical 链路失效。
+  const resolvePorts = typeof myCustomPorts === "function" ? myCustomPorts : () => myCustomPorts;
   let lastHits = [];
   let firstScanDone = false;
   _monitorCallback = { onConflict, onResolved };
@@ -647,7 +651,7 @@ function startMonitor(onConflict, onResolved, intervalMs = 5000, myCustomPorts =
       const { conflicts: scannedConflicts } = await fullScan({
         includeSystem: false,
         includeSystemProxy: !!scanOptions.includeSystemProxy,
-        myCustomPorts,
+        myCustomPorts: resolvePorts(),
       });
       const conflicts = filterConflicts(scannedConflicts);
       const curKeys = new Set(conflicts.map((c) => `${c.type}:${c.proc || c.port}`));
@@ -659,8 +663,12 @@ function startMonitor(onConflict, onResolved, intervalMs = 5000, myCustomPorts =
       if (newItems.length > 0 && typeof onConflict === "function") {
         onConflict(newItems);
       }
-      if (resolved.length > 0 && lastHits.length > 0 && conflicts.length === 0 && typeof onResolved === "function") {
-        onResolved();
+      // 旧条件额外要求 conflicts.length === 0：同时存在 2 个冲突、用户只关掉 1 个时，
+      // 既不发 onConflict（newItems 为空）也不发 onResolved（conflicts 非空），
+      // 已解除的那一项就一直挂在界面上显示为「冲突中」，直到最后一个也消失。
+      // 有交集就回调，让上层按「当前仍存在的冲突」重新渲染。
+      if (resolved.length > 0 && lastHits.length > 0 && typeof onResolved === "function") {
+        onResolved(conflicts);
       }
       lastHits = conflicts;
     } catch {
@@ -673,7 +681,7 @@ function startMonitor(onConflict, onResolved, intervalMs = 5000, myCustomPorts =
       const { conflicts: scannedConflicts } = await fullScan({
         includeSystem: false,
         includeSystemProxy: !!scanOptions.includeSystemProxy,
-        myCustomPorts,
+        myCustomPorts: resolvePorts(),
       });
       lastHits = filterConflicts(scannedConflicts);
     } catch {} finally {

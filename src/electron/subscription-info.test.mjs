@@ -14,11 +14,25 @@ describe("subscription metadata refresh", () => {
     )).toBe(true);
   });
 
-  it("does not refresh complete custom-named subscriptions", () => {
+  it("refreshes custom-named subscriptions too once the cooldown passes", () => {
+    // 回归：曾经 hasTraffic && !autoNamed 直接返回 false，导致手动改过名的订阅
+    // 剩余流量/到期时间永远不再刷新。改名由调用方的 autoNamed 单独把关，
+    // 信息刷新不应受它影响。
     const entry = {
       url: "https://example.com/sub",
       name: "My subscription",
       userinfo: { total: 1024 },
+      metadataCheckedAt: now - subscriptionInfo.METADATA_REFRESH_COOLDOWN_MS,
+    };
+    expect(subscriptionInfo.shouldRefreshSubscriptionInfo(entry, false, now)).toBe(true);
+  });
+
+  it("still respects the cooldown for custom-named subscriptions", () => {
+    const entry = {
+      url: "https://example.com/sub",
+      name: "My subscription",
+      userinfo: { total: 1024 },
+      metadataCheckedAt: now - 1000,
     };
     expect(subscriptionInfo.shouldRefreshSubscriptionInfo(entry, false, now)).toBe(false);
   });

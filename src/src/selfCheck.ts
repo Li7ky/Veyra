@@ -92,31 +92,48 @@ export async function runSelfCheck(running: boolean): Promise<SelfCheckResult> {
     push({
       id: "core-alt",
       label: `备用内核 · ${nameOf(alt)}`,
+      // 硬编码 "ok" 会在未安装时也显示通过，用户按「已安装」预期去切换到
+      // sing-box 时才失败，自检却没给过任何预警。可选不等于已就绪，用 warn。
       value: b?.installed ? `已安装 ${b.version || ""}`.trim() : "未安装（可选）",
-      state: "ok",
+      state: b?.installed ? "ok" : "warn",
+      hint: b?.installed ? undefined : "未安装备用内核，无法切换到 sing-box",
+      go: b?.installed ? undefined : { section: "core", label: "去「内核」安装" },
     });
   }
 
   // ── 端口 ─────────────────────────────────────────────────
   if (ports) {
-    // 内核在运行时，这两个端口本来就该被自己占着，不算冲突
-    const mixedOk = running || ports.mixedFree;
+    // 内核在跑时端口本来就该被自己占着，这是正常的；但不能因此直接判 ok——
+    // 真实故障恰恰是「端口被占导致内核漂移到 +10003」：这种情况下
+    // ports.mixedFree 为假却仍然全绿，用户拿不到任何线索。
+    // 所以运行中也分三态：空闲 = ok，被占 = warn 并提示可能已漂移。
     push({
       id: "port-mixed",
       label: `混合端口 ${ports.mixedPort}`,
-      value: running ? "由本程序内核占用" : ports.mixedFree ? "可用" : "被其它程序占用",
-      state: mixedOk ? "ok" : "fail",
-      hint: mixedOk ? undefined : "端口被别的程序占用，内核无法监听",
-      go: mixedOk ? undefined : { section: "network", label: "去「网络」改端口" },
+      value: ports.mixedFree
+        ? running ? "可用（由本程序内核占用）" : "可用"
+        : running ? "被占用，内核可能已漂移到其它端口" : "被其它程序占用",
+      state: ports.mixedFree ? "ok" : running ? "warn" : "fail",
+      hint: ports.mixedFree
+        ? undefined
+        : running
+          ? "端口被非本进程占用时内核会改用备用端口，界面显示的端口可能不是实际端口"
+          : "端口被别的程序占用，内核无法监听",
+      go: ports.mixedFree ? undefined : { section: "network", label: "去「网络」改端口" },
     });
-    const ctrlOk = running || ports.ctrlFree;
     push({
       id: "port-ctrl",
       label: `控制端口 ${ports.controllerPort}`,
-      value: running ? "由本程序内核占用" : ports.ctrlFree ? "可用" : "被其它程序占用",
-      state: ctrlOk ? "ok" : "fail",
-      hint: ctrlOk ? undefined : "控制端口被占用时读不到内核状态和节点列表",
-      go: ctrlOk ? undefined : { section: "network", label: "去「网络」改端口" },
+      value: ports.ctrlFree
+        ? running ? "可用（由本程序内核占用）" : "可用"
+        : running ? "被占用，内核可能已漂移到其它端口" : "被其它程序占用",
+      state: ports.ctrlFree ? "ok" : running ? "warn" : "fail",
+      hint: ports.ctrlFree
+        ? undefined
+        : running
+          ? "控制端口被非本进程占用时读不到内核状态和节点列表，内核可能已改用备用端口"
+          : "控制端口被占用时读不到内核状态和节点列表",
+      go: ports.ctrlFree ? undefined : { section: "network", label: "去「网络」改端口" },
     });
   }
 
@@ -136,8 +153,10 @@ export async function runSelfCheck(running: boolean): Promise<SelfCheckResult> {
   });
 
   const procs = of("process");
-  // 仅当严重度为 critical/high 或存在 port 级别冲突时才算 warn，medium 级别（仅进程存在、无端口冲突）为 ok
-  const hasProcWithConflict = procs.length > 0 && procs.some((c) => c.severity === "critical" || c.severity === "high");
+  // conflict-guard 会把所有进程命中项强制刷成 "medium"（冲突分级只对端口有效），
+  // 所以判 critical/high 恒为假、这个分支永远不可达 —— 检测到别的代理软件在跑
+  // 也会静默通过。改为看是否存在进程命中本身，或退一步看 port 级冲突。
+  const hasProcWithConflict = procs.length > 0;
   const hasPort = of("port").length > 0;
   const procState: SelfCheckState = hasProcWithConflict || (procs.length > 0 && hasPort) ? "warn" : "ok";
   push({

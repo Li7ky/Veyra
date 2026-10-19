@@ -40,23 +40,42 @@ function parseSs(uri) {
   }
   let userinfo;
   let hostport;
+  // 只有 SIP002 明文形态（ss://method:pass@host:port）里的密码才做过
+  // percent-encoding（p%40ss 表示 p@ss）。base64 形态里装的是原始字节，
+  // 再解一次会把密码里合法的 % 也吃掉，所以必须区分来源。
+  let userinfoFromBase64 = false;
   if (rest.includes("@")) {
     // maybe already decoded or method:pass@host:port
-    try {
-      if (!rest.includes(":")) rest = b64decode(rest);
-    } catch {}
+    if (!rest.includes(":")) {
+      try {
+        rest = b64decode(rest);
+        userinfoFromBase64 = true;
+      } catch {}
+    }
     const at = rest.lastIndexOf("@");
     userinfo = rest.slice(0, at);
     hostport = rest.slice(at + 1);
-    if (!userinfo.includes(":")) userinfo = b64decode(userinfo);
+    if (!userinfo.includes(":")) {
+      userinfo = b64decode(userinfo);
+      userinfoFromBase64 = true;
+    }
   } else {
+    userinfoFromBase64 = true;
     const decoded = b64decode(rest);
     const at = decoded.lastIndexOf("@");
     userinfo = decoded.slice(0, at);
     hostport = decoded.slice(at + 1);
   }
   const [method, ...pwParts] = userinfo.split(":");
-  const password = pwParts.join(":");
+  let password = pwParts.join(":");
+  if (!userinfoFromBase64) {
+    // 不解码的话，含 @ : / % 的密码会带着百分号去鉴权，节点永远连不上且无报错
+    try {
+      password = decodeURIComponent(password);
+    } catch {
+      // 非法百分号转义：保持原样，总比抛错中断导入好
+    }
+  }
   // IPv6：[2001:db8::1]:8388 或裸 2001:db8::1:8388——按最后一个冒号分割 host/port
   let server = hostport;
   let port = "";

@@ -198,13 +198,18 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
               return;
             }
             const rule = `PROCESS-NAME,${name},${policySelect?.value || "PROXY"}`;
-            setRows((prev) => {
-              if (prev.some((r) => r.payload === rule)) {
-                onToast(t("rule.alreadyExists"));
-                return prev;
-              }
-              return [{ payload: rule }, ...prev];
-            });
+            // 去重判断必须在 setRows 之外完成：
+            // 1) 原来 onToast 埋在 updater 里，React 18/19 的 StrictMode 会对
+            //    updater 调用两次，提示会重复/错乱；updater 本应是纯函数。
+            // 2) 原来没有 return，即使命中重复也会继续往下走，
+            //    先弹「已存在」又被后面的「已添加」覆盖。
+            if (rows.some((r) => r.payload === rule)) {
+              onToast(t("rule.alreadyExists"));
+              return;
+            }
+            setRows((prev) =>
+              prev.some((r) => r.payload === rule) ? prev : [{ payload: rule }, ...prev]
+            );
             nameInput.value = "";
             onToast(t("rule.ruleAdded").replace("{rule}", rule));
           }}
@@ -223,9 +228,8 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
         >
           {padTop > 0 ? <div style={{ height: padTop, flexShrink: 0 }} aria-hidden /> : null}
           {visibleRows.map((r, k) => {
-            const i = start + k;
             return (
-              <div key={`${r.payload}-${i}`} className="pf-item">
+              <div key={`${r.payload}-${start + k}`} className="pf-item">
                 <div className="pf-item-body">
                   <div className="pf-item-name s-mono">{r.payload}</div>
                   <div className="pf-item-sub">{r.type || "Rule"}</div>
@@ -233,7 +237,11 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
                 <button
                   type="button"
                   className="btn ghost btn-sm"
-                  onClick={() => setRows((prev) => prev.filter((_, j) => j !== i))}
+                  // 按 payload 删除，不能按渲染下标 i：
+                  // 这里渲染的是虚拟滚动切片（visibleRows），i = start + k 只是
+                  // 视口内的相对位置。行集合一变（新增/删除/滚动后重算），
+                  // 同一个 i 指向的就是另一行，表现为「点删除却删掉了别的规则」。
+                  onClick={() => setRows((prev) => prev.filter((x) => x.payload !== r.payload))}
                 >
                   <Trash2 size={13} />
                 </button>

@@ -2,6 +2,7 @@ import { memo } from "react";
 import type { ReactNode } from "react";
 import { ChevronDown, Power, ShieldCheck, ShieldOff } from "lucide-react";
 import { t } from "./i18n";
+import { stripFlagEmoji } from "./nodeName";
 
 type Props = {
   sysProxy: boolean;
@@ -112,7 +113,7 @@ function ConnectOrb({
         <span className="hnb-k">{t("home.currentNode", "当前节点")}</span>
         <span className="hnb-v">
           <span className={`hnb-name${showNode ? "" : " is-empty"}`}>
-            {showNode ? nodeName : t("home.noNodeShort", "未选择")}
+            {showNode ? stripFlagEmoji(nodeName) : t("home.noNodeShort", "未选择")}
           </span>
           {nodeType ? <span className="hnb-type">{nodeType}</span> : null}
           <ChevronDown size={13} aria-hidden="true" />

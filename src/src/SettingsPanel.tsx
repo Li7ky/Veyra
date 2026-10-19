@@ -33,6 +33,7 @@ import ConfirmDialog, { type ConfirmRequest } from "./ConfirmDialog";
 import type { ThemeMode } from "./theme";
 import type { AppSettings } from "./vite-env";
 import { LOCALE_OPTIONS, setLocale, t } from "./i18n";
+import { ipcErrorText } from "./errors";
 
 /** 自检条目状态 → 图标 */
 const SC_ICON: Record<SelfCheckItem["state"], typeof CheckCircle2> = {
@@ -167,6 +168,8 @@ type Props = {
   themeMode: ThemeMode;
   onThemeChange: (mode: ThemeMode) => void;
   onToast: (msg: string) => void;
+  /** 设置页手动检查到新版本时，复用全局「发现新版本」弹窗，提醒更明显 */
+  onUpdateFound?: (info: { latest: string; current?: string; assetSize?: number; htmlUrl?: string }) => void;
   onBusy: (v: boolean) => void;
   onPorts: (mixed: number, controller: string) => void;
   onPrefs: (p: {
@@ -252,6 +255,7 @@ function SettingsPanel(props: Props) {
     themeMode,
     onThemeChange,
     onToast,
+    onUpdateFound,
     onBusy,
     onPorts,
     onPrefs,
@@ -296,8 +300,24 @@ function SettingsPanel(props: Props) {
   const [draftWebdavPass, setDraftWebdavPass] = useState("");
   const [draftHotkeys, setDraftHotkeys] = useState<Record<string, string>>({});
   const [updateStatus, setUpdateStatus] = useState("");
+  const [updateErr, setUpdateErr] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [downloadingUpdate, setDownloadingUpdate] = useState(false);
+  const [updatePct, setUpdatePct] = useState(-1);
+  const [updatePhase, setUpdatePhase] = useState("");
+  const [updateBytes, setUpdateBytes] = useState({ received: 0, total: 0 });
+  // 安装包已下载、等待选择「覆盖安装 / 卸载后重装」
+  const [updateReady, setUpdateReady] = useState(false);
+  // 设置页也订阅下载进度：否则这里只有一个不动的「下载中…」，与启动弹窗能力不一致
+  useEffect(() => {
+    const off = window.veyra?.onUpdateProgress?.((p) => {
+      if (!p) return;
+      if (typeof p.pct === "number") setUpdatePct(p.pct);
+      if (p.phase) setUpdatePhase(p.phase);
+      setUpdateBytes({ received: Number(p.received) || 0, total: Number(p.total) || 0 });
+    });
+    return () => off?.();
+  }, []);
   const [appUpdate, setAppUpdate] = useState<{
     hasUpdate: boolean;
     latest: string;
@@ -372,7 +392,7 @@ async function scanConflict() {
     onToast(list.length ? t("conflict.foundToast").replace("{n}", String(list.length)) : t("conflict.noneToast"));
   } catch (e) {
     setConflictScan({ busy: false, list: [], done: true });
-    onToast(String((e as Error).message || e));
+    onToast(ipcErrorText(e));
   }
 }
 
@@ -416,11 +436,23 @@ async function scanConflict() {
 
   async function applyNetwork() {
     if (!window.veyra) return;
+    // 校验放在这里而不是靠 `Number(x) || 默认值` 兜底：
+    // 后者会把清空/abc/0/负数/65536 全部静默替换成默认端口，
+    // 然后依然提示「已应用」，用户以为只是没改，实际端口和密钥都被悄悄重置了。
+    const p = Number(draftPort);
+    const c = Number(draftCtrl);
+    if (!Number.isInteger(p) || p < 1 || p > 65535) {
+      return onToast("混合端口需为 1-65535 的整数");
+    }
+    if (!Number.isInteger(c) || c < 1 || c > 65535) {
+      return onToast("控制端口需为 1-65535 的整数");
+    }
+    if (p === c) return onToast("混合端口与控制端口不能相同");
     onBusy(true);
     try {
       const r = await window.veyra.applyNetwork({
-        mixedPort: Number(draftPort) || DEFAULTS.mixedPort,
-        controllerPort: Number(draftCtrl) || DEFAULTS.controllerPort,
+        mixedPort: p,
+        controllerPort: c,
         secret: draftSecret.trim() || DEFAULTS.secret,
         allowLan: !!settings?.allowLan,
         logLevel: settings?.logLevel || DEFAULTS.logLevel,
@@ -428,11 +460,13 @@ async function scanConflict() {
       });
       setSettings(r.settings as AppSettings);
       onPorts(r.mixedPort, r.controller);
-      onToast("网络设置已应用");
+      // 端口被占用时主进程会沿用旧值并回传 warnings，必须如实转达
+      if (r.warnings?.length) onToast(r.warnings.join("；"));
+      else onToast("网络设置已应用");
       onRefresh();
       await reload();
     } catch (e) {
-      onToast(String((e as Error).message || e));
+      onToast(ipcErrorText(e));
     } finally {
       onBusy(false);
     }
@@ -463,7 +497,7 @@ async function scanConflict() {
       onRefresh();
       await reload();
     } catch (e) {
-      onToast(String((e as Error).message || e));
+      onToast(ipcErrorText(e));
     } finally {
       onBusy(false);
     }
@@ -483,7 +517,7 @@ async function scanConflict() {
     try {
       setSelfCheck(await runSelfCheck(running));
     } catch (e) {
-      onToast(String((e as Error).message || e));
+      onToast(ipcErrorText(e));
     } finally {
       setSelfCheckBusy(false);
     }
@@ -645,7 +679,7 @@ async function scanConflict() {
                       setLatestTag(r.latest);
                       onToast(`最新 ${r.latest}`);
                     } catch (e) {
-                      onToast(String((e as Error).message || e));
+                      onToast(ipcErrorText(e));
                     } finally {
                       onBusy(false);
                     }
@@ -676,7 +710,7 @@ async function scanConflict() {
                         onToast("内核已更新");
                       }
                     } catch (e) {
-                      onToast(String((e as Error).message || e));
+                      onToast(ipcErrorText(e));
                     } finally {
                       onBusy(false);
                     }
@@ -698,7 +732,7 @@ async function scanConflict() {
                       onRefresh();
                       await reload();
                     } catch (e) {
-                      onToast(String((e as Error).message || e));
+                      onToast(ipcErrorText(e));
                     } finally {
                       onBusy(false);
                     }
@@ -927,7 +961,7 @@ async function scanConflict() {
                     await window.veyra?.enableUwpLoopback?.();
                     onToast("已请求启用 UWP 回环");
                   } catch (e) {
-                    onToast(String((e as Error).message || e));
+                    onToast(ipcErrorText(e));
                   } finally {
                     onBusy(false);
                   }
@@ -1026,7 +1060,7 @@ async function scanConflict() {
                       onToast("服务模式已安装");
                       await reload();
                     } catch (e) {
-                      onToast(String((e as Error).message || e));
+                      onToast(ipcErrorText(e));
                     } finally {
                       onBusy(false);
                     }
@@ -1038,8 +1072,17 @@ async function scanConflict() {
                   type="button"
                   className="btn danger btn-sm"
                   onClick={async () => {
-                    await window.veyra?.serviceUninstall?.();
-                    onToast("已卸载服务模式");
+                    try {
+                      const r = (await window.veyra?.serviceUninstall?.()) as
+                        | { ok?: boolean; error?: string }
+                        | undefined;
+                      // 主进程现在会如实回传失败（例如用户取消了 UAC），
+                      // 这里必须转达，否则界面自说自话报「已卸载」而服务仍在运行。
+                      if (r && r.ok === false) onToast(r.error || "服务卸载失败");
+                      else onToast("已卸载服务模式");
+                    } catch (e) {
+                      onToast(ipcErrorText(e));
+                    }
                     await reload();
                   }}
                 >
@@ -1169,6 +1212,7 @@ async function scanConflict() {
                 {LOCALE_OPTIONS.map((o) => (
                   <option key={o.id} value={o.id}>
                     {o.label}
+                    {o.partial ? ` · ${t("appearance.partial", "部分翻译")}` : ""}
                   </option>
                 ))}
               </select>
@@ -1384,7 +1428,7 @@ async function scanConflict() {
                       const r = await window.veyra?.backupExport?.();
                       onToast(`已导出 ${r?.path || ""}`);
                     } catch (e) {
-                      onToast(String((e as Error).message || e));
+                      onToast(ipcErrorText(e));
                     } finally {
                       onBusy(false);
                     }
@@ -1405,7 +1449,7 @@ async function scanConflict() {
                         await reload();
                       }
                     } catch (e) {
-                      onToast(String((e as Error).message || e));
+                      onToast(ipcErrorText(e));
                     } finally {
                       onBusy(false);
                     }
@@ -1470,7 +1514,7 @@ async function scanConflict() {
                     await window.veyra?.webdavUpload?.();
                     onToast("WebDAV 上传成功");
                   } catch (e) {
-                    onToast(String((e as Error).message || e));
+                    onToast(ipcErrorText(e));
                   } finally {
                     onBusy(false);
                   }
@@ -1489,7 +1533,7 @@ async function scanConflict() {
                     onRefresh();
                     await reload();
                   } catch (e) {
-                    onToast(String((e as Error).message || e));
+                    onToast(ipcErrorText(e));
                   } finally {
                     onBusy(false);
                   }
@@ -1504,62 +1548,195 @@ async function scanConflict() {
         {sec === "about" && (
           <>
           <Card title="软件更新" icon={<RefreshCw size={15} />}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-              <span style={{ fontSize: 14, fontWeight: 600 }}>当前版本</span>
-              <span className="pill">v{appInfo?.version || "…"}</span>
-              <span className="pill-beta">测试版 BETA</span>
-              {updateStatus && (
-                <span style={{ fontSize: 13 }} className="s-muted">{updateStatus}</span>
-              )}
-            </div>
-            <div className="s-actions">
-              <button
-                type="button"
-                className="btn primary btn-sm"
-                disabled={checkingUpdate || downloadingUpdate}
-                onClick={async () => {
-                  setCheckingUpdate(true);
-                  setUpdateStatus("正在检查…");
-                  setAppUpdate(null);
-                  try {
-                    const info = await window.veyra!.checkAppUpdate();
-                    setAppUpdate(info);
-                    if (info.hasUpdate) {
-                      setUpdateStatus(`发现新版本 v${info.latest}`);
-                      onToast(`发现新版本 v${info.latest}`);
-                    } else {
-                      setUpdateStatus("已是最新版本");
-                    }
-                  } catch (e) {
-                    setUpdateStatus(`检查失败：${(e as Error).message || e}`);
-                  }
-                  setCheckingUpdate(false);
-                }}
-              >
-                <RefreshCw size={13} /> {checkingUpdate ? "检查中…" : "检查更新"}
-              </button>
-              {appUpdate?.hasUpdate && appUpdate.assetUrl && (
+            <div className="set-upd-panel">
+              <div className="set-upd-version">
+                <span className="set-upd-k">当前版本</span>
+                <span className="pill upd-pill">v{appInfo?.version || "…"}</span>
+                <span className="pill-beta">测试版 BETA</span>
+                {appUpdate?.hasUpdate ? (
+                  <span className="set-upd-chip">可更新至 v{appUpdate.latest}</span>
+                ) : null}
+              </div>
+
+              {updateErr ? (
+                <div className="set-upd-error" role="alert">
+                  <AlertTriangle size={14} />
+                  <span>{updateErr}</span>
+                </div>
+              ) : null}
+
+              {appUpdate?.hasUpdate && !downloadingUpdate && !updateReady ? (
+                <div className="set-upd-cta">
+                  <div className="set-upd-cta-text">
+                    <b>发现新版本 v{appUpdate.latest}</b>
+                    <span>
+                      当前 v{appInfo?.version || "…"}，点击立即更新；下载完成后会自动校验并启动安装程序。
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={!appUpdate.assetUrl}
+                    onClick={async () => {
+                      setDownloadingUpdate(true);
+                      setUpdatePct(-1);
+                      setUpdatePhase("proxy");
+                      setUpdateBytes({ received: 0, total: 0 });
+                      setUpdateErr("");
+                      setUpdateStatus("");
+                      try {
+                        const r = await window.veyra!.downloadAppUpdate();
+                        if (r.cancelled) {
+                          setUpdateStatus("已取消下载");
+                        } else if (r.downloaded) {
+                          // 下载完成：让用户选覆盖安装还是卸载重装
+                          setUpdateReady(true);
+                          setUpdateStatus("安装包已下载，请选择安装方式");
+                        } else if (r.started) {
+                          setUpdateStatus("安装程序已启动，请按提示完成升级");
+                          onToast("安装程序已启动");
+                        } else {
+                          setUpdateStatus("已是最新版本");
+                        }
+                      } catch (e) {
+                        setUpdateErr(ipcErrorText(e));
+                        onToast(ipcErrorText(e));
+                      } finally {
+                        setDownloadingUpdate(false);
+                        setUpdatePct(-1);
+                        setUpdatePhase("");
+                      }
+                    }}
+                  >
+                    <Download size={15} /> 立即更新
+                  </button>
+                </div>
+              ) : null}
+
+              {updateReady ? (
+                <div className="set-upd-choice">
+                  <div className="set-upd-choice-text">
+                    <b>安装包已下载并通过校验</b>
+                    <span>覆盖安装保留配置与数据；卸载后重装会先卸载当前版本（配置默认保留）。</span>
+                  </div>
+                  <div className="set-upd-choice-btns">
+                    <button
+                      type="button"
+                      className="btn ghost btn-sm"
+                      onClick={async () => {
+                        setUpdateErr("");
+                        try {
+                          await window.veyra!.installAppUpdate("clean");
+                          setUpdateReady(false);
+                          setUpdateStatus("正在卸载并重新安装，请稍候…");
+                        } catch (e) {
+                          setUpdateErr(ipcErrorText(e));
+                        }
+                      }}
+                    >
+                      卸载后重装
+                    </button>
+                    <button
+                      type="button"
+                      className="btn primary btn-sm"
+                      onClick={async () => {
+                        setUpdateErr("");
+                        try {
+                          await window.veyra!.installAppUpdate("overwrite");
+                          setUpdateReady(false);
+                          setUpdateStatus("安装程序已启动，请按提示完成升级");
+                        } catch (e) {
+                          setUpdateErr(ipcErrorText(e));
+                        }
+                      }}
+                    >
+                      覆盖安装
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {downloadingUpdate ? (
+                <div className="set-upd-progress">
+                  <div className="set-upd-progress-top">
+                    <span>
+                      {updatePhase === "fallback"
+                        ? "代理下载失败，正在改为直连…"
+                        : updatePhase === "direct"
+                          ? "正在直连下载安装包…"
+                          : updatePhase === "done"
+                            ? "下载完成，正在启动安装程序…"
+                            : "正在通过代理下载安装包…"}
+                    </span>
+                    <b>{updatePct >= 0 ? `${updatePct}%` : "…"}</b>
+                  </div>
+                  <div
+                    className="set-upd-bar"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.max(0, updatePct)}
+                  >
+                    <i style={{ width: `${Math.max(0, Math.min(100, updatePct))}%` }} />
+                  </div>
+                  <div className="set-upd-progress-foot">
+                    <span>
+                      {updateBytes.total > 0
+                        ? `${(updateBytes.received / 1048576).toFixed(1)} / ${(updateBytes.total / 1048576).toFixed(0)} MB`
+                        : "正在连接…"}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn ghost btn-sm"
+                      onClick={() => {
+                        setUpdateStatus("正在取消…");
+                        window.veyra?.cancelAppUpdate?.().catch(() => {});
+                      }}
+                    >
+                      取消下载
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="set-upd-actions">
                 <button
                   type="button"
                   className="btn btn-sm"
-                  disabled={downloadingUpdate}
+                  disabled={checkingUpdate || downloadingUpdate}
                   onClick={async () => {
-                    setDownloadingUpdate(true);
-                    setUpdateStatus("正在下载安装包…");
+                    setCheckingUpdate(true);
+                    setUpdateErr("");
+                    setUpdateStatus("正在检查…");
+                    setAppUpdate(null);
                     try {
-                      const r = await window.veyra!.downloadAppUpdate();
-                      setUpdateStatus(r.started ? "安装程序已启动，请按提示完成升级" : "已是最新版本");
-                      if (r.started) onToast("安装程序已启动");
+                      const info = await window.veyra!.checkAppUpdate();
+                      setAppUpdate(info);
+                      if (info.hasUpdate) {
+                        setUpdateStatus(`发现新版本 v${info.latest}`);
+                        // 同时弹全局提醒：只看设置页一行小字很容易错过
+                        onUpdateFound?.({
+                          latest: info.latest,
+                          current: info.current,
+                          assetSize: info.assetSize,
+                          htmlUrl: info.htmlUrl,
+                        });
+                        onToast(`发现新版本 v${info.latest}`);
+                      } else {
+                        setUpdateStatus("已是最新版本");
+                      }
                     } catch (e) {
-                      setUpdateStatus(`下载失败：${(e as Error).message || e}`);
-                      onToast(String((e as Error).message || e));
+                      setUpdateErr(ipcErrorText(e));
                     }
-                    setDownloadingUpdate(false);
+                    setCheckingUpdate(false);
                   }}
                 >
-                  {downloadingUpdate ? "下载中…" : `下载并安装 v${appUpdate.latest}`}
+                  <RefreshCw size={13} /> {checkingUpdate ? "检查中…" : "检查更新"}
                 </button>
-              )}
+                {updateStatus && !downloadingUpdate ? (
+                  <span className="set-upd-status">{updateStatus}</span>
+                ) : null}
+              </div>
             </div>
           </Card>
           <Card title="关于" icon={<Info size={15} />}>

@@ -354,9 +354,34 @@ function importBackupZip(zipPath, { userData, settingsPath, configDir }) {
   if (fs.existsSync(sSrc)) fs.copyFileSync(sSrc, settingsPath);
   const cSrc = path.join(tmp, "config");
   if (fs.existsSync(cSrc)) {
-    fs.rmSync(configDir, { recursive: true, force: true });
-    fs.mkdirSync(configDir, { recursive: true });
-    copyRecursive(cSrc, configDir);
+    // 先拷到暂存目录、校验通过后再交换。
+    // 旧实现是「先 rmSync(configDir) 再拷」，拷贝中途失败（文件被占用/磁盘满）
+    // 就永久丢掉用户全部订阅与增强文件，且没有任何回滚手段。
+    const stage = path.join(userData, "backup-import-stage");
+    fs.rmSync(stage, { recursive: true, force: true });
+    fs.mkdirSync(stage, { recursive: true });
+    try {
+      copyRecursive(cSrc, stage);
+      // 空目录视为不完整备份：宁可不动现有数据，也不要用空档案覆盖
+      if (fs.readdirSync(stage).length === 0) {
+        throw new Error("备份包中的 config 目录为空，已保留现有数据");
+      }
+    } catch (e) {
+      fs.rmSync(stage, { recursive: true, force: true });
+      throw new Error(`备份导入失败（已保留原有数据）：${(e && e.message) || e}`);
+    }
+    const backup = path.join(userData, "backup-import-prev");
+    fs.rmSync(backup, { recursive: true, force: true });
+    if (fs.existsSync(configDir)) fs.renameSync(configDir, backup);
+    try {
+      fs.renameSync(stage, configDir);
+    } catch (e) {
+      // 交换失败：把原目录放回去，避免用户既没新数据也没旧数据
+      fs.rmSync(configDir, { recursive: true, force: true });
+      if (fs.existsSync(backup)) fs.renameSync(backup, configDir);
+      throw new Error(`备份导入失败（已还原原有数据）：${(e && e.message) || e}`);
+    }
+    fs.rmSync(backup, { recursive: true, force: true });
   }
   fs.rmSync(tmp, { recursive: true, force: true });
   return { ok: true, files: names };

@@ -4263,3 +4263,45 @@ label.switch.compact input[type="checkbox"]:checked {
 [data-theme="light"] .brand-beta {
   background-image: linear-gradient(95deg, #4a4cd6 0%, #8b3fe0 55%, #1f7ae0 100%);
 }
+
+/* ── 36. BETA 标识 v3：切角描边字标（技术标注风，去掉渐变与胶囊）────── */
+.brand-beta {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 15px;
+  margin-left: 4px;
+  padding: 0 7px;
+  border: 1px solid var(--v-line-2);
+  border-radius: 0;
+  background: none;
+  background-image: none;
+  box-shadow: none;
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  font-weight: 600;
+  letter-spacing: 0.26em;
+  text-indent: 0.26em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--v-text-3);
+  -webkit-text-fill-color: currentColor;
+  background-clip: border-box;
+  clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+  transition: color 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+
+.brand-beta::before {
+  display: none;
+}
+
+.brand-beta:hover {
+  color: var(--v-accent-2);
+  border-color: var(--v-accent-line);
+}
+
+[data-theme="light"] .brand-beta {
+  background-image: none;
+  color: var(--v-text-3);
+}

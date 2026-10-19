@@ -276,11 +276,11 @@ pub fn update_tray(app: &AppHandle) {
     let proxy_active = online && sys_on;
     let core_label = if active_core == "singbox" { "sing-box" } else { "Mihomo" };
     let status = if proxy_active {
-        "状态：代理生效中"
+        "● 系统代理：已开启"
     } else if online {
-        "状态：内核运行·代理关"
+        "○ 系统代理：未开启（内核运行中）"
     } else {
-        "状态：未连接"
+        "○ 未连接 · 系统代理：未开启"
     };
     let tip = if proxy_active {
         format!(

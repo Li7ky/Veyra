@@ -120,8 +120,6 @@ jobs:
           }
           $lines += "Windows 10/11 x64 安装包见下方 Assets。"
           $lines += "测试版未做代码签名；升级前建议备份配置。"
-          $lines += ""
-          $lines += "验证说明见仓库内 ``TESTING.md``（若有）。"
           ($lines -join "`n") + "`n" | Set-Content -Path $bodyPath -Encoding utf8NoBOM
           "path=$bodyPath" >> $env:GITHUB_OUTPUT
           Get-Content $bodyPath

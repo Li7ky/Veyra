@@ -1,15 +1,15 @@
 # Veyra-omini
 
-[![Version](https://img.shields.io/badge/version-1.1.9--beta.4-blue)](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.4)
+[![Version](https://img.shields.io/badge/version-1.1.9--beta.4-blue)](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D4)](https://github.com/Li7ky/Veyra-omini/releases)
 [![Core](https://img.shields.io/badge/core-mihomo-0B7A75)](https://github.com/MetaCubeX/mihomo)
-[![Status](https://img.shields.io/badge/status-测试版-orange)](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.4)
+[![Status](https://img.shields.io/badge/status-测试版-orange)](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)
 
 适用于 Windows 10/11 x64 的本地代理客户端。界面基于 Electron 与 React，转发内核为 mihomo，可直接导入已有的 Clash / Mihomo 订阅和节点链接。
 
-当前版本 **1.1.9-beta.4** 为测试版。安装包未做代码签名，不作为稳定版的兼容性承诺。本软件不提供节点或订阅服务。
+当前版本 **1.1.9-beta.6** 为测试版。安装包未做代码签名，不作为稳定版的兼容性承诺。本软件不提供节点或订阅服务。
 
-**[下载 Windows x64 安装包（约 137 MB）](https://github.com/Li7ky/Veyra-omini/releases/download/v1.1.9-beta.4/Veyra-omini-Setup-1.1.9-beta.4-x64.exe)** · [发布说明与校验文件](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.4)
+**[下载 Windows x64 安装包（约 137 MB）](https://github.com/Li7ky/Veyra-omini/releases/download/v1.1.9-beta.6/Veyra-omini-Setup-1.1.9-beta.6-x64.exe)** · [发布说明](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)
 
 ## 为什么选择 Veyra-omini
 
@@ -32,7 +32,7 @@
 
 ## 快速开始
 
-1. 下载并运行安装包。可用发布页中的 `SHA256SUMS.txt` 核对文件哈希。
+1. 下载并运行安装包。发布页只提供安装包本体，请确认来源为本仓库的 Releases。
 2. 导入自己的订阅或本地配置。
 3. 选择节点后，按需开启系统代理或 TUN。
 
@@ -47,7 +47,7 @@
 - PAC、TUN、服务模式、sing-box
 - 逐页人工交互验收
 
-本次测试版已在 Windows 10 x64 上完成安装、卸载、应用接口检查，以及附带 mihomo 的本地 HTTP 转发验证。详细结果见 [发布说明](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.4)。
+本次测试版已在 Windows 10 x64 上完成安装、卸载、应用接口检查，以及附带 mihomo 的本地 HTTP 转发验证。详细结果见 [发布说明](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)。
 
 ## 开发与构建
 
@@ -72,4 +72,4 @@ npm run dist
 
 ## 第三方组件
 
-第三方许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，安装包内的 `resources/licenses` 亦附带这些文件。本项目自有代码的开源许可证尚未指定，第三方许可证不自动授予本项目自有代码的使用授权。
+第三方组件及其许可证随安装包内的 `resources/licenses` 一并分发。本项目自有代码的开源许可证尚未指定，第三方许可证不自动授予本项目自有代码的使用授权。

@@ -11,6 +11,7 @@ veyra-*.zip
 /.release/
 /.release-audit.json
 /release/
+/release-*/
 /.atomcode/
 /.mimocode/
 /.workbuddy/
@@ -28,3 +29,7 @@ src/.runtime-preview/
 .env
 .env.*
 !*.example
+
+# 不上传的文档（本地测试说明 / 第三方声明）
+/TESTING.md
+/THIRD_PARTY_NOTICES.md

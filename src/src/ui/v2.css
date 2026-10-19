@@ -4167,3 +4167,57 @@ label.switch.compact input[type="checkbox"]:checked {
 .px-card.active .px-card-delay {
   color: var(--v-accent-2);
 }
+
+/* ── 34. 测试版标识重设计 ─────────────────────────────────────────────── */
+.brand-beta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 7px 0 6px;
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  color: var(--v-accent-2);
+  background: linear-gradient(135deg, var(--v-accent-soft), rgba(125, 127, 245, 0.03));
+  border: 1px solid var(--v-accent-line);
+  box-shadow: 0 0 0 3px rgba(90, 92, 240, 0.06);
+  white-space: nowrap;
+}
+
+.brand-beta::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--v-accent);
+  box-shadow: 0 0 5px var(--v-accent);
+  flex: none;
+}
+
+[data-theme="light"] .brand-beta {
+  box-shadow: 0 0 0 3px rgba(90, 92, 240, 0.05);
+}
+
+/* 运行环境条里的版本标签同样收敛成小号胶囊 */
+.sysinfo-tag,
+.v-si-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--v-accent-2);
+  background: var(--v-accent-soft);
+  border: 1px solid var(--v-accent-line);
+  vertical-align: 1px;
+}

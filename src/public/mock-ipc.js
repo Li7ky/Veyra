@@ -288,6 +288,10 @@
       state.running = true;
       state.systemProxy = true;
       state.selectedNode = 'HK-Node';
+      state.subscriptions = [
+        { url: 'https://sub.example.com/api/v1/client/subscribe?token=abc123', name: '示例机场 · 专业版', updatedAt: Date.now() - 3600e3, userinfo: { upload: 8.2 * 1073741824, download: 42.6 * 1073741824, total: 200 * 1073741824, expire: (Date.now() + 45 * 864e5) / 1000 } },
+        { url: 'https://sub2.example.com/clash?token=def456', name: '备用订阅 · 轻量', updatedAt: Date.now() - 2 * 864e5, userinfo: { upload: 1.1 * 1073741824, download: 12.4 * 1073741824, total: 100 * 1073741824, expire: (Date.now() + 12 * 864e5) / 1000 } }
+      ];
       state.connections = [
         { id: 'c1', upload: 12034, download: 2048576, start: new Date(Date.now() - 52000).toISOString(), chains: ['HK-Node', 'PROXY'], rule: 'Match', rulePayload: '', metadata: { host: 'www.youtube.com', destinationIP: '142.250.72.14', destinationPort: 443, network: 'tcp', type: 'HTTPS', process: 'chrome.exe' } },
         { id: 'c2', upload: 4210, download: 912640, start: new Date(Date.now() - 41000).toISOString(), chains: ['JP-Node', 'PROXY'], rule: 'DomainSuffix', rulePayload: 'github.com', metadata: { host: 'api.github.com', destinationIP: '140.82.112.5', destinationPort: 443, network: 'tcp', type: 'HTTPS', process: 'Code.exe' } },

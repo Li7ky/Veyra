@@ -49,17 +49,17 @@ function WaveChart({ up, down, empty }: Props) {
     <svg className="wave-chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden>
       <defs>
         <linearGradient id={`${gid}-dn`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--blue-500)" stopOpacity="0.38" />
-          <stop offset="100%" stopColor="var(--blue-500)" stopOpacity="0.03" />
+          <stop offset="0%" stopColor="var(--v-accent)" stopOpacity="0.3" />
+          <stop offset="100%" stopColor="var(--v-accent)" stopOpacity="0.02" />
         </linearGradient>
         <linearGradient id={`${gid}-up`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--emerald-500)" stopOpacity="0.32" />
-          <stop offset="100%" stopColor="var(--emerald-500)" stopOpacity="0.03" />
+          <stop offset="0%" stopColor="var(--v-ok)" stopOpacity="0.22" />
+          <stop offset="100%" stopColor="var(--v-ok)" stopOpacity="0.02" />
         </linearGradient>
         <linearGradient id={`${gid}-dn-line`} x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor="var(--blue-500)" stopOpacity="0.55" />
-          <stop offset="60%" stopColor="var(--purple-500)" />
-          <stop offset="100%" stopColor="var(--cyan-500)" />
+          <stop offset="0%" stopColor="var(--v-accent)" stopOpacity="0.6" />
+          <stop offset="60%" stopColor="var(--v-accent-2)" />
+          <stop offset="100%" stopColor="var(--v-info)" />
         </linearGradient>
       </defs>
       {[0.2, 0.4, 0.6, 0.8].map((f) => (
@@ -69,8 +69,8 @@ function WaveChart({ up, down, empty }: Props) {
           x2={w}
           y1={h * f}
           y2={h * f}
-          stroke="currentColor"
-          strokeOpacity="0.10"
+          stroke="var(--v-line-2)"
+          strokeOpacity="1"
           strokeWidth="1"
         />
       ))}
@@ -81,8 +81,8 @@ function WaveChart({ up, down, empty }: Props) {
         x2={w}
         y1={h - 1}
         y2={h - 1}
-        stroke="currentColor"
-        strokeOpacity="0.5"
+        stroke="var(--v-line-3)"
+        strokeOpacity="0.9"
         strokeWidth="1"
         vectorEffect="non-scaling-stroke"
       />
@@ -91,8 +91,8 @@ function WaveChart({ up, down, empty }: Props) {
           <path d={dn.area} fill={`url(#${gid}-dn)`} />
           <path d={u.area} fill={`url(#${gid}-up)`} />
           <path d={dn.line} fill="none" stroke={`url(#${gid}-dn-line)`} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-          <path d={u.line} fill="none" stroke="var(--green-400)" strokeOpacity="0.85" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-          <circle cx={dn.tip.x} cy={dn.tip.y} r="4.5" fill="var(--indigo-500)" stroke="#fff" strokeWidth="2" />
+          <path d={u.line} fill="none" stroke="var(--v-ok)" strokeOpacity="0.9" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          <circle cx={dn.tip.x} cy={dn.tip.y} r="4.5" fill="var(--v-accent)" stroke="#fff" strokeWidth="2" />
         </>
       )}
     </svg>

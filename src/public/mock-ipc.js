@@ -278,6 +278,25 @@
     onNotice: function(cb) { return function(){}; }
   };
 
+  // ---- 预览态（仅浏览器调界面时用）----
+  // ?theme=dark|light 固定主题；?mock=running 让界面呈现「已连接 / 有流量 / 有连接」的样子。
+  try {
+    var qs = new URLSearchParams(location.search);
+    var th = qs.get('theme');
+    if (th === 'dark' || th === 'light') state.settings.theme = th;
+    if (qs.get('mock') === 'running') {
+      state.running = true;
+      state.systemProxy = true;
+      state.selectedNode = 'HK-Node';
+      state.connections = [
+        { id: 'c1', upload: 12034, download: 2048576, start: new Date(Date.now() - 52000).toISOString(), chains: ['HK-Node', 'PROXY'], rule: 'Match', rulePayload: '', metadata: { host: 'www.youtube.com', destinationIP: '142.250.72.14', destinationPort: 443, network: 'tcp', type: 'HTTPS', process: 'chrome.exe' } },
+        { id: 'c2', upload: 4210, download: 912640, start: new Date(Date.now() - 41000).toISOString(), chains: ['JP-Node', 'PROXY'], rule: 'DomainSuffix', rulePayload: 'github.com', metadata: { host: 'api.github.com', destinationIP: '140.82.112.5', destinationPort: 443, network: 'tcp', type: 'HTTPS', process: 'Code.exe' } },
+        { id: 'c3', upload: 812, download: 33211, start: new Date(Date.now() - 18000).toISOString(), chains: ['DIRECT'], rule: 'GeoIP', rulePayload: 'CN', metadata: { host: 'www.bilibili.com', destinationIP: '119.3.70.188', destinationPort: 443, network: 'tcp', type: 'HTTPS', process: 'chrome.exe' } },
+        { id: 'c4', upload: 0, download: 0, start: new Date(Date.now() - 4000).toISOString(), chains: ['REJECT'], rule: 'DomainSuffix', rulePayload: 'doubleclick.net', metadata: { host: 'ad.doubleclick.net', destinationIP: '', destinationPort: 443, network: 'tcp', type: 'HTTPS', process: 'msedge.exe' } }
+      ];
+    }
+  } catch (e) { /* 忽略 */ }
+
   window.veyra = veyra;
   window.__MOCK_IPC_ACTIVE__ = true;
   console.log('[MOCK] window.veyra initialized - mock IPC active');

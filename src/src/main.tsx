@@ -1,8 +1,30 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles.css";
+import "./ui/v2.css";
 import { applyTheme, cachedTheme } from "./theme";
 import { installTauriBridge } from "./tauri-bridge";
+
+// 纯浏览器预览（npm run dev:web）：注入 mock IPC，并允许用 ?theme= 固定主题。
+// 仅 DEV 生效，正式构建里这段会被 tree-shake 掉。
+if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
+  const q = new URLSearchParams(location.search);
+  const theme = q.get("theme");
+  if (theme === "light" || theme === "dark") {
+    try {
+      localStorage.setItem("veyra-theme", theme);
+    } catch {
+      /* 忽略 */
+    }
+  }
+  await new Promise<void>((resolve) => {
+    const s = document.createElement("script");
+    s.src = "/mock-ipc.js";
+    s.onload = () => resolve();
+    s.onerror = () => resolve();
+    document.head.appendChild(s);
+  });
+}
 
 // Tauri 没有 preload，用同形状的桥接层注入 window.veyra。
 installTauriBridge();

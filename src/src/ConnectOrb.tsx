@@ -1,6 +1,6 @@
 import { memo } from "react";
 import type { ReactNode } from "react";
-import { ChevronDown, Power, ShieldCheck, ShieldOff } from "lucide-react";
+import { ChevronRight, Power, ShieldCheck, ShieldOff } from "lucide-react";
 import { t } from "./i18n";
 import { stripFlagEmoji } from "./nodeName";
 
@@ -13,11 +13,8 @@ type Props = {
   onToggleProxy: () => void;
   onToggleCore?: () => void;
   onNodeClick?: () => void;
-  /** 运行态附加信息（内核名 · 运行时长）。原属右栏「系统时间」卡，
-      v13 右栏精简后移到这里，避免单独占一张卡的高度。 */
+  /** 运行态附加信息（内核名 · 运行时长）。 */
   meta?: ReactNode;
-  /** 当前节点延迟 / 可用节点数：填进 hero 右侧原本空着的 200px，
-      同时把「用的谁、快不快」提到首屏（此前在折叠线以下） */
   delay?: number | null;
   nodeCount?: number;
   nodeType?: string;
@@ -55,113 +52,81 @@ function ConnectOrb({
   const stateEn = !running ? "DISCONNECTED" : active ? "PROTECTED" : "CORE ONLY";
 
   return (
-    <section className={`hero ${state}`}>
-      {/* 外环光晕 — 仅在连接状态显示 */}
-      {active && (
-        <div className="hero-ring" aria-hidden="true">
-          <div className="ring ring-1" />
-          <div className="ring ring-2" />
-          <div className="ring ring-3" />
-        </div>
-      )}
+    <section className={`v-hero ${state}`}>
+      <div className="v-hero-main">
+        <button
+          type="button"
+          className={`v-orb ${busy ? "is-busy" : ""}`}
+          onClick={onToggleCore ?? onToggleProxy}
+          disabled={busy}
+          title={running ? "点击停止代理服务" : "点击启动代理服务"}
+          aria-label={running ? "停止代理服务" : "启动代理服务"}
+        >
+          <span className="v-orb-halo" aria-hidden="true" />
+          <Power size={22} strokeWidth={2.2} />
+        </button>
 
-      <button
-        type="button"
-        className={`hero-orb-btn ${busy ? "spinning" : ""} ${active ? "pulse" : ""}`}
-        onClick={onToggleCore ?? onToggleProxy}
-        disabled={busy}
-        title={running ? "点击停止代理服务" : "点击启动代理服务"}
-      >
-        <div className="orb-glow" aria-hidden="true" />
-        <div className="orb-core">
-          <Power size={34} strokeWidth={2.4} />
-        </div>
-      </button>
-
-      <div className="hero-info">
-        <div className="hero-k">
-          <span className={`k-dot ${state}`} />
-          <span className="k-text">{stateEn}</span>
-          <span className="k-sep">·</span>
-          <span className="k-brand">Veyra-omini Core</span>
-        </div>
-        <div className="hero-state">{stateText}</div>
-        <div className="hero-meta">
-          {running ? (
-            <>
-              <code>127.0.0.1:{mixedPort}</code>
-              {meta ? <span className="hero-run-sep">·</span> : null}
-              {meta}
-            </>
-          ) : (
-            <span>点击 Core 按钮启动代理服务</span>
-          )}
+        <div className="v-hero-copy">
+          <div className="v-hero-eyebrow">
+            <i className={`v-dot ${state}`} aria-hidden="true" />
+            <span>{stateEn}</span>
+          </div>
+          <div className="v-hero-title">{stateText}</div>
+          <div className="v-hero-sub">
+            {running ? (
+              <>
+                <code>127.0.0.1:{mixedPort}</code>
+                {meta ? <span className="v-sep">·</span> : null}
+                {meta}
+              </>
+            ) : (
+              <span>点击左侧电源键启动内核</span>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* 当前节点：原本在折叠线以下的「当前节点 / 延迟」两个 tile，
-          合并成 hero 右侧这一块——首屏就能看到「用的谁、快不快」，
-          点一下直接去代理页切节点。 */}
-      {showNodeBlock ? (
-      <button
-        type="button"
-        className="hero-node-block"
-        onClick={onNodeClick}
-        disabled={!onNodeClick}
-        title={t("hero.switchNode", "切换节点")}
-      >
-        <span className="hnb-k">{t("home.currentNode", "当前节点")}</span>
-        <span className="hnb-v">
-          <span className={`hnb-name${showNode ? "" : " is-empty"}`}>
-            {showNode ? stripFlagEmoji(nodeName) : t("home.noNodeShort", "未选择")}
-          </span>
-          {nodeType ? <span className="hnb-type">{nodeType}</span> : null}
-          <ChevronDown size={13} aria-hidden="true" />
-        </span>
-        <span className="hnb-meta">
-          {/* 没选节点时不显示延迟：一个孤零零的「—」看不出是延迟还是缺数据 */}
-          {showNode ? (
-            <>
-              <span className={`hnb-delay ${delayTone(delay)}`}>
-                {delay != null && delay > 0 ? `${delay} ms` : "未测速"}
+      <div className="v-hero-side">
+        {showNodeBlock ? (
+          <button
+            type="button"
+            className="v-node"
+            onClick={onNodeClick}
+            disabled={!onNodeClick}
+            title={t("hero.switchNode", "切换节点")}
+          >
+            <span className="v-node-top">
+              <span className={`v-node-name${showNode ? "" : " is-empty"}`}>
+                {showNode ? stripFlagEmoji(nodeName) : t("home.noNodeShort", "未选择")}
               </span>
-              <span className="hnb-dot">·</span>
-            </>
-          ) : null}
-          <span>
-            {nodeCount ?? 0} {t("home.nodesAvailable", "节点可用")}
-          </span>
-        </span>
-      </button>
-      ) : null}
+              {nodeType ? <span className="v-node-type">{nodeType}</span> : null}
+              <ChevronRight size={13} aria-hidden="true" />
+            </span>
+            <span className="v-node-bottom">
+              {showNode && delay != null && delay > 0 ? (
+                <span className={`v-node-delay ${delayTone(delay)}`}>{delay} ms</span>
+              ) : showNode ? (
+                <span className="v-node-delay na">未测速</span>
+              ) : null}
+              <span className="v-node-count">
+                {nodeCount ?? 0} {t("home.nodesAvailable", "节点可用")}
+              </span>
+            </span>
+          </button>
+        ) : null}
 
-      <div className="hero-actions">
         <button
           type="button"
-          className={`hero-btn ${sysProxy ? "stop" : running ? "warn" : "go"}`}
+          className={`v-power ${sysProxy ? "on" : running ? "idle" : "off"}`}
           onClick={onToggleProxy}
           disabled={busy || (!running && !sysProxy)}
         >
-          {sysProxy ? (
-            <>
-              <ShieldCheck size={16} /> 系统代理 · 开
-            </>
-          ) : (
-            <>
-              <ShieldOff size={16} /> {running ? "系统代理 · 未开启" : "系统代理 · 关"}
-            </>
-          )}
+          {sysProxy ? <ShieldCheck size={15} /> : <ShieldOff size={15} />}
+          <span>
+            {t("hero.systemProxy", "系统代理")}
+            <b>{sysProxy ? "开" : "关"}</b>
+          </span>
         </button>
-        {onToggleCore ? (
-          <button
-            type="button"
-            className="hero-btn ghosty"
-            onClick={onToggleCore}
-            disabled={busy}
-          >
-            {running ? "停止内核服务" : "启动内核服务"}
-          </button>
-        ) : null}
       </div>
     </section>
   );

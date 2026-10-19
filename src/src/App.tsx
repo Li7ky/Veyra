@@ -594,8 +594,15 @@ function InfoRow({
   );
 }
 
+const TAB_IDS: Tab[] = ["home", "proxies", "profiles", "connections", "rules", "logs", "tests", "settings"];
+
 export default function App() {
-  const [tab, setTab] = useState<Tab>("home");
+  const [tab, setTab] = useState<Tab>(() => {
+    // 纯浏览器预览时允许 ?tab=proxies 直达某一页，方便逐页截图与调样式；正式构建无此入口。
+    if (!import.meta.env.DEV) return "home";
+    const q = new URLSearchParams(location.search).get("tab");
+    return TAB_IDS.includes(q as Tab) ? (q as Tab) : "home";
+  });
   // 右栏（时钟/快捷操作/流量）默认只在首页展开；其余页面主区吃满宽度，
   // 避免连接页表格(min-width 820)与节点页分组标签被裁切。手动切换只在当前页生效。
   const [railOverride, setRailOverride] = useState<boolean | null>(null);
@@ -2332,8 +2339,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
           {/* Main Content */}
           <div className="col-main">
             <main className="stage">
-              <div className="pane home" hidden={tab !== "home"}>
-                  {/* HERO · 核心连接球 — 视觉锚点 */}
+              <div className="pane v-home" hidden={tab !== "home"}>
+                  {/* HERO · 连接状态 */}
                   <ConnectOrb
                     running={running}
                     sysProxy={sysProxy}
@@ -2342,7 +2349,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     nodeName={currentNode}
                     onToggleProxy={toggleSysProxy}
                     onNodeClick={() => {
-                      // P2：一键去代理页切节点，并选中当前节点所在分组
+                      // 一键去代理页切节点，并选中当前节点所在分组
                       setTab("proxies");
                       const g = groups.find((x) => x.all?.includes(currentNode));
                       if (g?.name) setSelectedGroup(g.name);
@@ -2358,25 +2365,20 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     }
                   />
 
-                  {/* 实时流量面板（v14）
-                      合并原「上传速率 / 下载速率 / 活跃连接」三张指标卡 + 独立流量图。
-                      理由：四者语义上就是同一件事，拆成四块会让中栏失去视觉焦点，
-                      并把最大面积给了最空的内容。速率现在是全页最大的数据。 */}
-                  <div className="glass-tile tf-panel">
-                    <div className="tf-head">
-                      <div className="tf-head-l">
-                        <span className="tf-title">{t("home.realtimeTraffic", "实时流量")}</span>
-                        <span className="tf-sub">
+                  {/* 实时流量 */}
+                  <section className="v-traffic">
+                    <header className="v-traffic-hd">
+                      <div className="v-traffic-title">
+                        <h3>{t("home.realtimeTraffic", "实时流量")}</h3>
+                        <span>
                           {MODE_LABEL(mode)} · {nodes.length}{" "}
                           {t("home.nodesAvailable", "节点可用")}
                         </span>
                       </div>
-                      {/* 首页卡片配置入口：这个弹窗此前没有任何入口（setHomeCfgOpen(true) 全项目 0 次调用），
-                          卡片开关逻辑与持久化都已实现好，只是打不开。 */}
                       <button
                         ref={homeCfgTriggerRef}
                         type="button"
-                        className="btn ghost btn-xs home-cfg-open"
+                        className="btn ghost btn-xs"
                         onClick={() => {
                           setHomeCfgDraft(homeCards);
                           setHomeCfgOpen(true);
@@ -2384,56 +2386,53 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         title={t("home.configureCards", "自定义首页卡片")}
                         aria-haspopup="dialog"
                       >
-                        <SlidersHorizontal size={13} />
+                        <SlidersHorizontal size={12} />
                         {t("home.configureCards", "自定义首页卡片")}
                       </button>
-                    </div>
+                    </header>
 
-                    {/* 焦点数据：下载速率是全页最大的数字。0 值降为中性灰——彩色 0 会暗示「有数据」 */}
-                    <div className="tf-rates">
-                      <div className="tf-rate">
-                        <span className="tf-rate-k">↓ {t("home.download", "下载")}</span>
-                        <span
-                          className={`tf-rate-v${downRate > 0 ? " down" : " is-zero"}`}
-                        >
+                    <div className="v-traffic-rates">
+                      <div className="v-rate">
+                        <span className="v-rate-k">
+                          <i className="v-arrow down" aria-hidden="true" />{" "}
+                          {t("home.download", "下载")}
+                        </span>
+                        <span className={`v-rate-v down${downRate > 0 ? "" : " is-zero"}`}>
                           {formatRate(downRate)}
                         </span>
                       </div>
-                      <div className="tf-rate">
-                        <span className="tf-rate-k">↑ {t("home.upload", "上传")}</span>
-                        <span className={`tf-rate-v${upRate > 0 ? " up" : " is-zero"}`}>
+                      <div className="v-rate">
+                        <span className="v-rate-k">
+                          <i className="v-arrow up" aria-hidden="true" />{" "}
+                          {t("home.upload", "上传")}
+                        </span>
+                        <span className={`v-rate-v up${upRate > 0 ? "" : " is-zero"}`}>
                           {formatRate(upRate)}
                         </span>
                       </div>
-                      <div className="tf-conn">
-                        <span className="tf-conn-k">
-                          {t("home.activeConnections", "活跃连接")}
-                        </span>
-                        <span className={`tf-conn-v${connCount > 0 ? "" : " is-zero"}`}>
+                      <div className="v-rate v-rate-conn">
+                        <span className="v-rate-k">{t("home.activeConnections", "活跃连接")}</span>
+                        <span className={`v-rate-v${connCount > 0 ? "" : " is-zero"}`}>
                           {connCount}
                         </span>
                       </div>
                     </div>
 
-                    {/* 图表区：无论有没有数据都画成「一张图」——网格 + 0 基线 + 时间刻度。
-                        此前零流量时中间塞一块居中的图标+两行字，四周全空，读起来像
-                        「图表加载失败」；现在空态只是一条贴着基线的平线，左上角一个
-                        「监听中」的小标签，空的地方本身就是图的一部分。 */}
-                    <div className="home-chart-wrap">
+                    <div className="v-chart">
                       <WaveChart
                         up={hasTraffic ? rateHistory.up : []}
                         down={hasTraffic ? rateHistory.down : []}
                         empty={!hasTraffic}
                       />
                       {!hasTraffic ? (
-                        <span className={`chart-live${running ? " on" : ""}`}>
+                        <span className={`v-chart-live${running ? " on" : ""}`}>
                           <i aria-hidden="true" />
                           {running
                             ? t("home.listening", "监听中 · 暂无流量")
                             : t("nav.serviceNotRunning", "服务未运行")}
                         </span>
                       ) : null}
-                      <div className="chart-axis" aria-hidden="true">
+                      <div className="v-chart-axis" aria-hidden="true">
                         <span>60s</span>
                         <span>45s</span>
                         <span>30s</span>
@@ -2441,18 +2440,15 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         <span>{t("home.now", "现在")}</span>
                       </div>
                     </div>
-                  </div>
+                  </section>
 
-                  {/* 三列：规则 / 模式 / 订阅
-                      原来「规则 / 当前节点 / 网络+模式 / 系统 / 累计流量」五块各占一整行，
-                      首屏 650px 装不下 1067px 内容，用户要滚动才能看到「当前节点」。
-                      现在节点并入 hero 右侧，其余压成一行三列。 */}
+                  {/* 规则 / 模式 / 订阅 */}
                   {(homeCards.core || homeCards.mode || homeCards.subscription) && (
-                    <div className="home-tiles">
+                    <div className="v-tiles">
                       {homeCards.core && (
-                        <div className="glass-tile home-tile">
-                          <div className="home-tile-hd">
-                            <span className="home-tile-k">{t("home.rules", "规则数量")}</span>
+                        <section className="v-tile">
+                          <header className="v-tile-hd">
+                            <span>{t("home.rules", "规则数量")}</span>
                             <button
                               type="button"
                               className="link-btn"
@@ -2460,30 +2456,30 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                             >
                               {ruleCount != null ? t("home.view", "查看") : t("home.goAdd", "去添加")} →
                             </button>
-                          </div>
-                          <div className={`home-tile-v${ruleCount != null ? "" : " is-zero"}`}>
+                          </header>
+                          <div className={`v-tile-v${ruleCount != null ? "" : " is-zero"}`}>
                             {ruleCount != null ? ruleCount : 0}
                           </div>
-                          <div className="home-tile-sub">
+                          <footer className="v-tile-sub">
                             {ruleCount != null
                               ? t("home.ruleCount", "条规则（来自当前订阅）")
                               : t("home.noRulesHint", "未连接内核，暂无法统计")}
-                          </div>
-                        </div>
+                          </footer>
+                        </section>
                       )}
 
                       {homeCards.mode && (
-                        <div className="glass-tile home-tile">
-                          <div className="home-tile-hd">
-                            <span className="home-tile-k">{t("home.mode", "代理模式")}</span>
-                          </div>
-                          <div className="home-tile-v">{MODE_LABEL(mode)}</div>
-                          <div className="home-tile-seg">
+                        <section className="v-tile">
+                          <header className="v-tile-hd">
+                            <span>{t("home.mode", "代理模式")}</span>
+                          </header>
+                          <div className="v-tile-v">{MODE_LABEL(mode)}</div>
+                          <div className="v-seg">
                             {(["rule", "global", "direct"] as const).map((m) => (
                               <button
                                 key={m}
                                 type="button"
-                                className={`home-seg-btn${mode === m ? " on" : ""}`}
+                                className={`v-seg-btn${mode === m ? " on" : ""}`}
                                 onClick={() => changeMode(m)}
                                 disabled={!running}
                               >
@@ -2491,13 +2487,13 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                               </button>
                             ))}
                           </div>
-                        </div>
+                        </section>
                       )}
 
                       {homeCards.subscription && (
-                        <div className="glass-tile home-tile">
-                          <div className="home-tile-hd">
-                            <span className="home-tile-k">{t("home.subscriptions", "订阅")}</span>
+                        <section className="v-tile">
+                          <header className="v-tile-hd">
+                            <span>{t("home.subscriptions", "订阅")}</span>
                             <button
                               type="button"
                               className="link-btn"
@@ -2505,16 +2501,14 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                             >
                               {t("home.manage", "管理")} →
                             </button>
-                          </div>
-                          <div className={`home-tile-v${subs.length ? "" : " is-zero"}`}>
+                          </header>
+                          <div className={`v-tile-v${subs.length ? "" : " is-zero"}`}>
                             {subs.length}
-                            <em className="home-tile-unit">{t("home.subsUnit", "个订阅")}</em>
+                            <em className="v-tile-unit">{t("home.subsUnit", "个订阅")}</em>
                           </div>
                           {subUsage.total > 0 ? (
-                            /* 已用/剩余 + 进度条合成「第三行」一格：三张卡的最后一行同高、同一条底边。
-                               之前进度条单独占一行，订阅卡比旁边两张高 5px，条子吊在下面。 */
-                            <div className="home-tile-quota">
-                              <div className="home-tile-split">
+                            <div className="v-quota">
+                              <div className="v-quota-split">
                                 <span>
                                   <i>{t("home.usedLabel", "已用")}</i>
                                   {formatBytes(subUsage.used)}
@@ -2524,67 +2518,65 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                                   {formatBytes(subUsage.left)}
                                 </span>
                               </div>
-                              <div className="home-tile-bar" aria-hidden="true">
+                              <div className="v-quota-bar" aria-hidden="true">
                                 <i style={{ width: `${subUsagePct}%` }} />
                               </div>
                             </div>
                           ) : (
-                            <div className="home-tile-sub">
+                            <footer className="v-tile-sub">
                               {subs.length
                                 ? t("home.noQuota", "未返回流量信息")
                                 : t("home.noSubs", "还没有订阅")}
-                            </div>
+                            </footer>
                           )}
-                        </div>
+                        </section>
                       )}
                     </div>
                   )}
 
-                  {/* meta 行：系统 / 版本 / 内核 / 累计流量
-                      这四项原来各占一整行（89 + 68 = 157px），是最低频的信息，
-                      压成一行小字即可，把首屏让给状态、流量、节点。 */}
+                  {/* 运行环境 */}
                   {(homeCards.system || homeCards.traffic) && (
-                    <div className="home-sysinfo">
+                    <div className="v-sysinfo">
                       {homeCards.system && platformLabel ? (
-                        <div className="sysinfo-item">
+                        <div className="v-si">
                           <span>{t("home.sysOs", "系统")}</span>
                           <b title={platformLabel}>{platformLabel}</b>
                         </div>
                       ) : null}
                       {homeCards.system && systemMem > 0 ? (
-                        <div className="sysinfo-item">
+                        <div className="v-si">
                           <span>{t("home.sysMem", "内存")}</span>
                           <b>{formatBytes(systemMem)}</b>
                         </div>
                       ) : null}
                       {homeCards.system && appVersion ? (
-                        <div className="sysinfo-item">
+                        <div className="v-si">
                           <span>{t("home.sysApp", "Veyra")}</span>
                           <b title={`v${appVersion.replace(/^v/, "")}`}>
                             v{appVersion.replace(/^v/, "")}
                             {appVersion.includes("beta") ? (
-                              <em className="sysinfo-tag">{t("home.betaTag", "测试版")}</em>
+                              <em className="v-si-tag">{t("home.betaTag", "测试版")}</em>
                             ) : null}
                           </b>
                         </div>
                       ) : null}
                       {homeCards.system && electronVersion ? (
-                        <div className="sysinfo-item">
+                        <div className="v-si">
                           <span>{t("home.sysRuntime", "运行环境")}</span>
-                          <b>运行时 {electronVersion}</b>
+                          <b>Tauri {electronVersion.replace(/^Tauri\s*/i, "")}</b>
                         </div>
                       ) : null}
                       {homeCards.system && mihomoChannel ? (
-                        <div className="sysinfo-item">
+                        <div className="v-si">
                           <span>{t("home.sysCore", "代理内核")}</span>
                           <b>
-                            Mihomo {mihomoChannel === "alpha" ? "alpha" : "stable"}
+                            Mihomo
                             {running ? t("home.sysCoreOn", " · 运行中") : t("home.sysCoreOff", " · 已停止")}
                           </b>
                         </div>
                       ) : null}
                       {homeCards.traffic ? (
-                        <div className="sysinfo-item">
+                        <div className="v-si">
                           <span>{t("home.sysTraffic", "实时流量")}</span>
                           <b>
                             ↓ {formatBytes(download)} · ↑ {formatBytes(upload)}
@@ -2593,10 +2585,9 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       ) : null}
                     </div>
                   )}
-
                 </div>
 
-              <div className="pane px" hidden={tab !== "proxies"}>
+                <div className="pane px" hidden={tab !== "proxies"}>
                   <div className="px-header-card">
                     <div className="px-tabs">
                       {groups.length ? (
@@ -3737,7 +3728,42 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 </div>
               </div>
 
-
+              {/* 核心信息：端口 / 控制端口 / 内核 / 运行模式，把右栏剩余高度用起来 */}
+              <div className="card v-rail-card">
+                <div className="card-header no-border net-hd">
+                  <div className="card-title text-base">{t("nav.coreInfo", "核心信息")}</div>
+                  <span className={`v-rail-state${running ? " on" : ""}`}>
+                    {running ? t("status.heroRunning", "运行中") : t("status.heroStopped", "已停止")}
+                  </span>
+                </div>
+                <div className="card-body tight v-rail-body">
+                  <div className="v-rail-row">
+                    <span>{t("settings.mixedPort", "代理端口")}</span>
+                    <b className="mono">{mixedPort}</b>
+                  </div>
+                  <div className="v-rail-row">
+                    <span>{t("settings.controller", "控制端口")}</span>
+                    <b className="mono">{controller}</b>
+                  </div>
+                  <div className="v-rail-row">
+                    <span>{t("settings.coreEngine", "内核")}</span>
+                    <b>
+                      {activeCore === "singbox" ? "sing-box" : "Mihomo"}
+                      {coreVersion ? ` ${coreVersion}` : ""}
+                    </b>
+                  </div>
+                  <div className="v-rail-row">
+                    <span>{t("home.mode", "代理模式")}</span>
+                    <b>{MODE_LABEL(mode)}</b>
+                  </div>
+                  <div className="v-rail-row">
+                    <span>{t("nav.uptime", "运行时长")}</span>
+                    <b className="mono">
+                      {running && coreStartTime ? <RailUptime startedAt={coreStartTime} /> : "—"}
+                    </b>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

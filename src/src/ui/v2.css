@@ -3712,3 +3712,31 @@ label.switch.compact input[type="checkbox"]:checked {
 .pane.rules-page .rules-list > div {
   min-height: 34px;
 }
+
+/* ── 30. 分页标题统一（规则/测试/日志共用）───────────────────────────── */
+.block-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+}
+
+.block-hd h2 {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--v-text);
+}
+
+.block-hd .pill.dim {
+  font-size: 9.5px;
+  color: var(--v-text-3);
+  background: var(--v-surface-2);
+  border-color: var(--v-line);
+}
+
+.s-muted {
+  font-size: 11px;
+  color: var(--v-text-4);
+}

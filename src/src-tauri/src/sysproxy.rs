@@ -166,37 +166,88 @@ pub async fn status_async(st: &AppState) -> Value {
     })
 }
 
-pub fn pac_script(port: u16) -> String {
-    format!(
-        "function FindProxyForURL(url, host) {{\n  if (isPlainHostName(host) || host === \"127.0.0.1\" || host === \"localhost\") return \"DIRECT\";\n  if (shExpMatch(host, \"10.*\") || shExpMatch(host, \"192.168.*\") || shExpMatch(host, \"172.16.*\")) return \"DIRECT\";\n  return \"PROXY 127.0.0.1:{port}; DIRECT\";\n}}\n",
-        port = port
-    )
+pub fn pac_script(port: u16, bypass: &str) -> String {
+    let bypass_list: Vec<String> = bypass
+        .split(';')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut pac_rules: Vec<String> = Vec::new();
+    // 基础规则：localhost / 127.0.0.1 / 纯主机名
+    pac_rules.push("isPlainHostName(host)".to_string());
+    pac_rules.push("host === \"127.0.0.1\"".to_string());
+    pac_rules.push("host === \"localhost\"".to_string());
+    // Windows 保留的私网段
+    pac_rules.push("shExpMatch(host, \"10.*\")".to_string());
+    pac_rules.push("shExpMatch(host, \"192.168.*\")".to_string());
+    pac_rules.push("shExpMatch(host, \"172.16.*\")".to_string());
+    for item in &bypass_list {
+        let item = item.trim();
+        if item.is_empty() || item == "<local>" {
+            continue;
+        }
+        // 形如 10.* / 192.168.* / *.example.com 等带通配符
+        if item.contains('*') {
+            let pattern = if item.starts_with('*') {
+                item[1..].to_string() // *example.com → example.com
+            } else {
+                item.to_string()
+            };
+            // 10.* 在 PAC 里用 shExpMatch
+            pac_rules.push(format!("shExpMatch(host, \"{}\")", pattern));
+        } else if item.parse::<u32>().is_ok() {
+            // 纯 IP 如 10.0.0.5 → 精确匹配
+            pac_rules.push(format!("host === \"{}\"", item));
+        } else if item.contains('.') {
+            // 域名或子网
+            let domain = if item.ends_with('.') {
+                item[0..item.len() - 1].to_string()
+            } else {
+                item.to_string()
+            };
+            pac_rules.push(format!("shExpMatch(host, \"*.{}\")", domain));
+        } else {
+            pac_rules.push(format!("shExpMatch(host, \"{}\")", item));
+        }
+    }
+    let bypass_conditions = pac_rules.join(" || ");
+    let proxy_str = format!("PROXY 127.0.0.1:{}", port);
+    let direct_fallback = "DIRECT";
+    let pac_body = format!(
+        "function FindProxyForURL(url, host) {{\n  if ({}) return \"DIRECT\";\n  return \"{}; {}\";\n}}",
+        bypass_conditions, proxy_str, direct_fallback
+    );
+    let _ = bypass_list; // unused variable guard
+    pac_body
 }
 
 /// 启动 PAC 服务，返回端口。停止旧服务由调用方负责。
-pub async fn start_pac_server(st: &AppState, mixed_port: u16) -> Result<u16, String> {
+pub async fn start_pac_server(st: &AppState, mixed_port: u16, bypass: &str) -> Result<u16, String> {
     stop_pac_server(st);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let shared = Arc::new(AtomicU16::new(mixed_port));
+    let bypass_owned: Arc<String> = Arc::new(bypass.to_string());
     {
         let mut i = st.inner.lock().await;
         i.pac_port = port;
     }
     let shared2 = shared.clone();
+    let bypass2 = Arc::clone(&bypass_owned);
     let handle = tauri::async_runtime::spawn(async move {
         loop {
             let Ok((mut socket, _)) = listener.accept().await else {
                 break;
             };
             let shared = shared2.clone();
+            let bypass3 = Arc::clone(&bypass2);
             tauri::async_runtime::spawn(async move {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
                 let mut buf = [0u8; 1024];
                 let _ = socket.read(&mut buf).await;
-                let body = pac_script(shared.load(Ordering::Relaxed));
+                let body = pac_script(shared.load(Ordering::Relaxed), &bypass3);
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/x-ns-proxy-autoconfig\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     body.len(),

@@ -321,7 +321,7 @@ pub async fn dispatch(
             Ok(json!({
                 "current": current,
                 "seen": seen,
-                "isNew": seen != current,
+                "isNew": !seen.is_empty() && seen != current,
                 "entry": entry,
             }))
         }
@@ -1145,6 +1145,14 @@ pub async fn dispatch(
                 }
             }
             Ok(json!({ "ok": true, "removed": removed }))
+        }
+        "getLogHistory" => {
+            use crate::core::log_ring;
+            let lines: Vec<String> = log_ring()
+                .lock()
+                .map(|g| g.iter().cloned().collect())
+                .unwrap_or_default();
+            Ok(json!({ "lines": lines }))
         }
         "traffic" => {
             let (controller, secret) = {

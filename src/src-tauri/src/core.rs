@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
+use std::collections::VecDeque;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -12,6 +13,23 @@ use crate::singbox;
 use crate::state::{self, AppState, Inner, Paths};
 use crate::sysproxy;
 use crate::util;
+
+/// 日志环形缓冲：保留最近 500 行内核/系统日志，前端打开日志页时可直接拉取，
+/// 避免页面打开前产生的输出被丢弃（尤其内核是外部遗留进程时）。
+pub fn log_ring() -> &'static std::sync::Mutex<VecDeque<String>> {
+    static RING: std::sync::OnceLock<std::sync::Mutex<VecDeque<String>>> = std::sync::OnceLock::new();
+    RING.get_or_init(Default::default)
+}
+
+fn push_log_line(app: &AppHandle, line: &str) {
+    if let Ok(mut g) = log_ring().lock() {
+        g.push_back(line.to_string());
+        while g.len() > 500 {
+            g.pop_front();
+        }
+    }
+    let _ = app.emit("core:log", format!("{}\n", line));
+}
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -204,7 +222,7 @@ pub async fn reload_runtime_config(app: &AppHandle, st: &AppState) {
     }
     if core == "singbox" {
         if let Err(e) = rebuild_singbox_config(app, st).await {
-            let _ = app.emit("core:log", format!("[veyra] sing-box 重建失败：{}\n", e));
+            push_log_line(app, &format!("[veyra] sing-box 重建失败：{}", e));
         }
         let _ = stop(app, st).await;
         let _ = start(app, st).await;
@@ -223,10 +241,10 @@ pub async fn reload_runtime_config(app: &AppHandle, st: &AppState) {
     .await
     {
         Ok(_) => {
-            let _ = app.emit("core:log", "[veyra] 配置已热重载\n");
+            push_log_line(app, "[veyra] 配置已热重载");
         }
         Err(e) => {
-            let _ = app.emit("core:log", format!("[veyra] 热重载失败（{}），重启内核…\n", e));
+            push_log_line(app, &format!("[veyra] 热重载失败（{}），重启内核…", e));
             let _ = stop(app, st).await;
             let _ = start(app, st).await;
             if was_proxy {
@@ -391,14 +409,16 @@ pub async fn rebuild_singbox_config(app: &AppHandle, st: &AppState) -> Result<Va
         "core:progress",
         json!({"phase": "singbox:build", "pct": 100, "label": "sing-box 配置已就绪"}),
     );
-    let mut log = format!(
-        "[veyra] sing-box 配置已生成：{} 节点 / {} 分组 / {} 规则\n",
-        result.stats["nodes"], result.stats["groups"], result.stats["rules"]
+    push_log_line(
+        app,
+        &format!(
+            "[veyra] sing-box 配置已生成：{} 节点 / {} 分组 / {} 规则",
+            result.stats["nodes"], result.stats["groups"], result.stats["rules"]
+        ),
     );
     for w in result.warnings.iter().take(12) {
-        log.push_str(&format!("[veyra] sing-box: {}\n", w));
+        push_log_line(app, &format!("[veyra] sing-box: {}", w));
     }
-    let _ = app.emit("core:log", log);
     Ok(result.stats)
 }
 
@@ -408,6 +428,12 @@ fn spawn_log_thread(app: &AppHandle, stdout: Option<std::process::ChildStdout>, 
         let app = app.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(out).lines().map_while(Result::ok) {
+                if let Ok(mut g) = log_ring().lock() {
+                    g.push_back(line.clone());
+                    while g.len() > 500 {
+                        g.pop_front();
+                    }
+                }
                 let _ = app.emit("core:log", format!("{}\n", line));
             }
         });
@@ -416,6 +442,12 @@ fn spawn_log_thread(app: &AppHandle, stdout: Option<std::process::ChildStdout>, 
         let app = app.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(err).lines().map_while(Result::ok) {
+                if let Ok(mut g) = log_ring().lock() {
+                    g.push_back(line.clone());
+                    while g.len() > 500 {
+                        g.pop_front();
+                    }
+                }
                 let _ = app.emit("core:log", format!("{}\n", line));
             }
         });
@@ -478,10 +510,10 @@ pub async fn start(app: &AppHandle, st: &AppState) -> Result<Value, String> {
     if let Ok(v) = api(&controller, &secret, "/version", "GET", None).await {
         let mut i = st.inner.lock().await;
         set_online(app, &mut i, true, Some(v.clone()));
-        let _ = app.emit(
-            "core:log",
-            format!(
-                "[veyra] controller {} 已有响应，收养为运行态（非本进程拉起，PID 未知）。如非 Veyra-omini 内核请更换控制端口。\n",
+        push_log_line(
+            app,
+            &format!(
+                "[veyra] controller {} 已有响应，收养为运行态（非本进程拉起，PID 未知）。如非 Veyra-omini 内核请更换控制端口。",
                 controller
             ),
         );
@@ -693,10 +725,7 @@ fn watch_exit(app: AppHandle, generation: u64) {
                     i.auto_restarts += 1;
                     let n = i.auto_restarts;
                     drop(i);
-                    let _ = app.emit(
-                        "core:log",
-                        format!("[veyra] 内核异常退出(code {})，自动重启（第 {}/3 次）…\n", code, n),
-                    );
+                    push_log_line(&app, &format!("[veyra] 内核异常退出(code {})，自动重启（第 {}/3 次）…", code, n));
                     let a = app.clone();
                     tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -710,10 +739,7 @@ fn watch_exit(app: AppHandle, generation: u64) {
                                 let mut i = st.inner.lock().await;
                                 i.online = false;
                                 emit_status(&a, &mut i, None);
-                                let _ = a.emit(
-                                    "core:log",
-                                    "[veyra] 自动重启失败，已关闭系统代理（避免指向死端口）\n",
-                                );
+                                push_log_line(&a, "[veyra] 自动重启失败，已关闭系统代理（避免指向死端口）");
                             }
                         }
                     });
@@ -971,9 +997,9 @@ pub async fn switch_core(app: &AppHandle, st: &AppState, next: &str) -> Result<V
         i.active_core = next.to_string();
         let _ = state::save_settings(&st.paths.settings, &i.settings);
     }
-    let _ = app.emit("core:log", format!("[veyra] 切换内核 → {}\n", label));
+    push_log_line(app, &format!("[veyra] 切换内核 → {}", label));
     if !st.paths.core_bin(next).exists() {
-        let _ = app.emit("core:log", format!("[veyra] 正在按需下载 {} 内核…\n", label));
+        push_log_line(app, &format!("[veyra] 正在按需下载 {} 内核…", label));
         if let Err(e) = crate::update::update_core_binary(app, st, next).await {
             let mut i = st.inner.lock().await;
             i.settings["core"] = json!(prev);
@@ -1044,17 +1070,17 @@ pub async fn apply_proxy_mode(
             return Err(msg);
         }
     }
-    let pac_port = if m == "pac" {
-        sysproxy::start_pac_server(st, mixed).await?
-    } else {
-        sysproxy::stop_pac_server(st);
-        0
-    };
     let bypass = settings
         .get("proxyBypass")
         .and_then(|v| v.as_str())
         .unwrap_or("localhost;127.*;10.*;192.168.*;<local>")
         .to_string();
+    let pac_port = if m == "pac" {
+        sysproxy::start_pac_server(st, mixed, &bypass).await?
+    } else {
+        sysproxy::stop_pac_server(st);
+        0
+    };
     let r = sysproxy::set(&m, mixed, &bypass, pac_port)?;
     {
         let mut i = st.inner.lock().await;

@@ -1442,6 +1442,25 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     [refresh]
   );
 
+  // 打开日志页时，拉一次后端环形缓冲里的历史行，避免页面打开前产生的输出丢失
+  useEffect(() => {
+    if (tab !== "logs") return;
+    let cancelled = false;
+    window.veyra
+      ?.getLogHistory?.()
+      .then((r: { lines?: string[] }) => {
+        if (cancelled || !r?.lines?.length) return;
+        setLogs((prev) => {
+          const merged = [...prev, ...r.lines!];
+          return merged.slice(-400);
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [tab]);
+
   useEffect(() => {
     if (!window.veyra) return;
     window.veyra.fullConflictScan?.().catch(() => {});

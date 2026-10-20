@@ -411,6 +411,7 @@ export interface VeyraAPI {
   importNodeUri?: (uri: string) => Promise<unknown>;
   openWebUI?: (which: string) => Promise<unknown>;
   clearLogFiles?: () => Promise<{ ok: boolean; removed: number }>;
+  getLogHistory?: () => Promise<{ lines: string[] }>;
   setNextUpdate?: (url: string, nextUpdateAt: number) => Promise<{ ok: boolean }>;
   vcRuntime?: () => Promise<{ ok: boolean; installed: boolean; downloadUrl?: string }>;
   downloadVc?: () => Promise<unknown>;

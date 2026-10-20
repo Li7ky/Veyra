@@ -1,0 +1,30 @@
+#!/bin/sh
+# Veyra pre-commit 门禁：类型检查 + 代码规范 + IPC 契约一致性
+# 目的：把「构建已断」「契约漂移」这类问题拦在提交前，而不是等打包时才发现。
+#
+# 首次启用请执行： node scripts/install-git-hooks.mjs
+#
+# 跳过（仅限紧急情况）： git commit --no-verify
+
+set -e
+
+# 仅在 src/ 存在时校验（仓库根在上层）
+if [ ! -f "src/package.json" ]; then
+  exit 0
+fi
+
+cd src
+
+echo "▶ [pre-commit] 类型检查…"
+npx tsc -b --force
+
+echo "▶ [pre-commit] 代码规范…"
+npx eslint . --max-warnings=200
+
+echo "▶ [pre-commit] 单元测试…"
+npx vitest run --reporter=dot
+
+echo "▶ [pre-commit] IPC 契约一致性…"
+node scripts/check-ipc-contract.mjs
+
+echo "✅ [pre-commit] 通过"

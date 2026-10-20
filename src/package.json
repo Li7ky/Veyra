@@ -1,0 +1,63 @@
+{
+  "name": "veyra-omini",
+  "private": true,
+  "version": "1.1.10-beta.2",
+  "description": "Veyra-omini — next-gen proxy client powered by mihomo",
+  "author": "Veyra-omini",
+  "productName": "Veyra-omini",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -b",
+    "lint": "eslint . --max-warnings=200",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:ipc": "node scripts/check-ipc-contract.mjs",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run check:ipc && npm run test:rust && npm run build",
+    "dev": "tauri dev",
+    "dev:web": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "download-core": "node scripts/download-mihomo.mjs",
+    "download-singbox": "node scripts/download-singbox.mjs",
+    "build-icons": "node scripts/build-icons.mjs",
+    "postinstall": "node scripts/download-mihomo.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "dist": "npm run build-icons && npm run download-core && tauri build"
+  },
+  "dependencies": {
+    "@fontsource-variable/noto-sans-sc": "^5.3.1",
+    "@monaco-editor/react": "^4.7.0",
+    "@tauri-apps/api": "^2.12.4",
+    "adm-zip": "^0.6.1",
+    "js-yaml": "^4.1.0",
+    "lucide-react": "^0.544.0",
+    "monaco-editor": "^0.57.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "overrides": {
+    "dompurify": "3.4.17"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@tauri-apps/cli": "^2.12.3",
+    "@types/js-yaml": "^4.0.9",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.3",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.5",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^7.1.7",
+    "vitest": "^5.0.5"
+  }
+}

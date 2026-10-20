@@ -1,0 +1,9 @@
+dist
+dist-electron
+node_modules
+resources
+outputs
+D_
+*.min.js
+package-lock.json
+src/styles.css

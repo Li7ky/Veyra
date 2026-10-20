@@ -1,0 +1,3 @@
+# 让 GitHub 语言统计把 CSS 归类为 Other（不计入主语言）
+*.css  linguist-language=Other
+*.scss linguist-language=Other

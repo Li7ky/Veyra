@@ -1,6 +1,6 @@
 [package]
 name = "veyra-omini"
-version = "1.1.9-beta.6"
+version = "1.1.9-beta.7"
 description = "Veyra-omini"
 edition = "2021"
 rust-version = "1.77"

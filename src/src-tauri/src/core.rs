@@ -505,8 +505,20 @@ pub async fn start(app: &AppHandle, st: &AppState) -> Result<Value, String> {
             .and_then(|v| v.as_u64())
             .unwrap_or(state::DEFAULT_CTRL as u64) as u16;
         let allow_lan = i.settings.get("allowLan").and_then(|v| v.as_bool()).unwrap_or(false);
-        i.mixed_port = state::pick_port(prefer_mixed, allow_lan);
-        let ctrl = state::pick_port(prefer_ctrl, allow_lan);
+        // 端口必须取到真正空闲的那个：拿不到就报错，不要把占用中的端口丢给内核
+        let mixed = state::pick_port(prefer_mixed, allow_lan).ok_or_else(|| {
+            format!(
+                "混合端口 {} 及其备用端口都被占用，请到设置 → 网络里换一个端口",
+                prefer_mixed
+            )
+        })?;
+        let ctrl = state::pick_port(prefer_ctrl, allow_lan).ok_or_else(|| {
+            format!(
+                "控制端口 {} 及其备用端口都被占用，请到设置 → 网络里换一个端口",
+                prefer_ctrl
+            )
+        })?;
+        i.mixed_port = mixed;
         i.controller = format!("127.0.0.1:{}", ctrl);
         (i.mixed_port, i.controller.clone(), i.secret.clone(), allow_lan)
     };
@@ -603,7 +615,9 @@ pub async fn start(app: &AppHandle, st: &AppState) -> Result<Value, String> {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     if !ready {
-        let _ = stop(app, st).await;
+        // 这里已经持有 st.core_lock（start 开头拿的），不能再调 stop()——它也会去抢同一把
+        // 非可重入的 tokio 锁，会自己等自己，整个进程从此无法启停内核。
+        let _ = stop_inner(app, st, true).await;
         return Err("内核启动失败（端口可能被占用）。请检查设置中的端口后重试。".into());
     }
     {
@@ -688,7 +702,19 @@ fn watch_exit(app: AppHandle, generation: u64) {
                         tokio::time::sleep(Duration::from_secs(3)).await;
                         let st = a.state::<AppState>();
                         if st.inner.lock().await.core.is_none() {
-                            let _ = start(&a, &st).await;
+                            // 重启失败（端口被占、二进制缺失、配置报错）时没人会再走
+                            // 下面的清理分支——内核已经空了，watch_exit 下一轮就 return。
+                            // 所以这里必须自己把系统代理收掉，否则 Windows 一直指向死端口。
+                            if start(&a, &st).await.is_err() {
+                                let _ = clear_our_system_proxy(&a, &st).await;
+                                let mut i = st.inner.lock().await;
+                                i.online = false;
+                                emit_status(&a, &mut i, None);
+                                let _ = a.emit(
+                                    "core:log",
+                                    "[veyra] 自动重启失败，已关闭系统代理（避免指向死端口）\n",
+                                );
+                            }
                         }
                     });
                     continue;

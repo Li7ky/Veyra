@@ -290,15 +290,17 @@ pub fn port_usable(port: u16, allow_lan: bool) -> bool {
     true
 }
 
-pub fn pick_port(prefer: u16, allow_lan: bool) -> u16 {
-    if port_usable(prefer, allow_lan) {
-        return prefer;
+/// 挑一个能真正 bind 的端口：首选 → +10003 → +1..+5。
+/// 全都不可用时返回 None，让调用方报错——绝不把「已知被占用」的端口交给内核，
+/// 否则用户只会看到一句笼统的「端口可能被占用」。
+pub fn pick_port(prefer: u16, allow_lan: bool) -> Option<u16> {
+    for offset in [0u16, 10003, 1, 2, 3, 4, 5] {
+        let port = prefer.saturating_add(offset);
+        if port > 1024 && port_usable(port, allow_lan) {
+            return Some(port);
+        }
     }
-    let alt = prefer.saturating_add(10003);
-    if port_usable(alt, allow_lan) {
-        return alt;
-    }
-    prefer
+    None
 }
 
 pub fn now_ms() -> i64 {

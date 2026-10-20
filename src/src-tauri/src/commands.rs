@@ -65,6 +65,11 @@ pub async fn dispatch(
                 }
                 crate::tray::notify(app, "Veyra-omini 已最小化到托盘，代理仍在后台运行");
             } else {
+                // 直接退出：先把系统代理收掉、把内核停掉，再退出。
+                // 否则窗口关了但 mihomo 还在跑、注册表 ProxyEnable 仍指向它，
+                // 下次启动只能以「收养」方式接管，且用户浏览器会指向一个没人管的端口。
+                let _ = core::set_system_proxy(app, st, false).await;
+                let _ = core::stop(app, st).await;
                 app.exit(0);
             }
             Ok(Value::Null)
@@ -225,9 +230,11 @@ pub async fn dispatch(
                     let mut i = st.inner.lock().await;
                     let allow = i.settings.get("allowLan").and_then(|v| v.as_bool()).unwrap_or(false);
                     let prefer = i.settings.get("mixedPort").and_then(|v| v.as_u64()).unwrap_or(17897) as u16;
-                    let ctrl = i.settings.get("controllerPort").and_then(|v| v.as_u64()).unwrap_or(19097) as u16;
-                    i.mixed_port = state::pick_port(prefer, allow);
-                    i.controller = format!("127.0.0.1:{}", state::pick_port(ctrl, allow));
+                    let ctrl_want = i.settings.get("controllerPort").and_then(|v| v.as_u64()).unwrap_or(19097) as u16;
+                    let mixed = state::pick_port(prefer, allow).unwrap_or(prefer);
+                    let ctrl = state::pick_port(ctrl_want, allow).unwrap_or(ctrl_want);
+                    i.mixed_port = mixed;
+                    i.controller = format!("127.0.0.1:{}", ctrl);
                     (i.mixed_port, i.controller.clone())
                 };
                 {

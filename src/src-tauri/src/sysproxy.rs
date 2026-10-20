@@ -13,8 +13,10 @@ pub fn refresh_wininet() {
     let _ = util::powershell(script);
 }
 
-fn reg(args: &[&str]) {
-    let _ = util::run("reg", args);
+/// 写注册表：失败必须能传上去——否则界面显示「已开启」，Windows 实际没变，
+/// 流量静默走直连（泄露）。
+fn reg(args: &[&str]) -> Result<(), String> {
+    util::run("reg", args).map(|_| ())
 }
 
 /// 读取原始代理状态（不判断归属）。
@@ -225,24 +227,25 @@ pub fn stop_pac_server(st: &AppState) {
 pub fn set(mode: &str, mixed_port: u16, bypass: &str, pac_port: u16) -> Result<Value, String> {
     match mode {
         "off" => {
-            reg(&["add", KEY, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "0", "/f"]);
-            reg(&["delete", KEY, "/v", "AutoConfigURL", "/f"]);
+            reg(&["add", KEY, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "0", "/f"])?;
+            // 值不存在时 reg delete 会失败，这属于正常情况，不能当错误
+            let _ = reg(&["delete", KEY, "/v", "AutoConfigURL", "/f"]);
             refresh_wininet();
             Ok(json!({ "ok": true, "mode": "off" }))
         }
         "pac" => {
             let url = format!("http://127.0.0.1:{}/proxy.pac", pac_port);
-            reg(&["add", KEY, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "0", "/f"]);
-            reg(&["add", KEY, "/v", "AutoConfigURL", "/t", "REG_SZ", "/d", &url, "/f"]);
+            reg(&["add", KEY, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "0", "/f"])?;
+            reg(&["add", KEY, "/v", "AutoConfigURL", "/t", "REG_SZ", "/d", &url, "/f"])?;
             refresh_wininet();
             Ok(json!({ "ok": true, "mode": "pac", "pacUrl": url }))
         }
         _ => {
             let server = format!("127.0.0.1:{}", mixed_port);
-            reg(&["delete", KEY, "/v", "AutoConfigURL", "/f"]);
-            reg(&["add", KEY, "/v", "ProxyServer", "/t", "REG_SZ", "/d", &server, "/f"]);
-            reg(&["add", KEY, "/v", "ProxyOverride", "/t", "REG_SZ", "/d", bypass, "/f"]);
-            reg(&["add", KEY, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "1", "/f"]);
+            let _ = reg(&["delete", KEY, "/v", "AutoConfigURL", "/f"]);
+            reg(&["add", KEY, "/v", "ProxyServer", "/t", "REG_SZ", "/d", &server, "/f"])?;
+            reg(&["add", KEY, "/v", "ProxyOverride", "/t", "REG_SZ", "/d", bypass, "/f"])?;
+            reg(&["add", KEY, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "1", "/f"])?;
             refresh_wininet();
             Ok(json!({ "ok": true, "mode": "system", "server": server, "bypass": bypass }))
         }

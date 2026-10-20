@@ -2078,7 +2078,9 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   // 侧栏电源按钮 = 系统代理开关；内核由软件托管常驻，不在按钮里启停
   async function toggleSysProxy() {
     if (!window.veyra) return;
-    if (!running) return showToast("内核未运行，无法开启系统代理");
+    // 内核没跑时不能「开」，但必须能「关」——否则内核崩了、代理还指着死端口，
+    // 首页这颗开关会变成只能看不能动，用户只能去托盘或注册表手动恢复。
+    if (!running && !sysProxy) return showToast("内核未运行，无法开启系统代理");
     setBusy(true);
     try {
       const next = !sysProxy;

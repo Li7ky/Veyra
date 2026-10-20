@@ -10,7 +10,8 @@ use crate::util;
 pub const DEFAULT_SETTINGS: &str = include_str!("../defaults.json");
 pub const DEFAULT_MIXED: u16 = 17897;
 pub const DEFAULT_CTRL: u16 = 19097;
-pub const APP_UPDATE_REPO: &str = "Li7ky/Veyra-omini";
+/// 应用更新源仓库（2026-10-20 从 Veyra-omini（已归档）迁到 Veyra）。
+pub const APP_UPDATE_REPO: &str = "Li7ky/Veyra";
 
 #[derive(Clone)]
 pub struct Paths {

@@ -1,15 +1,15 @@
 # Veyra-omini
 
-[![Version](https://img.shields.io/badge/version-1.1.9--beta.6-blue)](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D4)](https://github.com/Li7ky/Veyra-omini/releases)
+[![Version](https://img.shields.io/badge/version-1.1.10--beta.1-blue)](https://github.com/Li7ky/Veyra/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D4)](https://github.com/Li7ky/Veyra/releases)
 [![Core](https://img.shields.io/badge/core-mihomo-0B7A75)](https://github.com/MetaCubeX/mihomo)
-[![Status](https://img.shields.io/badge/status-测试版-orange)](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)
+[![Status](https://img.shields.io/badge/status-测试版-orange)](https://github.com/Li7ky/Veyra/releases)
 
 适用于 Windows 10/11 x64 的本地代理客户端。界面基于 Tauri 2 与 React，转发内核为 mihomo，可直接导入已有的 Clash / Mihomo 订阅和节点链接。
 
-当前版本 **1.1.9-beta.6** 为测试版。安装包未做代码签名，不作为稳定版的兼容性承诺。本软件不提供节点或订阅服务。
+当前版本 **1.1.10-beta.1** 为测试版。安装包未做代码签名，不作为稳定版的兼容性承诺。本软件不提供节点或订阅服务。
 
-**[下载 Windows x64 安装包（约 137 MB）](https://github.com/Li7ky/Veyra-omini/releases/download/v1.1.9-beta.6/Veyra-omini-Setup-1.1.9-beta.6-x64.exe)** · [发布说明](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)
+**[下载 Windows x64 安装包（约 25 MB）](https://github.com/Li7ky/Veyra/releases)** · [发布说明](https://github.com/Li7ky/Veyra/releases)
 
 ## 为什么选择 Veyra-omini
 
@@ -47,7 +47,13 @@
 - PAC、TUN、服务模式、sing-box
 - 逐页人工交互验收
 
-本次测试版已在 Windows 10 x64 上完成安装、卸载、应用接口检查，以及附带 mihomo 的本地 HTTP 转发验证。详细结果见 [发布说明](https://github.com/Li7ky/Veyra-omini/releases/tag/v1.1.9-beta.6)。
+本次测试版已在 Windows 10 x64 上完成安装、卸载、应用接口检查，以及附带 mihomo 的本地 HTTP 转发验证。详细结果见 [发布说明](https://github.com/Li7ky/Veyra/releases)。
+
+## 版本策略
+
+每个版本最多 5 个 beta（`beta.1`–`beta.5`）。到 5 之后必须升版本号重新计数，例如 `1.1.10-beta.5` → `1.1.11-beta.1`，不允许无限延长同一条 line。
+
+`npm test` 里的 `src/version-policy.test.ts` 会检查这条规则，改版本号时会被卡住。
 
 ## 开发与构建
 

@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-electron
+*.log
+*.tsbuildinfo
+.DS_Store
+resources/bin/*
+!resources/bin/.gitkeep
+outputs
+.runtime-preview
+
+src-tauri/target
+src-tauri/gen

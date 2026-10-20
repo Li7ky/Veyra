@@ -1,0 +1,1 @@
+将本文件复制为 FoxVey.exe 同目录下的 portable.txt，即可启用便携模式（数据写入 ./data）。

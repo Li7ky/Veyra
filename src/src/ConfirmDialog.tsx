@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { t } from "./i18n";
 
 /** 焦点圈闭：容器内 Tab/Shift+Tab 循环，不逃到遮罩后的背景页面。
  *  传 active=false 时不生效（组件未挂载或不可用）。 */
@@ -86,7 +87,7 @@ export default function ConfirmDialog({
         <p className="confirm-msg">{req.message}</p>
         <div className="confirm-actions">
           <button ref={cancelRef} type="button" className="btn ghost btn-sm" onClick={onClose}>
-            {req.cancelText || "取消"}
+            {req.cancelText || t("common.cancel", "取消")}
           </button>
           <button
             type="button"
@@ -96,7 +97,7 @@ export default function ConfirmDialog({
               req.onConfirm();
             }}
           >
-            {req.confirmText || "确认"}
+            {req.confirmText || t("common.confirm", "确认")}
           </button>
         </div>
       </div>

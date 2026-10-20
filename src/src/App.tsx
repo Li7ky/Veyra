@@ -8,17 +8,24 @@ import {
   useState,
   lazy,
   Suspense,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import {
   ArrowDown,
   ArrowUp,
+  ArrowUpDown,
   Building2,
   CalendarClock,
   Check,
+  ChevronDown,
+  ChevronRight,
+  CircleDot,
   Clock,
   Copy,
   Database,
+  Filter,
+  Gauge,
   Globe,
   Layers3,
   Link2,
@@ -32,10 +39,13 @@ import {
   Plus,
   Power,
   Route,
+  Scale,
   Search,
   Server,
   ShieldCheck,
+  ShieldOff,
   SlidersHorizontal,
+  Sparkles,
   Terminal,
   Trash2,
   X,
@@ -82,7 +92,7 @@ const YamlEditor = lazy(() => import("./YamlEditor"));
 import { ProxiesVisualEditor, GroupsVisualEditor } from "./VisualEditors";
 import { ipcErrorText } from "./errors";
 import { stripFlagEmoji } from "./nodeName";
-import ConnectOrb from "./ConnectOrb";
+
 import HomePulse from "./HomePulse";
 import ConfirmDialog, { useFocusTrap, type ConfirmRequest } from "./ConfirmDialog";
 import { applyTheme, type ThemeMode } from "./theme";
@@ -90,6 +100,16 @@ import { getLocale, setLocale, t } from "./i18n";
 
 type Tab = "home" | "proxies" | "profiles" | "connections" | "rules" | "logs" | "tests" | "settings";
 type EnhanceKind = "merge" | "script" | "rules" | "proxies" | "groups";
+/** 一条「有新版本」信息：启动自动检查、设置页手动检查、演示模式共用 */
+type AppUpdateNotice = {
+  latest: string;
+  current?: string;
+  assetSize?: number;
+  assetUrl?: string;
+  htmlUrl?: string;
+  /** GitHub Release 正文解析出来的更新内容：升级前就能看到这次改了什么 */
+  notes?: { version?: string; date?: string | null; title?: string; items?: string[] } | null;
+};
 type ExitIpInfo = {
   ip: string | null;
   /** true = 经系统代理检测，false = 直连检测（主进程按实际系统代理状态决定） */
@@ -118,6 +138,21 @@ const GROUP_TYPES = new Set([
   "load-balance",
   "relay",
 ]);
+
+// 策略组类型的图标：颜色由 CSS 里的 type-* 类名给（选择器=主色、自动测速=绿、
+// 故障转移=琥珀、负载均衡=青、链式=红），一眼能认出这组在用哪种选路策略。
+const GROUP_ICON: Record<string, LucideIcon> = {
+  selector: CircleDot,
+  urltest: Gauge,
+  fallback: Route,
+  loadbalance: Scale,
+  relay: Link2,
+};
+
+// "URLTest" / "url-test" / "load-balance" 统一成小写无分隔符，方便查表 + 生成类名
+function groupKind(type?: string): string {
+  return (type || "").toLowerCase().replace(/[-_\s]/g, "");
+}
 
 // 代理页节点渲染分批：首批保证页面立即出现，其余每帧补一批
 const PX_NODE_FIRST = 30;
@@ -442,28 +477,24 @@ function countryFlagSvg(name: string) {
   return null;
 }
 
-/** 节点旗帜：加载失败（离线/被墙）时回退成国家码，不显示破图 */
+/** 节点旗帜：远端旗帜图只作为「加分项」叠在国家码上，断网/被墙时仍有一块可读的标记 */
 function NodeFlag({ name }: { name: string }) {
   const [failed, setFailed] = useState(false);
   const src = countryFlagSvg(name);
-  if (!src || failed) {
-    const code = COUNTRY_FLAGS.find(([re]) => re.test(name))?.[1] || "🌐";
-    return <span className="px-flag-code">{code}</span>;
-  }
+  const code = COUNTRY_FLAGS.find(([re]) => re.test(name))?.[1] || "";
   return (
-    <img
-      src={src}
-      alt=""
-      loading="lazy"
-      onError={() => setFailed(true)}
-      style={{
-        width: 20,
-        height: 14,
-        borderRadius: 2,
-        verticalAlign: "middle",
-        boxShadow: "var(--shadow-sm)",
-      }}
-    />
+    <>
+      <span className="px-flag-cc">{code || "·"}</span>
+      {src && !failed ? (
+        <img
+          className="px-flag-img"
+          src={src}
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -708,12 +739,9 @@ export default function App() {
     items: string[];
   } | null>(null);
   // 启动后主进程自动查到新版本 → 弹提醒；下载进度也在这里
-  const [autoUpdate, setAutoUpdate] = useState<{
-    latest: string;
-    current?: string;
-    assetSize?: number;
-    htmlUrl?: string;
-  } | null>(null);
+  const [autoUpdate, setAutoUpdate] = useState<AppUpdateNotice | null>(null);
+  // 关掉弹窗后仍留在顶栏的「可更新」提示：随时能点回来，不会一关就丢
+  const [pendingUpdate, setPendingUpdate] = useState<AppUpdateNotice | null>(null);
   const [updPct, setUpdPct] = useState(-1);
   const [updBusy, setUpdBusy] = useState(false);
   // 安装包已下载、等待用户选择安装方式（覆盖 / 卸载重装）
@@ -723,6 +751,8 @@ export default function App() {
   const [updMsg, setUpdMsg] = useState("");
   useEffect(() => {
     let alive = true;
+    type Notes = { version?: string; date?: string | null; title?: string; channel?: string; items?: string[] };
+    const markSeen = () => window.veyra?.markVersionSeen?.().catch(() => {});
     window.veyra
       ?.updateNotes?.()
       .then((r) => {
@@ -735,9 +765,33 @@ export default function App() {
             channel: r.entry.channel,
             items: r.entry.items || [],
           });
-        } else if (r) {
-          window.veyra?.markVersionSeen?.().catch(() => {});
+          return;
         }
+        if (r?.isNew) {
+          // 本地没有这一版的说明（例如用离线安装包升级、或没在旧版里点过检查）：
+          // 兜底去 GitHub 取一次当前版本对应的 Release 说明，再决定弹不弹
+          window.veyra
+            ?.checkAppUpdate?.()
+            .then((info) => {
+              if (!alive) return;
+              const notes = (info as { notes?: Notes; latest?: string })?.notes;
+              const latest = String((info as { latest?: string })?.latest || "");
+              if (notes?.items?.length && latest === String(r.current)) {
+                setUpdateNotes({
+                  version: notes.version || r.current,
+                  date: notes.date || undefined,
+                  title: notes.title,
+                  channel: notes.channel,
+                  items: notes.items,
+                });
+              } else {
+                markSeen();
+              }
+            })
+            .catch(markSeen);
+          return;
+        }
+        if (r) markSeen();
       })
       .catch(() => {});
     return () => {
@@ -767,12 +821,17 @@ export default function App() {
   useEffect(() => {
     const offAvailable = window.veyra?.onUpdateAvailable?.((info) => {
       if (!info?.hasUpdate) return;
-      setAutoUpdate({
+      const notice: AppUpdateNotice = {
         latest: info.latest,
         current: info.current,
         assetSize: info.assetSize,
+        assetUrl: (info as { assetUrl?: string }).assetUrl,
         htmlUrl: info.htmlUrl,
-      });
+        notes: (info as { notes?: AppUpdateNotice["notes"] }).notes,
+      };
+      setAutoUpdate(notice);
+      // 顶栏的「可更新」胶囊：关掉弹窗后依然保留，点一下就重新打开
+      setPendingUpdate(notice);
       setUpdPct(-1);
       setUpdBusy(false);
       setUpdMsg("");
@@ -824,6 +883,8 @@ export default function App() {
           : t("update.launching", "安装程序已启动，请按提示完成升级")
       );
       setUpdReady(false);
+      // 安装程序已接管：顶栏提示随之收起，等新版本启动后再走「本次更新」
+      setPendingUpdate(null);
     } catch (e) {
       setUpdMsg(
         t("update.installFailed", "安装失败：{msg}").replace("{msg}", ipcErrorText(e))
@@ -860,6 +921,10 @@ export default function App() {
     }[]
   >([]);
   const [nodeSortMode, setNodeSortMode] = useState<"delay" | "name" | "default">("delay");
+  // 代理页显示过滤：全部 / 可用（有延迟）/ 超时 / 未测速
+  const [nodeFilter, setNodeFilter] = useState<"all" | "ok" | "timeout" | "untested">("all");
+  // 排序 / 过滤共用一个锚定在按钮下方的小菜单
+  const [pxMenu, setPxMenu] = useState<{ kind: "sort" | "filter"; x: number; y: number } | null>(null);
 const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list">(
   (localStorage.getItem("veyra-node-density") as "comfortable" | "compact" | "list") || "comfortable"
 );
@@ -902,8 +967,6 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     up: [],
     down: [],
   });
-  // 内存显示文本：抽出来避免 JSX 表达式内嵌模板字面量导致解析歧义。
-  const memText = typeof coreMemMB === "number" ? coreMemMB + " MB" : "—";
   // 规则数量：内核运行时从 /rules 取真实条数（之前只会在断开时置 null，从来没赋过值，
   // 所以首页永远显示 0）。切换订阅后 activeProfileUid 变化也会重新统计。
   const activeProfileUid = useMemo(
@@ -936,7 +999,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     for (const s of subs) {
       const u = s.userinfo;
       if (u && u.total > 0) {
-        used += u.upload + u.download;
+        // 后端 userinfo 偶尔只给 total：缺字段时按 0 计，否则会渲染成 NaN GB
+        used += (u.upload || 0) + (u.download || 0);
         total += u.total;
       }
     }
@@ -1007,9 +1071,32 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   const [appVersion, setAppVersion] = useState("");
   const [platformLabel, setPlatformLabel] = useState("Windows");
   const [systemMem, setSystemMem] = useState(0);
+  // 系统内存已用量：侧栏「内存」直接显示这个数，不再依赖代理内核的子进程句柄
+  // （内核可能是上一次运行留下的进程，当前实例拿不到 Child，会显示成「—」）
+  const [memUsed, setMemUsed] = useState(0);
+  // 操作系统完整名称（Windows 10 Pro 之类），由主进程从注册表 EditionID 拼出来
+  const [osName, setOsName] = useState("");
   const [electronVersion, setElectronVersion] = useState("");
   const [startWithWindows, setStartWithWindows] = useState(false);
   const [mihomoChannel, setMihomoChannel] = useState("stable");
+
+  // 侧栏「内存」：优先用系统已用内存（任何情况下都拿得到），
+  // 拿不到再退回代理内核进程占用，最后才是「—」。
+  // 之前只看内核子进程句柄，内核是上一次运行遗留的进程时句柄为空，这里就一直是「—」。
+  const memText =
+    memUsed > 0 ? formatBytes(memUsed) : typeof coreMemMB === "number" ? `${coreMemMB} MB` : "—";
+  const memTitle =
+    memUsed > 0 && systemMem > 0
+      ? `系统内存 · 已用 ${formatBytes(memUsed)} / 共 ${formatBytes(systemMem)}`
+      : "内存占用";
+  // 操作系统一行：优先用主进程给的完整名称（Windows 10 Pro），
+  // 再补上架构；拿不到就退回原来「系统名 + 版本号」的标签。
+  const sysOsText = (() => {
+    const arch = platformLabel.includes("·") ? platformLabel.split("·").pop()!.trim() : "";
+    const base = osName || platformLabel.split("·")[0].trim();
+    if (!base) return "";
+    return arch ? `${base} · ${arch}` : base;
+  })();
 
   // 首页设置弹窗：关闭时统一走 closeHomeCfg，保证焦点一定回到入口按钮
   const homeCfgTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -1036,7 +1123,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   const downRateRef = useRef(0);
   const selectedGroupRef = useRef(selectedGroup);
   const testingRef = useRef(false);
+  // 轮询重入保护：refresh 由 1.5s 定时 + 切页/聚焦共同触发，慢 IPC 下会重叠
+  const refreshBusyRef = useRef(false);
   const delaysRef = useRef(delays);
+  const proxyMapRef = useRef(proxyMap);
   const autoPickRef = useRef(autoPick);
   const groupsRef = useRef(groups);
   // 测速中断器：切 tab / 停止内核 / 关闭应用时中止正在进行的测速
@@ -1052,10 +1142,14 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   const lastUpTotalRef = useRef("");
   const lastDownTotalRef = useRef("");
   const lastMemRef = useRef<number | null>(null);
+  // 系统内存按 GB 去重：每 1.5s 一次的 overview 只在这位数字变了才触发重渲染
+  const lastSysMemGbRef = useRef(-1);
+  const lastSysTotalRef = useRef(-1);
   const proxiesFpRef = useRef("");
   const connsFpRef = useRef("");
   selectedGroupRef.current = selectedGroup;
   delaysRef.current = delays;
+  proxyMapRef.current = proxyMap;
   autoPickRef.current = autoPick;
   groupsRef.current = groups;
   tabRef.current = tab;
@@ -1109,6 +1203,9 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       if (r && !wasRunning) {
         // 内核刚启动，记录启动时间
         setCoreStartTime(Date.now());
+        // 启动完成：清掉「启动中 (xx%)」这类进度横幅。
+        // 错误/冲突横幅不在此列，它们各自有解决事件收尾。
+        setBanner((prev) => (/\(\d+%\)/.test(prev) ? "" : prev));
       }
       if (!r) {
         setCoreStartTime(null);
@@ -1129,6 +1226,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
   const refresh = useCallback(async () => {
     if (!window.veyra) return;
+    // 上一轮还没回来就跳过本轮：1.5s 轮询碰上慢 IPC 会重叠，
+    // 后到的旧 overview 会覆盖流量基线，实时速率忽大忽小甚至被压回 0
+    if (refreshBusyRef.current) return;
+    refreshBusyRef.current = true;
     try {
       const st = await window.veyra.coreStatus();
       applyStatus(st as { running?: boolean; seq?: number; version?: { version?: string } });
@@ -1139,6 +1240,9 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       if (!st.running) {
         upRateRef.current = 0;
         downRateRef.current = 0;
+        // 内核停了就把流量基线清掉：下次启动时累计值从 0 重新开始，
+        // 留着旧基线会算出一个负的差值（被 clamp 成 0，但会让首帧读数发虚）
+        trafficRef.current = null;
         setUpRate(0);
         setDownRate(0);
         setCoreMemMB(null);
@@ -1177,6 +1281,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         upRateRef.current = upRateRef.current * 0.6 + ur * 0.4;
         downRateRef.current = downRateRef.current * 0.6 + dr * 0.4;
         trafficRef.current = { up, down, t: now };
+      } else if (!prev) {
+        // 首次采样只建立基线。之前这里什么都不做，trafficRef 永远停在 null，
+        // 于是永远进不到上面的分支——实时流量会一直是 0 B/s、「暂无流量」。
+        trafficRef.current = { up, down, t: now };
       }
       // 显示字符串没变就不 setState：空闲时完全跳过重渲染
       const upStr = formatRate(upRateRef.current);
@@ -1203,6 +1311,19 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       if (mem !== lastMemRef.current) {
         lastMemRef.current = mem;
         setCoreMemMB(mem);
+      }
+      // 系统内存：overview 每轮都带，侧栏「内存」跟着实时走（按 GB 粒度去重，避免每 1.5s 重渲染）
+      const sysUsed = typeof ov.systemUsedMem === "number" ? ov.systemUsedMem : 0;
+      if (sysUsed > 0) {
+        const usedGb = Math.round(sysUsed / 1073741824);
+        if (usedGb !== lastSysMemGbRef.current) {
+          lastSysMemGbRef.current = usedGb;
+          setMemUsed(sysUsed);
+        }
+      }
+      if (typeof ov.systemTotalMem === "number" && ov.systemTotalMem > 0 && ov.systemTotalMem !== lastSysTotalRef.current) {
+        lastSysTotalRef.current = ov.systemTotalMem;
+        setSystemMem(ov.systemTotalMem);
       }
 
       // 流量历史：首页波形图与侧栏迷你曲线都要用，故不受 heavy 限制（heavy 只在首页/代理页为真）。
@@ -1235,7 +1356,9 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
           setSelectedGroup(g[0].name || "");
         }
       }
-      setBanner("");
+      // 这里不再清空横幅：banner 同时承载「端口冲突 / 内核错误 / 启动进度」，
+      // 1.5s 轮询每次都清会让错误提示活不过一拍，用户根本来不及看到。
+      // 进度条由 onCoreProgress 的 100% 事件收尾，冲突由 onConflictResolved 收尾。
 
       window.veyra
         .systemProxyStatus()
@@ -1243,8 +1366,20 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         .catch(() => {});
     } catch {
       /* transient */
+    } finally {
+      refreshBusyRef.current = false;
     }
   }, []);
+
+  // 卸载（或 HMR 重载）时中止进行中的测速：否则 mapPool 里排队的 testDelay
+  // 仍会一路打到内核，窗口关了还在跑 80 个请求
+  useEffect(
+    () => () => {
+      testAbortRef.current?.abort();
+      testAbortRef.current = null;
+    },
+    []
+  );
 
   const goTab = useCallback(
     (id: Tab) => {
@@ -1416,6 +1551,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         setAppVersion(a?.version || "");
         setElectronVersion(a?.electron || "");
         setSystemMem(a?.totalMem || 0);
+        setMemUsed(a?.usedMem || 0);
+        setOsName(String(a?.osName || ""));
         const rel = String(a?.osRelease || "");
         const build = Number(rel.split(".").pop()) || 0;
         const osName =
@@ -1493,117 +1630,44 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     setPfSeen((seen) => (seen[pfTab] ? seen : { ...seen, [pfTab]: true }));
   }, [pfTab]);
 
-  // 侧栏状态区与首页信息表最后一行（运行环境 / 代理内核 / 实时流量）对齐。
-  // 约束：
-  //  1) 与上方导航至少留 24px 间距，不能贴在一起；
-  //  2) 必须在开屏遮罩结束（bootReady）后再算——遮罩期间主界面还没挂载；
-  //  3) 用「清空 margin → 测量 → 设定」的绝对值算法，再做一次残差修正，
-  //     避免「当前 margin + delta」在重排后累积漂移。
-  useLayoutEffect(() => {
-    if (!bootReady || tab !== "home") return;
-    const status = railStatusRef.current;
-    if (!status) return;
-
-    let raf = 0;
-    const MIN_GAP = 24;
-    const measure = () => {
-      const table = document.querySelector<HTMLElement>(".home-sysinfo");
-      const lastRow = status.querySelector<HTMLElement>(".rail-metrics li:last-child");
-      if (!table || !lastRow) return null;
-      const cells = table.querySelectorAll<HTMLElement>(".sysinfo-item");
-      const lastCell = cells[cells.length - 1];
-      if (!lastCell) return null;
-      const a = lastRow.getBoundingClientRect();
-      const b = lastCell.getBoundingClientRect();
-      if (a.height < 1 || b.height < 1) return null;
-      return { rowCenter: a.top + a.height / 2, cellCenter: b.top + b.height / 2 };
-    };
-
-    const align = () => {
-      raf = 0;
-      // 没有信息表：回到 CSS 的 24px 间距
-      if (!document.querySelector(".home-sysinfo")) {
-        status.style.marginTop = "";
-        return;
-      }
-      // 先从基线量一次，得到基准位置
-      status.style.marginTop = "";
-      const base = parseFloat(getComputedStyle(status).marginTop) || MIN_GAP;
-      let margin = base;
-      // 多轮收敛：设完 margin 后布局可能有几像素反馈（卡片变高会带动整行重排），
-      // 每轮用残差修正，最多 4 轮；正常 2 轮内就 < 1px。
-      for (let i = 0; i < 4; i++) {
-        const m = measure();
-        if (!m) {
-          status.style.marginTop = `${MIN_GAP}px`;
-          return;
-        }
-        const resid = m.cellCenter - m.rowCenter;
-        if (Math.abs(resid) < 1) break;
-        margin = Math.max(MIN_GAP, Math.round(margin + resid));
-        status.style.marginTop = `${margin}px`;
-      }
-      // 兜底：任何情况下不允许贴住导航
-      if ((parseFloat(status.style.marginTop) || 0) < MIN_GAP) {
-        status.style.marginTop = `${MIN_GAP}px`;
-      }
-    };
-
-    const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(align);
-    };
-    align();
-    window.addEventListener("resize", schedule);
-    // 首帧之后字体/数据还可能把信息表往下推几像素（表格自身尺寸不变、只是位移），
-    // ResizeObserver 捕捉不到，这里补两次延时重算；算法是绝对定位，重复执行无副作用。
-    const t1 = window.setTimeout(schedule, 250);
-    const t2 = window.setTimeout(schedule, 900);
-
-    const ro = new ResizeObserver(schedule);
-    ro.observe(status);
-    const table = document.querySelector<HTMLElement>(".home-sysinfo");
-    if (table) {
-      ro.observe(table);
-      const mo = new MutationObserver(schedule);
-      mo.observe(table, { childList: true, subtree: true });
-      return () => {
-        window.removeEventListener("resize", schedule);
-        clearTimeout(t1);
-        clearTimeout(t2);
-        ro.disconnect();
-        mo.disconnect();
-        if (raf) cancelAnimationFrame(raf);
-      };
-    }
-    return () => {
-      window.removeEventListener("resize", schedule);
-      clearTimeout(t1);
-      clearTimeout(t2);
-      ro.disconnect();
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, [
-    bootReady,
-    tab,
-    homeCards,
-    platformLabel,
-    systemMem,
-    appVersion,
-    electronVersion,
-    mihomoChannel,
-    running,
-  ]);
-
   const currentGroup = useMemo(() => groups.find((g) => g.name === selectedGroup), [groups, selectedGroup]);
 
   // 组内可选节点（过滤掉机场信息节点）；代理页列表与首页"节点"下拉共用同一份数据
   const groupNodes = useMemo(() => (currentGroup?.all || []).filter((n) => !isInfoNode(n)), [currentGroup]);
 
+  // 真正的「节点」= 可测速、且类型不是策略组。
+  // 分组自身也有延迟（组内选优的结果），把它当候选会让「选用最低」选中分组本身，
+  // 卡片上就会出现「组 + 当前 + BEST」这种自相矛盾的状态。
+  const isLeafProxy = useCallback((name: string) => {
+    if (!isTestableNode(name)) return false;
+    const t = String(proxyMapRef.current[name]?.type || "");
+    return !GROUP_TYPES.has(t) && !GROUP_ICON[groupKind(t)];
+  }, []);
+
+  // 有效延迟：优先本次会话的测速结果，没有则回落到内核 history（和卡片上的数字同一口径）
+  const effectiveDelay = useCallback(
+    (name: string) => {
+      const d = delays[name];
+      if (typeof d === "number") return d;
+      return proxyMap[name]?.history?.slice(-1)[0]?.delay;
+    },
+    [delays, proxyMap]
+  );
+
   const nodes = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return groupNodes;
-    return groupNodes.filter((n) => n.toLowerCase().includes(q));
-  }, [groupNodes, query]);
+    let list = groupNodes;
+    if (q) list = list.filter((n) => n.toLowerCase().includes(q));
+    if (nodeFilter !== "all") {
+      list = list.filter((n) => {
+        const d = effectiveDelay(n);
+        if (nodeFilter === "ok") return typeof d === "number" && d > 0;
+        if (nodeFilter === "timeout") return typeof d === "number" && d <= 0;
+        return d == null; // untested
+      });
+    }
+    return list;
+  }, [groupNodes, query, nodeFilter, effectiveDelay]);
 
   const sortedNodes = useMemo(() => {
     if (nodeSortMode === "name") return [...nodes].sort((a, b) => a.localeCompare(b, "zh"));
@@ -1614,12 +1678,12 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   const bestNode = useMemo(() => {
     let best: { name: string; delay: number } | null = null;
     for (const n of nodes) {
-      if (!isTestableNode(n)) continue;
+      if (!isLeafProxy(n)) continue;
       const d = delays[n];
       if (typeof d === "number" && d > 0 && (!best || d < best.delay)) best = { name: n, delay: d };
     }
     return best;
-  }, [nodes, delays]);
+  }, [nodes, delays, isLeafProxy]);
 
   const recentConn = useMemo(() => connections.slice(0, 12), [connections]);
 
@@ -1641,7 +1705,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   // 切换代理组或筛选条件时回到首批，保证切组立即响应
   useEffect(() => {
     setPxNodeLimit(PX_NODE_FIRST);
-  }, [selectedGroup, query, nodeSortMode]);
+  }, [selectedGroup, query, nodeSortMode, nodeFilter]);
 
   const currentNode = useMemo(() => {
     const g = groups.find((x) => x.name === selectedGroup) || groups[0];
@@ -1654,7 +1718,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       return { type: "", udp: false, delay: undefined as number | undefined };
     }
     const info = proxyMap[currentNode];
-    return { type: info?.type || "", udp: !!info?.udp, delay: delays[currentNode] };
+    // 和节点卡同一个口径：优先本次会话测速结果，没有则回落到内核 history
+    const sessionDelay = delays[currentNode];
+    const delay = typeof sessionDelay === "number" ? sessionDelay : info?.history?.slice(-1)[0]?.delay;
+    return { type: info?.type || "", udp: !!info?.udp, delay };
   }, [proxyMap, delays, currentNode]);
 
   const hasSubscription = groups.length > 0 || profiles.length > 0 || subs.length > 0;
@@ -1753,6 +1820,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         let winner: string | null = null;
         let best = Infinity;
         for (const n of batch) {
+          // 只在真正的节点里选：分组自身的延迟是组内选优的结果，不应参与「选用最低」
+          if (!isLeafProxy(n)) continue;
           const d = next[n];
           if (typeof d === "number" && d > 0 && d < best) {
             best = d;
@@ -1765,7 +1834,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         const curName = group.now || "";
         const curRaw = next[curName];
         const curDelay = typeof curRaw === "number" ? curRaw : 0;
-        const worthSwitching = curDelay > 0 ? best <= curDelay * 0.85 || curDelay - best >= 40 : true;
+        // 当前成员是分组（非叶子节点）时直接换成最快节点，不和分组延迟做迟滞比较
+        const worthSwitching =
+          !isLeafProxy(curName) ||
+          (curDelay > 0 ? best <= curDelay * 0.85 || curDelay - best >= 40 : true);
         if (winner && curName !== winner && worthSwitching) {
           try {
             await window.veyra.selectProxy(group.name || "", winner);
@@ -1790,8 +1862,80 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         showToast(`测速完成 · 已更新 ${batch.length} 个节点延迟`, 4200);
       }
     },
-    [refresh, showToast]
+    [refresh, showToast, isLeafProxy]
   );
+
+  // 「选用最低」：不强制先测一遍——直接用已知延迟（本次测速结果 → 内核 history）
+  // 挑最低的节点切过去；只有完全没有数据时才由调用方回落去测一次。
+  // 迟滞规则与测速后自动选优一致（快 15% 或快 40ms 才切），避免 70ms/74ms 来回跳。
+  const pickBestFromKnown = useCallback(
+    async (group?: (typeof groups)[number] | null, opts?: { force?: boolean }) => {
+      const w = window.veyra;
+      const g = group ?? groups.find((x) => x.name === selectedGroup);
+      if (!w || !g) return false;
+      let winner: string | null = null;
+      let best = Infinity;
+      let curDelay = 0;
+      let seen = 0;
+      for (const n of (g.all || []).filter(isLeafProxy)) {
+        const s = delays[n];
+        const d = typeof s === "number" ? s : proxyMap[n]?.history?.slice(-1)[0]?.delay;
+        if (typeof d !== "number" || d <= 0) continue;
+        seen += 1;
+        if (n === (g.now || "")) curDelay = d;
+        if (d < best) {
+          best = d;
+          winner = n;
+        }
+      }
+      // 有延迟数据但没有「叶子节点」候选（整组都是分组）：不切换，也不再触发测速
+      if (!winner) return seen > 0;
+      const curName = g.now || "";
+      if (winner === curName) {
+        // 用户刚手动打开开关：给个明确回声，否则会以为没生效
+        if (opts?.force) showToast(`当前节点已是最低延迟（${best} ms）`, 3000);
+        return true;
+      }
+      // 当前成员是「分组」时不算真正的节点选择：直接换成最快叶子，不做迟滞比较
+      // （分组延迟是组内选优的结果，和叶子节点的延迟不同口径，硬套迟滞会留下
+      //  「卡片标着最快 69ms、当前却是一个 76ms 的分组」这种自相矛盾的状态）
+      const curIsLeaf = isLeafProxy(curName);
+      const worth =
+        opts?.force ||
+        !curIsLeaf ||
+        (curDelay > 0 ? best <= curDelay * 0.85 || curDelay - best >= 40 : true);
+      if (!worth) return true;
+      try {
+        await w.selectProxy(g.name || "", winner);
+        showToast(`已按延迟切换到 ${winner}（${best} ms）`, 3600);
+        void refresh();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [groups, selectedGroup, delays, proxyMap, refresh, showToast, isLeafProxy]
+  );
+
+  // 自愈：开着「选用最低」但当前成员是分组（历史选择 / 内核把它切成了分组）时，
+  // 自动换成组内最快的叶子节点。用 ref 记住处理过的「组|当前成员」，
+  // 避免切换失败（或整组都是分组）时反复重试。
+  const autoPickFixRef = useRef("");
+  useEffect(() => {
+    if (!autoPick || !running || tab !== "proxies") return;
+    const g = groups.find((x) => x.name === selectedGroup);
+    const now = g?.now || "";
+    if (!g || !now) return;
+    if (isLeafProxy(now)) {
+      // 已经落在叶子节点上：清掉标记，之后用户再手动选回分组时还能被纠正一次
+      autoPickFixRef.current = "";
+      return;
+    }
+    const key = `${g.name}|${now}`;
+    if (autoPickFixRef.current === key) return;
+    autoPickFixRef.current = key;
+    void pickBestFromKnown(g);
+  }, [autoPick, running, tab, groups, selectedGroup, isLeafProxy, pickBestFromKnown]);
 
   // 测速现在是纯手动行为，三处触发点都在用户操作路径上：
   //   「一键测速」按钮、单个节点卡片点击、设置页「测试全部」。
@@ -1799,8 +1943,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   //   1) 打开软件 / 内核启动时的全量测速 effect
   //   2) 后台 20s 快检 + 定时全量复测 + 静默切节点 的定时器
   // 同时删除了配套设置项 autoTest / autoTestIntervalSec（设置面板与代理页工具栏入口一并下线）。
-  // autoPick（「选用最低」）保留：它只在用户手动测速完成后决定是否切到最低延迟节点，
-  // 自身不会发起任何测速请求，与"自动测速"无关。
+  // autoPick（「选用最低」）本身不发测速请求：打开开关、切换策略组时直接用已知延迟选优，
+  // 测速完成后也会按同一套迟滞规则复选；当前成员是分组时不做迟滞，直接换成最快叶子。
 
   useEffect(() => {
     if (themeMode !== "system") return;
@@ -2108,30 +2252,34 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     }
   }
 
+  // 侧栏每个 tab 一个专属色相，色板与首页卡片图标同一套（蓝 / 青 / 紫 / 天蓝 / 琥珀 /
+  // 石板灰 / 品红 / 中性灰），整站只多这一层"分类色"，状态色仍是绿/琥珀/红。
   const navItems = [
-    ["home", NavHomeIcon, t("nav.home", "首页"), null],
+    ["home", NavHomeIcon, t("nav.home", "首页"), null, "#2c71e8"],
     [
       "proxies",
       NavProxiesIcon,
       t("nav.proxies", "代理"),
       nodes.length || groups.reduce((a, g) => a + (g.all?.length || 0), 0) || null,
+      "#14b8a6",
     ],
-    ["profiles", NavProfilesIcon, t("nav.profiles", "订阅"), subs.length || null],
-    ["connections", NavConnectionsIcon, t("nav.connections", "连接"), connCount || null],
-    ["rules", NavRulesIcon, t("nav.rules", "规则"), null],
-    ["logs", NavLogsIcon, t("nav.logs", "日志"), null],
-    ["tests", NavTestsIcon, t("nav.tests", "测试"), null],
-    ["settings", NavSettingsIcon, t("nav.settings", "设置"), null],
+    ["profiles", NavProfilesIcon, t("nav.profiles", "订阅"), subs.length || null, "#7c3aed"],
+    ["connections", NavConnectionsIcon, t("nav.connections", "连接"), connCount || null, "#0ea5e9"],
+    ["rules", NavRulesIcon, t("nav.rules", "规则"), null, "#f59e0b"],
+    ["logs", NavLogsIcon, t("nav.logs", "日志"), null, "#6366f1"],
+    ["tests", NavTestsIcon, t("nav.tests", "测试"), null, "#ec4899"],
+    ["settings", NavSettingsIcon, t("nav.settings", "设置"), null, "#6b7280"],
   ] as const;
 
   // 侧栏导航项渲染：图标 / 文字 / 计数徽标三段式。
   // 文字用 .nav-label 吃 flex 余量（min-width:0 + ellipsis），徽标 flex:none 定宽，
   // 这样窄栏下宁可截断文字也不会把两个字拆成上下两行。
-  const renderNavItem = ([id, Icon, label, badge]: (typeof navItems)[number]) => (
+  const renderNavItem = ([id, Icon, label, badge, hue]: (typeof navItems)[number]) => (
     <button
       key={id}
       type="button"
       className={`nav-item${tab === id ? " active" : ""}`}
+      style={{ "--nav-hue": hue } as CSSProperties}
       aria-current={tab === id ? "page" : undefined}
       onClick={() => goTab(id)}
     >
@@ -2143,10 +2291,15 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
     </button>
   );
 
+  // 测试版标识：版本号里带 beta 就视为测试版。
+  // 顺序固定为「版本号 → Beta」：v1.1.9 在前、渠道标签在后，全应用统一这套读法。
+  const isBeta = /beta/i.test(appVersion);
+  const versionLabel = appVersion ? `v${appVersion.replace(/^v/, "").replace(/-beta[.-].*$/i, "")}` : "—";
+
   // Before anything renders — show splash while booting
   if (!bootReady) {
     return (
-      <div className="app boot-splash" onMouseDown={onHeaderMouseDown}>
+      <div className={`app boot-splash${isBeta ? " is-beta" : ""}`} onMouseDown={onHeaderMouseDown}>
         <div className="boot-stage">
           <div className="boot-mark">
             <span className="boot-glow" aria-hidden="true" />
@@ -2166,7 +2319,14 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
               <circle cx="12" cy="14.6" r="1.9" fill="currentColor" stroke="none" />
             </svg>
           </div>
-          <div className="boot-name">Veyra-omini</div>
+          <div className="boot-name-row">
+            <div className="boot-name">Veyra-omini</div>
+            {isBeta ? (
+              <span className="brand-beta boot-beta" aria-label={t("home.betaTag", "测试版")}>
+                Beta
+              </span>
+            ) : null}
+          </div>
           <div
             className="boot-bar"
             role="progressbar"
@@ -2183,7 +2343,11 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   }
 
   return (
-    <div className={`app ${busy ? "busy" : ""} ${running ? "is-on" : ""} ${sysProxy ? "proxy-on" : ""}`}>
+    <div
+      className={`app ${busy ? "busy" : ""} ${running ? "is-on" : ""} ${sysProxy ? "proxy-on" : ""}${
+        isBeta ? " is-beta" : ""
+      }`}
+    >
       <div className="container">
         {/* Header */}
         <header className="header" onMouseDown={onHeaderMouseDown}>
@@ -2206,8 +2370,36 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
               <circle cx="12" cy="14.6" r="1.9" fill="currentColor" stroke="none" />
             </svg>
             <span className="brand-text">Veyra-omini</span>
-            {/* 用真实应用版本；之前硬编码 v1.1.2，升级后会与设置页显示的版本矛盾 */}
-            <span className="brand-ver">{appVersion ? `v${appVersion.replace(/^v/, "")}` : "—"}</span>
+            {/* 版本戳在前、渠道标签在后：整行读作「Veyra-omini v1.1.9 Beta」 */}
+            <span className="brand-ver" title={appVersion ? `v${appVersion}` : undefined}>
+              {versionLabel}
+            </span>
+            {isBeta ? (
+              <span
+                className="brand-beta"
+                title={`${t("home.betaTag", "测试版")} · v${appVersion}：功能与界面仍在调整，遇到问题请反馈`}
+                aria-label={t("home.betaTag", "测试版")}
+              >
+                Beta
+              </span>
+            ) : null}
+            {/* 发现新版本：顶栏常驻一枚状态胶囊。弹窗关掉后也还在，
+                点一下重新打开更新弹窗——不用回设置页找。 */}
+            {pendingUpdate ? (
+              <button
+                type="button"
+                className="upd-badge"
+                onClick={() => setAutoUpdate(pendingUpdate)}
+                title={`${t("update.available", "发现新版本")} v${pendingUpdate.latest}`}
+              >
+                <span className="upd-badge-orb" aria-hidden="true">
+                  <ArrowUp size={11} strokeWidth={2.8} />
+                </span>
+                <span className="upd-badge-ver">v{pendingUpdate.latest}</span>
+                <span className="upd-badge-k">{t("update.pill", "可更新")}</span>
+                <ChevronRight size={11} />
+              </button>
+            ) : null}
           </div>
           <div className="header-actions">
             {/* v13：系统时间从右栏卡片收进顶栏——时间属窗口级信息，
@@ -2323,7 +2515,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     <li>
                       <span>{t("nav.memory", "内存")}</span>
                       <i className="rail-leader" aria-hidden="true" />
-                      <strong>{memText}</strong>
+                      <strong title={memTitle}>{memText}</strong>
                     </li>
                     <li>
                       <span>{t("nav.core", "内核")}</span>
@@ -2340,52 +2532,160 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
           <div className="col-main">
             <main className="stage">
               <div className="pane v-home" hidden={tab !== "home"}>
-                  {/* 首屏常驻状态条：状态 / 速率 / 节点 / 延迟 / 连接 / 体检入口 */}
-                  <HomePulse
-                    running={running}
-                    sysProxy={sysProxy}
-                    downRate={downRate}
-                    upRate={upRate}
-                    connCount={connCount}
-                    nodeName={currentNode}
-                    delay={currentNodeInfo.delay}
-                    nodeCount={nodes.length}
-                    startedAt={coreStartTime}
-                  />
-                  {/* HERO · 连接状态 */}
-                  <ConnectOrb
-                    running={running}
-                    sysProxy={sysProxy}
-                    busy={busy}
-                    mixedPort={mixedPort}
-                    nodeName={currentNode}
-                    onToggleProxy={toggleSysProxy}
-                    onNodeClick={() => {
-                      // 一键去代理页切节点，并选中当前节点所在分组
-                      setTab("proxies");
-                      const g = groups.find((x) => x.all?.includes(currentNode));
-                      if (g?.name) setSelectedGroup(g.name);
-                    }}
-                    showNodeBlock={homeCards.node}
-                    delay={currentNodeInfo.delay}
-                    nodeCount={nodes.length}
-                    nodeType={currentNodeInfo.type}
-                  />
+                  {/* 页头：一屏只留一个「标题级」信息，其余走标签 */}
+                  <header className="hs-head">
+                    <div className="hs-head-l">
+                      <h1>{t("home.overview", "概览")}</h1>
+                      <span className={`hs-live ${!running ? "off" : sysProxy ? "on" : "idle"}`}>
+                        <i className="hs-live-dot" aria-hidden="true" />
+                        {running ? t("status.heroRunning", "运行中") : t("status.heroStopped", "已停止")}
+                        {running && coreStartTime ? <RailUptime startedAt={coreStartTime} /> : null}
+                      </span>
+                      <span className="hs-head-sep" aria-hidden="true" />
+                      <span className="hs-head-meta">
+                        {MODE_LABEL(mode)} · {nodes.length} {t("home.nodesAvailable", "节点可用")}
+                      </span>
+                    </div>
+                    <div className="hs-head-r">
+                      <HomePulse
+                        variant="button"
+                        running={running}
+                        sysProxy={sysProxy}
+                        downRate={downRate}
+                        upRate={upRate}
+                        connCount={connCount}
+                        nodeName={currentNode}
+                        delay={currentNodeInfo.delay}
+                        nodeCount={nodes.length}
+                        startedAt={coreStartTime}
+                      />
+                    </div>
+                  </header>
+
+                  {/* HERO · 连接状态：主状态 + 系统代理开关 + 当前节点 */}
+                  <section
+                    className={`hs-hero ${!running ? "off" : sysProxy ? "on" : "idle"}`}
+                    aria-label={t("home.overview", "概览")}
+                  >
+                    <div className="hs-hero-main">
+                      <button
+                        type="button"
+                        className={`hs-orb${busy ? " is-busy" : ""}`}
+                        onClick={toggleSysProxy}
+                        disabled={busy || !running}
+                        title={
+                          running
+                            ? sysProxy
+                              ? t("home.turnOff", "关闭")
+                              : t("home.turnOn", "开启")
+                            : t("home.heroOffHint", "内核未运行，请到「设置 · 内核」启动")
+                        }
+                        aria-label={t("home.sysProxy", "系统代理")}
+                      >
+                        <span className="hs-orb-halo" aria-hidden="true" />
+                        <Power size={20} strokeWidth={2.1} />
+                      </button>
+                      <div className="hs-hero-copy">
+                        <div className="hs-eyebrow">
+                          <i className="hs-state-dot" aria-hidden="true" />
+                          {running
+                            ? sysProxy
+                              ? t("home.statusOn", "生效中")
+                              : t("home.statusIdle", "内核运行中")
+                            : t("home.statusOff", "已停止")}
+                        </div>
+                        <h2 className="hs-title">
+                          {running
+                            ? sysProxy
+                              ? t("home.heroOn", "代理已生效")
+                              : t("home.heroIdle", "内核运行中")
+                            : t("home.heroOff", "代理未启动")}
+                        </h2>
+                        <p className="hs-sub">
+                          {running ? (
+                            <>
+                              <code>127.0.0.1:{mixedPort}</code>
+                              <span className="hs-dot">·</span>
+                              <span>
+                                {activeCore === "singbox" ? "sing-box" : "Mihomo"}
+                                {coreVersion ? ` ${coreVersion}` : ""}
+                              </span>
+                            </>
+                          ) : (
+                            t("home.heroOffHint", "内核未运行，请到「设置 · 内核」启动")
+                          )}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        className={`hs-power${sysProxy ? " on" : ""}`}
+                        onClick={toggleSysProxy}
+                        disabled={busy || (!running && !sysProxy)}
+                        aria-pressed={sysProxy}
+                      >
+                        {sysProxy ? <ShieldCheck size={15} /> : <ShieldOff size={15} />}
+                        <span className="hs-power-k">{t("home.sysProxy", "系统代理")}</span>
+                        <b className="hs-power-v">{sysProxy ? t("home.on", "开") : t("home.off", "关")}</b>
+                      </button>
+                    </div>
+
+                    {homeCards.node ? (
+                      <button
+                        type="button"
+                        className="hs-node-row"
+                        onClick={() => {
+                          // 一键去代理页切节点，并选中当前节点所在分组
+                          setTab("proxies");
+                          const g = groups.find((x) => x.all?.includes(currentNode));
+                          if (g?.name) setSelectedGroup(g.name);
+                        }}
+                        title={t("hero.switchNode", "切换节点")}
+                      >
+                        <span className="hs-node-k">{t("home.currentNode", "当前节点")}</span>
+                        <span className={`hs-node-name${currentNode && currentNode !== "—" ? "" : " is-empty"}`}>
+                          {currentNode && currentNode !== "—"
+                            ? stripFlagEmoji(currentNode)
+                            : t("home.noNodeShort", "未选择")}
+                        </span>
+                        {currentNodeInfo.type ? <span className="hs-node-type">{currentNodeInfo.type}</span> : null}
+                        <span className="hs-node-spacer" aria-hidden="true" />
+                        {currentNodeInfo.delay != null && currentNodeInfo.delay > 0 ? (
+                          <span className={`hs-node-delay ${delayClass(currentNodeInfo.delay)}`}>
+                            {currentNodeInfo.delay} ms
+                          </span>
+                        ) : (
+                          <span className="hs-node-delay na">{t("hero.testDelay", "未测速")}</span>
+                        )}
+                        <ChevronRight size={14} className="hs-node-chev" aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </section>
 
                   {/* 实时流量 */}
-                  <section className="v-traffic">
-                    <header className="v-traffic-hd">
-                      <div className="v-traffic-title">
+                  <section className={`hs-card hs-traffic${running ? " is-live" : ""}`}>
+                    <header className="hs-card-hd">
+                      <div className="hs-card-title">
+                        <i className="hs-card-dot" aria-hidden="true" />
                         <h3>{t("home.realtimeTraffic", "实时流量")}</h3>
-                        <span>
-                          {MODE_LABEL(mode)} · {nodes.length}{" "}
-                          {t("home.nodesAvailable", "节点可用")}
+                        <span className="hs-card-sub">
+                          {MODE_LABEL(mode)} · {nodes.length} {t("home.nodesAvailable", "节点可用")}
+                        </span>
+                      </div>
+                      <div className="hs-rates">
+                        <span className="hs-rate down">
+                          <em>↓</em>
+                          <b>{formatRate(downRate)}</b>
+                        </span>
+                        <span className="hs-rate up">
+                          <em>↑</em>
+                          <b>{formatRate(upRate)}</b>
                         </span>
                       </div>
                       <button
                         ref={homeCfgTriggerRef}
                         type="button"
-                        className="btn ghost btn-xs"
+                        className="btn ghost btn-xs hs-cfg-btn"
                         onClick={() => {
                           setHomeCfgDraft(homeCards);
                           setHomeCfgOpen(true);
@@ -2398,21 +2698,21 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       </button>
                     </header>
 
-                    <div className="v-chart">
+                    <div className="hs-chart">
                       <WaveChart
                         up={hasTraffic ? rateHistory.up : []}
                         down={hasTraffic ? rateHistory.down : []}
                         empty={!hasTraffic}
                       />
                       {!hasTraffic ? (
-                        <span className={`v-chart-live${running ? " on" : ""}`}>
+                        <span className={`hs-chart-empty${running ? " on" : ""}`}>
                           <i aria-hidden="true" />
                           {running
                             ? t("home.listening", "监听中 · 暂无流量")
                             : t("nav.serviceNotRunning", "服务未运行")}
                         </span>
                       ) : null}
-                      <div className="v-chart-axis" aria-hidden="true">
+                      <div className="hs-axis" aria-hidden="true">
                         <span>60s</span>
                         <span>45s</span>
                         <span>30s</span>
@@ -2424,23 +2724,28 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
                   {/* 规则 / 模式 / 订阅 */}
                   {(homeCards.core || homeCards.mode || homeCards.subscription) && (
-                    <div className="v-tiles">
+                    <div className="hs-tiles">
                       {homeCards.core && (
-                        <section className="v-tile">
-                          <header className="v-tile-hd">
-                            <span>{t("home.rules", "规则数量")}</span>
+                        <section className="hs-tile">
+                          <header className="hs-tile-hd">
+                            <span className="hs-tile-ico">
+                              <ListTree size={13} />
+                            </span>
+                            <span className="hs-tile-k">{t("home.rules", "规则数量")}</span>
                             <button
                               type="button"
-                              className="link-btn"
+                              className="hs-tile-link"
                               onClick={() => goTab("rules")}
+                              title={ruleCount != null ? t("home.view", "查看") : t("home.goAdd", "去添加")}
                             >
-                              {ruleCount != null ? t("home.view", "查看") : t("home.goAdd", "去添加")} →
+                              {ruleCount != null ? t("home.view", "查看") : t("home.goAdd", "去添加")}
+                              <ChevronRight size={11} />
                             </button>
                           </header>
-                          <div className={`v-tile-v${ruleCount != null ? "" : " is-zero"}`}>
-                            {ruleCount != null ? ruleCount : 0}
+                          <div className={`hs-tile-v${ruleCount != null ? "" : " is-empty"}`}>
+                            {ruleCount != null ? ruleCount : "—"}
                           </div>
-                          <footer className="v-tile-sub">
+                          <footer className="hs-tile-sub">
                             {ruleCount != null
                               ? t("home.ruleCount", "条规则（来自当前订阅）")
                               : t("home.noRulesHint", "未连接内核，暂无法统计")}
@@ -2449,17 +2754,20 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       )}
 
                       {homeCards.mode && (
-                        <section className="v-tile">
-                          <header className="v-tile-hd">
-                            <span>{t("home.mode", "代理模式")}</span>
+                        <section className="hs-tile">
+                          <header className="hs-tile-hd">
+                            <span className="hs-tile-ico">
+                              <Route size={13} />
+                            </span>
+                            <span className="hs-tile-k">{t("home.mode", "代理模式")}</span>
                           </header>
-                          <div className="v-tile-v">{MODE_LABEL(mode)}</div>
-                          <div className="v-seg">
+                          <div className="hs-tile-v">{MODE_LABEL(mode)}</div>
+                          <div className="hs-seg">
                             {(["rule", "global", "direct"] as const).map((m) => (
                               <button
                                 key={m}
                                 type="button"
-                                className={`v-seg-btn${mode === m ? " on" : ""}`}
+                                className={`hs-seg-btn${mode === m ? " on" : ""}`}
                                 onClick={() => changeMode(m)}
                                 disabled={!running}
                               >
@@ -2471,24 +2779,32 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                       )}
 
                       {homeCards.subscription && (
-                        <section className="v-tile">
-                          <header className="v-tile-hd">
-                            <span>{t("home.subscriptions", "订阅")}</span>
+                        <section className="hs-tile">
+                          <header className="hs-tile-hd">
+                            <span className="hs-tile-ico">
+                              <Layers3 size={13} />
+                            </span>
+                            <span className="hs-tile-k">{t("home.subscriptions", "订阅")}</span>
                             <button
                               type="button"
-                              className="link-btn"
+                              className="hs-tile-link"
                               onClick={() => goTab("profiles")}
+                              title={t("home.manage", "管理")}
                             >
-                              {t("home.manage", "管理")} →
+                              {t("home.manage", "管理")}
+                              <ChevronRight size={11} />
                             </button>
                           </header>
-                          <div className={`v-tile-v${subs.length ? "" : " is-zero"}`}>
+                          <div className={`hs-tile-v${subs.length ? "" : " is-empty"}`}>
                             {subs.length}
-                            <em className="v-tile-unit">{t("home.subsUnit", "个订阅")}</em>
+                            <em className="hs-tile-unit">{t("home.subsUnit", "个订阅")}</em>
                           </div>
                           {subUsage.total > 0 ? (
-                            <div className="v-quota">
-                              <div className="v-quota-split">
+                            <div className="hs-quota">
+                              <div className="hs-quota-bar" aria-hidden="true">
+                                <i style={{ width: `${subUsagePct}%` }} />
+                              </div>
+                              <div className="hs-quota-split">
                                 <span>
                                   <i>{t("home.usedLabel", "已用")}</i>
                                   {formatBytes(subUsage.used)}
@@ -2498,12 +2814,9 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                                   {formatBytes(subUsage.left)}
                                 </span>
                               </div>
-                              <div className="v-quota-bar" aria-hidden="true">
-                                <i style={{ width: `${subUsagePct}%` }} />
-                              </div>
                             </div>
                           ) : (
-                            <footer className="v-tile-sub">
+                            <footer className="hs-tile-sub">
                               {subs.length
                                 ? t("home.noQuota", "未返回流量信息")
                                 : t("home.noSubs", "还没有订阅")}
@@ -2514,158 +2827,289 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     </div>
                   )}
 
-                  {/* 运行环境 */}
-                  {(homeCards.system || homeCards.traffic) && (
-                    <div className="v-sysinfo">
-                      {homeCards.system && platformLabel ? (
-                        <div className="v-si">
-                          <span>{t("home.sysOs", "系统")}</span>
-                          <b title={platformLabel}>{platformLabel}</b>
+                  {/* 系统信息：Clash Verge 那种「左标签 / 右值」的键值行，
+                      一行一项。之前挤在一条横条里，版本号一长就被截成省略号，
+                      窄窗口下还会换行错位。 */}
+                  {homeCards.system ? (
+                    <dl className="hs-sysinfo" aria-label={t("home.sysInfo", "系统信息")}>
+                      {sysOsText ? (
+                        <div className="hs-sysinfo-row">
+                          <dt>{t("home.sysOsName", "操作系统信息")}</dt>
+                          <dd title={platformLabel}>{sysOsText}</dd>
                         </div>
                       ) : null}
-                      {homeCards.system && systemMem > 0 ? (
-                        <div className="v-si">
-                          <span>{t("home.sysMem", "内存")}</span>
-                          <b>{formatBytes(systemMem)}</b>
+                      {systemMem > 0 ? (
+                        <div className="hs-sysinfo-row">
+                          <dt>{t("home.sysMem", "内存")}</dt>
+                          <dd title={`共 ${formatBytes(systemMem)}`}>{formatBytes(systemMem)}</dd>
                         </div>
                       ) : null}
-                      {homeCards.system && appVersion ? (
-                        <div className="v-si">
-                          <span>{t("home.sysApp", "Veyra")}</span>
-                          <b title={`v${appVersion.replace(/^v/, "")}`}>
-                            v{appVersion.replace(/^v/, "")}
-                            {appVersion.includes("beta") ? (
-                              <em className="v-si-tag">{t("home.betaTag", "测试版")}</em>
+                      {appVersion ? (
+                        <div className="hs-sysinfo-row">
+                          <dt>{t("home.sysAppVer", "Veyra 版本")}</dt>
+                          <dd title={`v${appVersion.replace(/^v/, "")}`}>
+                            <span className="hs-sysinfo-ver">v{appVersion.replace(/^v/, "")}</span>
+                            {/beta/i.test(appVersion) ? (
+                              <em className="hs-sysinfo-tag">{t("home.betaTag", "测试版")}</em>
                             ) : null}
-                          </b>
+                          </dd>
                         </div>
                       ) : null}
-                      {homeCards.system && electronVersion ? (
-                        <div className="v-si">
-                          <span>{t("home.sysRuntime", "运行环境")}</span>
-                          <b>Tauri {electronVersion.replace(/^Tauri\s*/i, "")}</b>
+                      {electronVersion ? (
+                        <div className="hs-sysinfo-row">
+                          <dt>{t("home.sysRuntime", "运行环境")}</dt>
+                          <dd>Tauri {electronVersion.replace(/^Tauri\s*/i, "")}</dd>
                         </div>
                       ) : null}
-                    </div>
-                  )}
+                    </dl>
+                  ) : null}
                 </div>
 
                 <div className="pane px" hidden={tab !== "proxies"}>
-                  <div className="px-header-card">
-                    <div className="px-tabs">
-                      {groups.length ? (
-                        groups.map((g) => (
-                          <button
-                            key={g.name}
-                            type="button"
-                            className={`px-tab ${g.name === selectedGroup ? "active" : ""}`}
-                            onClick={() => setSelectedGroup(g.name || "")}
-                            title={g.name || ""}
-                          >
-                            <span className="gt-ico">
-                              <Server size={14} />
+                  <header className="px-head">
+                    <div className="px-head-l">
+                      <h1>{t("tab.proxies.title", "节点")}</h1>
+                      <span className="pill dim">
+                        {nodes.length === groupNodes.length
+                          ? `${nodes.length} ${t("proxies.nodeUnit", "个节点")}`
+                          : `${nodes.length} / ${groupNodes.length}`}
+                      </span>
+                      {/* 当前节点：从所选策略组读 now，一屏之内就能看到现在实际走哪条线路 */}
+                      {currentNode && currentNode !== "—" ? (
+                        <span
+                          className="px-current"
+                          title={
+                            lastTestAt > 0
+                              ? `${currentNode} · ${t("proxies.lastTest", "上次测速")} ${new Date(lastTestAt).toLocaleTimeString(getLocale(), { hour12: false, hour: "2-digit", minute: "2-digit" })}`
+                              : currentNode
+                          }
+                        >
+                          <span className="px-current-k">{t("proxies.currentNode", "当前节点")}</span>
+                          <span className="px-current-name">{stripFlagEmoji(currentNode)}</span>
+                          {currentNodeInfo.delay != null && currentNodeInfo.delay > 0 ? (
+                            <span className={`px-current-delay ${delayClass(currentNodeInfo.delay)}`}>
+                              {currentNodeInfo.delay} ms
                             </span>
-                            <span className="gt-txt">
-                              <b>{g.name}</b>
-                              <small>
-                                {g.now && !isInfoNode(g.now) ? stripFlagEmoji(g.now) : g.type}
-                              </small>
-                            </span>
-                          </button>
-                        ))
+                          ) : null}
+                        </span>
                       ) : (
-                        <div className="empty slim">{t("proxies.noGroups", "No proxy groups — import a profile in the Profiles tab")}</div>
+                        <span className="px-head-meta">
+                          {lastTestAt > 0
+                            ? `${t("proxies.lastTest", "上次测速")} ${new Date(lastTestAt).toLocaleTimeString(getLocale(), { hour12: false, hour: "2-digit", minute: "2-digit" })}`
+                            : t("proxies.manualTest", "手动测速")}
+                        </span>
                       )}
                     </div>
+                    <div className="px-head-r">
+                      <label className="px-search">
+                        <Search size={14} />
+                        <input
+                          placeholder={t("proxies.searchNode", "搜索节点")}
+                          value={query}
+                          onChange={(e) => setQuery(e.target.value)}
+                        />
+                      </label>
+                      {/* 排序 / 过滤：两个紧凑下拉，参数决定下方网格的顺序与可见范围 */}
+                      <button
+                        type="button"
+                        className="px-tool"
+                        title={t("proxies.sort", "排序")}
+                        aria-haspopup="menu"
+                        onClick={(e) => {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          setPxMenu({
+                            kind: "sort",
+                            x: Math.min(r.left, window.innerWidth - 210),
+                            y: r.bottom + 6,
+                          });
+                        }}
+                      >
+                        <ArrowUpDown size={13} />
+                        {nodeSortMode === "delay"
+                          ? t("proxies.sortDelayShort", "延迟")
+                          : nodeSortMode === "name"
+                            ? t("proxies.sortNameShort", "名称")
+                            : t("proxies.sortDefaultShort", "默认")}
+                        <ChevronDown size={12} className="px-tool-chev" />
+                      </button>
+                      <button
+                        type="button"
+                        className={`px-tool${nodeFilter !== "all" ? " is-on" : ""}`}
+                        title={t("proxies.filter", "过滤")}
+                        aria-haspopup="menu"
+                        onClick={(e) => {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          setPxMenu({
+                            kind: "filter",
+                            x: Math.min(r.left, window.innerWidth - 210),
+                            y: r.bottom + 6,
+                          });
+                        }}
+                      >
+                        <Filter size={13} />
+                        {nodeFilter === "all"
+                          ? t("proxies.filterAllShort", "全部")
+                          : nodeFilter === "ok"
+                            ? t("proxies.filterOkShort", "可用")
+                            : nodeFilter === "timeout"
+                              ? t("proxies.filterTimeoutShort", "超时")
+                              : t("proxies.filterUntestedShort", "未测")}
+                        <ChevronDown size={12} className="px-tool-chev" />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn primary btn-sm"
+                        onClick={testAll}
+                        disabled={!running || testing || !(currentGroup?.all?.length || 0)}
+                      >
+                        <Zap size={14} />
+                        {testing ? `${testProgress}%` : t("proxies.testAll", "一键测速")}
+                      </button>
+                    </div>
+                  </header>
 
-                    <div className="px-toolbar">
-                      <div className="px-meta">
-                        <span className="meta-dot" />
-                        {t("proxies.nodeCount", "{n} nodes").replace("{n}", String(nodes.length))}
-                        {lastTestAt > 0
-                          ? ` · ${t("proxies.lastTest", "Last test")} ${new Date(lastTestAt).toLocaleTimeString()}`
-                          : ` · ${t("proxies.manualTest", "Manual test")}`}
-                      </div>
-                      <div className="px-tools">
-                        <label className="proxies-search">
-                          <Search size={15} />
-                          <input
-                            placeholder={t("proxies.searchNode", "Search node")}
-                            value={query}
-                            onChange={(e) => setQuery(e.target.value)}
-                          />
-                        </label>
-                        <label className="switch compact">
-                          <input
-                            type="checkbox"
-                            checked={autoPick}
-                            onChange={async (e) => {
-                              const v = e.target.checked;
-                              setAutoPick(v);
-                              await window.veyra?.setSettings({ autoPick: v });
-                              // 刚打开「选用最低」时立刻测一次并切过去，避免用户以为没生效
-                              if (v) void runSpeedTest({ silent: false, pickBest: true });
-                            }}
-                          />
-                          {t("proxies.pickLowest", "Pick lowest")}
-                        </label>
+                  <div className="px-bar">
+                    <div className="px-groups" role="tablist" aria-label={t("proxies.groupsLabel", "策略组")}>
+                      {groups.length ? (
+                        groups.map((g) => {
+                          const kind = groupKind(g.type);
+                          const KindIcon = GROUP_ICON[kind] || Layers3;
+                          return (
+                            <button
+                              key={g.name}
+                              type="button"
+                              role="tab"
+                              aria-selected={g.name === selectedGroup}
+                              className={`px-group kind-${kind || "other"}${
+                                g.name === selectedGroup ? " active" : ""
+                              }`}
+                              onClick={() => {
+                                setSelectedGroup(g.name || "");
+                                // 开着「选用最低」时，切到新组也立刻按已知延迟选优（不测速）
+                                if (autoPick && running) void pickBestFromKnown(g);
+                              }}
+                              title={`${g.name} · ${g.type}`}
+                            >
+                              <span className="px-group-ico" aria-hidden="true">
+                                <KindIcon size={13} strokeWidth={2} />
+                              </span>
+                              <span className="px-group-text">
+                                <span className="px-group-name">{g.name}</span>
+                                <span className="px-group-now">
+                                  {g.now && !isInfoNode(g.now) ? stripFlagEmoji(g.now) : g.type}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <span className="px-bar-empty">
+                          {t("proxies.noGroupsShort", "暂无策略组")}
+                        </span>
+                      )}
+                    </div>
+                    <div className="px-bar-r">
+                      <label className="switch compact px-autopick">
+                        <input
+                          type="checkbox"
+                          checked={autoPick}
+                          onChange={async (e) => {
+                            const v = e.target.checked;
+                            setAutoPick(v);
+                            await window.veyra?.setSettings({ autoPick: v });
+                            if (!v) return;
+                            // 先用已知延迟（本次测速 / 内核 history）直接选最优，不必等测速；
+                            // 一点数据都没有时才回落去测一遍，避免开关毫无反应
+                            const picked = await pickBestFromKnown(undefined, { force: true });
+                            if (!picked) void runSpeedTest({ silent: false, pickBest: true });
+                          }}
+                        />
+                        {t("proxies.pickLowest", "选用最低")}
+                      </label>
+                      <div className="seg node-density" role="group" aria-label="Node density">
                         <button
                           type="button"
-                          className="btn primary"
-                          onClick={testAll}
-                          disabled={!running || testing || !nodes.length}
+                          className={nodeDensity === "comfortable" ? "active" : ""}
+                          onClick={() => { setNodeDensity("comfortable"); localStorage.setItem("veyra-node-density", "comfortable"); }}
+                          title="舒适布局"
                         >
-                          <Zap size={15} />
-                          {testing ? `${testProgress}%` : t("proxies.testAll", "Test all")}
+                          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="0.5" y="0.5" width="5" height="5" rx="1" stroke="currentColor"/><rect x="7.5" y="0.5" width="5" height="5" rx="1" stroke="currentColor"/><rect x="0.5" y="7.5" width="5" height="5" rx="1" stroke="currentColor"/><rect x="7.5" y="7.5" width="5" height="5" rx="1" stroke="currentColor"/></svg>
+                          舒适
                         </button>
-
-                        {/* 节点密度切换：舒适/紧凑/列表 */}
-                        <div
-                          className="seg node-density"
-                          role="group"
-                          aria-label="Node density"
+                        <button
+                          type="button"
+                          className={nodeDensity === "compact" ? "active" : ""}
+                          onClick={() => { setNodeDensity("compact"); localStorage.setItem("veyra-node-density", "compact"); }}
+                          title="紧凑布局"
                         >
-                          <button
-                            type="button"
-                            className={nodeDensity === "comfortable" ? "active" : ""}
-                            onClick={() => { setNodeDensity("comfortable"); localStorage.setItem("veyra-node-density", "comfortable"); }}
-                            title="舒适布局"
-                          >
-                            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="0.5" y="0.5" width="5" height="5" rx="1" stroke="currentColor"/><rect x="7.5" y="0.5" width="5" height="5" rx="1" stroke="currentColor"/><rect x="0.5" y="7.5" width="5" height="5" rx="1" stroke="currentColor"/><rect x="7.5" y="7.5" width="5" height="5" rx="1" stroke="currentColor"/></svg>
-                            舒适
-                          </button>
-                          <button
-                            type="button"
-                            className={nodeDensity === "compact" ? "active" : ""}
-                            onClick={() => { setNodeDensity("compact"); localStorage.setItem("veyra-node-density", "compact"); }}
-                            title="紧凑布局"
-                          >
-                            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="0.5" y="0.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="5" y="0.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="9.5" y="0.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="5" y="5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="9.5" y="5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="9.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="5" y="9.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="9.5" y="9.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/></svg>
-                            紧凑
-                          </button>
-                          <button
-                            type="button"
-                            className={nodeDensity === "list" ? "active" : ""}
-                            onClick={() => { setNodeDensity("list"); localStorage.setItem("veyra-node-density", "list"); }}
-                            title="列表布局"
-                          >
-                            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="0.5" y="1" width="12" height="2.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="5.25" width="12" height="2.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="9.5" width="12" height="2.5" rx="0.8" stroke="currentColor"/></svg>
-                            列表
-                          </button>
-                        </div>
+                          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="0.5" y="0.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="5" y="0.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="9.5" y="0.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="5" y="5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="9.5" y="5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="9.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="5" y="9.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/><rect x="9.5" y="9.5" width="3.5" height="3.5" rx="0.8" stroke="currentColor"/></svg>
+                          紧凑
+                        </button>
+                        <button
+                          type="button"
+                          className={nodeDensity === "list" ? "active" : ""}
+                          onClick={() => { setNodeDensity("list"); localStorage.setItem("veyra-node-density", "list"); }}
+                          title="列表布局"
+                        >
+                          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="0.5" y="1" width="12" height="2.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="5.25" width="12" height="2.5" rx="0.8" stroke="currentColor"/><rect x="0.5" y="9.5" width="12" height="2.5" rx="0.8" stroke="currentColor"/></svg>
+                          列表
+                        </button>
                       </div>
                     </div>
-
-                    {testing && (
-                      <div className="progress-line">
-                        <i style={{ width: `${testProgress}%` }} />
-                      </div>
-                    )}
                   </div>
 
+                  {testing && (
+                    <div className="progress-line px-progress">
+                      <i style={{ width: `${testProgress}%` }} />
+                    </div>
+                  )}
+
                   {!sortedNodes.length ? (
-                    // 没有代理组时上面已经给了「导入配置」的唯一空态，不再叠加第二句
-                    groups.length ? <div className="empty">{t("proxies.noNodes", "No nodes to display")}</div> : null
+                    groups.length ? (
+                      query.trim() || nodeFilter !== "all" ? (
+                        <div className="empty-state px-empty">
+                          <div className="es-icon">
+                            <Filter size={18} />
+                          </div>
+                          <h3>{t("proxies.noneMatch", "没有符合条件的节点")}</h3>
+                          <p>
+                            {t(
+                              "proxies.noneMatchDesc",
+                              "当前的搜索词或过滤条件太窄，清除条件即可看到全部节点。"
+                            )}
+                          </p>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => {
+                              setQuery("");
+                              setNodeFilter("all");
+                            }}
+                          >
+                            {t("proxies.clearFilter", "清除条件")}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="empty">{t("proxies.noNodes", "没有可显示的节点")}</div>
+                      )
+                    ) : (
+                      <div className="empty-state px-empty">
+                        <div className="es-icon">
+                          <Server size={19} />
+                        </div>
+                        <h3>{t("proxies.emptyTitle", "还没有可用的节点")}</h3>
+                        <p>
+                          {t(
+                            "proxies.emptyDesc",
+                            "在「订阅」页导入 Clash / Mihomo 订阅或节点链接，节点会自动出现在这里。"
+                          )}
+                        </p>
+                        <button type="button" className="btn primary btn-sm" onClick={() => goTab("profiles")}>
+                          {t("proxies.goImport", "去导入订阅")}
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    )
                   ) : (
                     <div className={`px-grid density-${nodeDensity}`}>
                       {sortedNodes.slice(0, pxNodeLimit).map((n) => {
@@ -2695,40 +3139,33 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                               .filter(Boolean)
                               .join(" ")}
                             onClick={() => selectNode(n)}
-                            title={testingNode === n ? t("proxies.testingNode", "Testing…") : `${t("proxies.switchTo", "Switch to")} ${n}`}
+                            title={testingNode === n ? t("proxies.testingNode", "测速中…") : `${t("proxies.switchTo", "切换到")} ${n}`}
                           >
                             <span className="px-flag">
-                              <NodeFlag name={n} />
+                              {isGroup ? (
+                                <Server size={14} className="px-flag-group" />
+                              ) : (
+                                <NodeFlag name={n} />
+                              )}
                             </span>
-                            <span className={`px-dot ${active ? "on" : ""}`} />
                             <span className="px-card-main">
-                              <span className="px-card-name" title={n}>
-                                {displayName}
+                              <span className="px-card-top">
+                                <span className="px-card-name" title={n}>
+                                  {displayName}
+                                </span>
+                                {active ? (
+                                  <span className="px-tag cur">{t("proxies.current", "当前")}</span>
+                                ) : isBest ? (
+                                  <span className="px-tag best">{t("proxies.fastest", "最快")}</span>
+                                ) : null}
                               </span>
                               <span className="px-card-meta">
                                 {ptype ? <em>{ptype}</em> : null}
                                 {info?.udp ? <i>UDP</i> : null}
                                 {info?.xudp ? <i>XUDP</i> : null}
-                                {isGroup ? <i>{t("proxies.groupTag", "Group")}</i> : null}
-                                {isSystemOutbound(n) ? <i>{t("proxies.systemTag", "System")}</i> : null}
+                                {isGroup ? <i>{t("proxies.groupTag", "组")}</i> : null}
+                                {isSystemOutbound(n) ? <i>{t("proxies.systemTag", "系统")}</i> : null}
                               </span>
-                              {hist.length > 1 && (
-                                <span className="px-sparkline" aria-hidden="true">
-                                  {hist.map((h, i) => {
-                                    const hgt =
-                                      h.ms > 0
-                                        ? Math.max(2, Math.min(14, Math.round((h.ms / maxMs) * 14)))
-                                        : 1;
-                                    return (
-                                      <span
-                                        key={i}
-                                        className={`px-spark-bar ${delayDotClass(h.ms)}`}
-                                        style={{ height: `${hgt}px` }}
-                                      />
-                                    );
-                                  })}
-                                </span>
-                              )}
                             </span>
                             <span
                               className={`px-card-delay ${cls}`}
@@ -2748,11 +3185,32 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                                 if (typeof histDelay === "number") {
                                   return `${t("proxies.lastDelay", "上次延迟")}: ${histDelay > 0 ? `${histDelay}ms` : t("delay.timeout", "超时")}`;
                                 }
-                                return t("proxies.noDelayHistory", "No delay history");
+                                return t("proxies.noDelayHistory", "暂无测速记录");
                               })()}
                             >
-                              {testingNode === n ? "…" : delayText(d)}
+                              {testingNode === n ? (
+                                <span className="px-delay-testing" aria-label="测试中" />
+                              ) : (
+                                delayText(d)
+                              )}
                             </span>
+                            {hist.length > 1 && (
+                              <span className="px-spark" aria-hidden="true">
+                                {hist.map((h, i) => {
+                                  const hgt =
+                                    h.ms > 0
+                                      ? Math.max(2, Math.min(9, Math.round((h.ms / maxMs) * 9)))
+                                      : 1;
+                                  return (
+                                    <span
+                                      key={i}
+                                      className={`px-spark-bar ${delayDotClass(h.ms)}`}
+                                      style={{ height: `${hgt}px` }}
+                                    />
+                                  );
+                                })}
+                              </span>
+                            )}
                           </button>
                         );
                       })}
@@ -2761,6 +3219,18 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 </div>
 
               <div className="pane pf" hidden={tab !== "profiles"} data-pf={pfTab}>
+                  <header className="pf-head">
+                    <div className="pf-head-l">
+                      <h1>{t("tab.profiles.title", "订阅")}</h1>
+                      <span className="pf-head-meta">
+                        {subs.length} {t("profiles.subCountUnit", "个订阅")}
+                        {richProfiles.filter((p) => p.type && p.type !== "remote").length
+                          ? ` · ${richProfiles.filter((p) => p.type && p.type !== "remote").length} ${t("profiles.enhanceCount", "个增强")}`
+                          : ""}
+                      </span>
+                    </div>
+                  </header>
+                  {/* 子页签：居中 + 每项独立描边，一眼看清有哪几个页面 */}
                   <div className="pf-tabs" role="tablist" aria-label={t("profiles.tabLabel", "Profile functions")}>
                     {([
                       ["sub", t("profiles.tabSub", "Subscriptions")],
@@ -2790,7 +3260,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         <span className="subs-hero-orb subs-hero-orb-b" aria-hidden="true" />
                         <div className="subs-hero-body">
                           <div className="subs-hero-copy">
-                            <h2>{t("profiles.heroTitle", "订阅")}</h2>
+                            <h2>{t("profiles.importTitle", "导入订阅")}</h2>
                             <p>{t("profiles.importDesc", "粘贴 Clash / Meta 订阅链接，导入后自动增强并应用。")}</p>
                           </div>
                           <div className="subs-hero-stats">
@@ -3515,10 +3985,12 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                     onToast={showToast}
                     onUpdateFound={(info) => {
                       setAutoUpdate(info);
+                      setPendingUpdate(info);
                       setUpdPct(-1);
                       setUpdBusy(false);
                       setUpdMsg("");
                     }}
+                    updateNotice={pendingUpdate}
                     onBusy={setBusy}
                     onPorts={handlePorts}
                     onPrefs={handlePrefs}
@@ -3669,8 +4141,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         <b>↓ {formatBytes(download)}</b>
                         <b>↑ {formatBytes(upload)}</b>
                         {exitIpAt ? (
-                          <span className="net-updated">
-                            {t("exit.updated", "更新于")}{" "}
+                          <span
+                            className="net-updated"
+                            title={`${t("exit.updated", "更新于")} ${new Date(exitIpAt).toLocaleString(getLocale())}`}
+                          >
                             {new Date(exitIpAt).toLocaleTimeString(getLocale(), {
                               hour12: false,
                               hour: "2-digit",
@@ -3769,13 +4243,28 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
               </button>
             </div>
             <div className="upd-body">
+              {autoUpdate.notes?.items?.length ? (
+                <div className="upd-notes">
+                  <div className="upd-notes-hd">
+                    <span>{t("update.whatsNew", "本次更新")}</span>
+                    {autoUpdate.notes.title ? (
+                      <em className="upd-notes-title">{autoUpdate.notes.title}</em>
+                    ) : null}
+                  </div>
+                  <ul className="upd-notes-list">
+                    {autoUpdate.notes.items.slice(0, 12).map((it, i) => (
+                      <li key={i}>{it}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <p className="upd-desc">
                 {updReady
                   ? t(
                       "update.choiceDesc",
                       "安装包已下载并通过校验。请选择安装方式：覆盖安装会保留当前配置与数据；卸载后重装会先卸载当前版本再安装。"
                     )
-                  : t("update.desc", "新版本已发布。下载完成后会自动打开安装程序，按提示完成升级即可。")}
+                  : t("update.desc", "下载完成并校验通过后，可自行选择「覆盖安装」或「卸载后重装」。")}
               </p>
               {updBusy && (
                 <>
@@ -3850,8 +4339,11 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
             onClick={(e) => e.stopPropagation()}
           >
             <div className="update-hd">
-              <div>
-                <div className="update-title">本次更新</div>
+              <div className="upd-mark" aria-hidden="true">
+                <Sparkles size={16} />
+              </div>
+              <div className="upd-hd-txt">
+                <div className="update-title">{t("update.whatsNew", "本次更新")}</div>
                 <div className="update-sub">
                   v{updateNotes.version}
                   {updateNotes.date ? ` · ${updateNotes.date}` : ""}
@@ -3862,11 +4354,11 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
               </button>
             </div>
             {updateNotes.title ? <div className="update-name">{updateNotes.title}</div> : null}
-            <ol className="update-list">
+            <ul className="update-list">
               {updateNotes.items.map((it, i) => (
                 <li key={i}>{it}</li>
               ))}
-            </ol>
+            </ul>
             <div className="update-actions">
               <button type="button" className="btn primary" onClick={closeUpdateNotes}>
                 知道了
@@ -3877,6 +4369,59 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       )}
 
       <ConfirmDialog req={confirmReq} onClose={() => setConfirmReq(null)} />
+
+      {/* 代理页的排序 / 过滤小菜单：锚在按钮下方，选项即点即生效 */}
+      {pxMenu &&
+        (() => {
+          const isSort = pxMenu.kind === "sort";
+          const current: string = isSort ? nodeSortMode : nodeFilter;
+          const opts = isSort
+            ? [
+                { v: "delay", label: t("proxies.sortDelay", "延迟优先") },
+                { v: "name", label: t("proxies.sortName", "按名称") },
+                { v: "default", label: t("proxies.sortDefault", "默认顺序") },
+              ]
+            : [
+                { v: "all", label: t("proxies.filterAll", "全部节点") },
+                { v: "ok", label: t("proxies.filterOk", "只看可用") },
+                { v: "timeout", label: t("proxies.filterTimeout", "只看超时") },
+                { v: "untested", label: t("proxies.filterUntested", "只看未测速") },
+              ];
+          return (
+            <div className="ctx-backdrop" onClick={() => setPxMenu(null)}>
+              <div
+                className="ctx-menu px-menu"
+                role="menu"
+                style={{ left: pxMenu.x, top: pxMenu.y }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="ctx-menu-title">{isSort ? t("proxies.sort", "排序") : t("proxies.filter", "过滤")}</div>
+                {opts.map((o) => (
+                  <button
+                    key={o.v}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={current === o.v}
+                    className={current === o.v ? "is-on" : ""}
+                    onClick={() => {
+                      if (isSort) {
+                        const v = o.v as "delay" | "name" | "default";
+                        setNodeSortMode(v);
+                        void window.veyra?.setSettings({ nodeSort: v });
+                      } else {
+                        setNodeFilter(o.v as "all" | "ok" | "timeout" | "untested");
+                      }
+                      setPxMenu(null);
+                    }}
+                  >
+                    <Check size={13} className="px-menu-check" />
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
       {ctxMenu &&
         (() => {

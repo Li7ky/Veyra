@@ -33,3 +33,8 @@ src/.runtime-preview/
 # 不上传的文档（本地测试说明 / 第三方声明）
 /TESTING.md
 /THIRD_PARTY_NOTICES.md
+
+# Rust 构建残留（清理前先把旧 target 改名存放，体积可达数 GB）
+src/src-tauri/target/
+src/src-tauri/target.old*/
+

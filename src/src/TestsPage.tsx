@@ -529,7 +529,7 @@ function TestsPage({ running, onToast }: { running: boolean; onToast: (m: string
                     style={{ "--tp-brand": brand } as CSSProperties}
                   >
                     <div className="tp-card-top">
-                      <BrandLogo id={u.id} size={52} />
+                      <BrandLogo id={u.id} size={36} />
                       <div className="tp-card-id">
                         <h3 title={u.title}>{u.title}</h3>
                         <span>{SUBTITLE[u.id] || "Service"}</span>

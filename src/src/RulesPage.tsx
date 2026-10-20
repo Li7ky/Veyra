@@ -1,8 +1,14 @@
-import { memo, useEffect, useRef, useState } from "react";
-import { Plus, Save, Trash2, RefreshCw } from "lucide-react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Save, Trash2, RefreshCw, Search, Info, ArrowRight } from "lucide-react";
 import { t } from "./i18n";
 
-type RuleRow = { payload: string; type?: string; isBuiltin?: boolean };
+type RuleRow = {
+  payload: string;
+  type?: string;
+  isBuiltin?: boolean;
+  /** 内核 / 订阅里带的策略名（PROXY / DIRECT / 自定义策略组） */
+  policy?: string;
+};
 
 /**
  * 规则归一化纯函数：任何上游形状都收敛为 { payload, type }，绝不产出 "[object Object]"。
@@ -30,8 +36,34 @@ export function normalizeRule(input: unknown): { payload: string; type: string }
   return { payload: trimmed, type: t || "Rule" };
 }
 
-// 虚拟滚动参数：列表容器仅 280px 高，只渲染可视区 + 上下缓冲
-const ROW_FALLBACK = 56;
+/** 对象形状里额外的策略字段（不改变 normalizeRule 的契约，测试依赖它的输出形状） */
+function rulePolicyOf(input: unknown): string {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const p = (input as Record<string, unknown>).proxy;
+    if (typeof p === "string" && p.trim()) return p.trim();
+  }
+  return "";
+}
+
+/** 解析 "DOMAIN-SUFFIX,x.com,PROXY" 这类字符串形式的规则，用于展示 */
+export function splitRuleText(payload: string): { type: string; value: string; policy: string } | null {
+  const parts = payload.split(",").map((s) => s.trim());
+  if (parts.length >= 2 && /^[A-Z][A-Z0-9-]*$/.test(parts[0])) {
+    return { type: parts[0], value: parts[1], policy: parts[2] || "" };
+  }
+  return null;
+}
+
+function policyTone(policy: string): "direct" | "reject" | "proxy" | "none" {
+  const p = policy.toUpperCase();
+  if (!p) return "none";
+  if (p === "DIRECT" || p === "直连") return "direct";
+  if (p === "REJECT" || p === "REJECT-DROP" || p === "拦截") return "reject";
+  return "proxy";
+}
+
+// 虚拟滚动参数：只渲染可视区 + 上下缓冲
+const ROW_FALLBACK = 42;
 const ROW_GAP = 4;
 const OVERSCAN = 8;
 
@@ -71,11 +103,15 @@ const BUILTIN_RULES: string[] = [
 function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: (v: boolean) => void }) {
   const [rows, setRows] = useState<RuleRow[]>([]);
   const [draft, setDraft] = useState("");
+  const [procName, setProcName] = useState("");
+  const [procPolicy, setProcPolicy] = useState<"PROXY" | "DIRECT">("PROXY");
+  const [mode, setMode] = useState<"domain" | "process">("domain");
+  const [filter, setFilter] = useState("");
   // 虚拟滚动状态：只渲染可视区，避免上千行规则撑爆 DOM
   const listRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [rowH, setRowH] = useState(ROW_FALLBACK);
-  const [viewH, setViewH] = useState(280);
+  const [viewH, setViewH] = useState(320);
 
   async function reload() {
     if (!window.veyra?.listRules) {
@@ -84,9 +120,15 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
       return;
     }
     const data = await window.veyra.listRules();
-    const list = (data.rules || [])
-      .map((r) => normalizeRule(r))
-      .filter((r): r is NonNullable<ReturnType<typeof normalizeRule>> => r !== null);
+    const raw = (data.rules || []) as unknown[];
+    const list = raw
+      .map((r) => {
+        const normalized = normalizeRule(r);
+        if (!normalized) return null;
+        const policy = rulePolicyOf(r);
+        return policy ? { ...normalized, policy } : normalized;
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
     // 无自定义规则时仅用内置规则做预览：标记 isBuiltin，
     // 保存时跳过（避免把演示规则静默持久化进用户配置）
     setRows(list.length ? list : BUILTIN_RULES.map((payload) => ({ payload, isBuiltin: true })));
@@ -96,32 +138,79 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
     reload().catch(() => {});
   }, []);
 
-  // 实测行高与视口高度，CSS 调整后虚拟滚动仍能对齐
+  // 实测行高与视口高度，CSS 调整后虚拟滚动仍能对齐。
+  // 用 ResizeObserver 跟着窗口/列表尺寸变化重测：只在 [rows.length, filter] 时量一次的话，
+  // 改窗口大小后行高与视口高度都会过期，切片错位、底部留一大段空白。
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
-    setViewH(el.clientHeight || 280);
-    const first = el.querySelector<HTMLElement>(".pf-item");
-    if (first) {
-      const h = first.getBoundingClientRect().height;
-      if (h > 0) setRowH(h + ROW_GAP);
-    }
-  }, [rows.length]);
+    const measure = () => {
+      setViewH(el.clientHeight || 320);
+      const first = el.querySelector<HTMLElement>(".rl-row");
+      const h = first?.getBoundingClientRect().height;
+      if (h && h > 0) setRowH(h + ROW_GAP);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [rows.length, filter]);
 
-  const total = rows.length;
+  // 筛选条件或规则条数变化后回到顶部：
+  // 否则旧的 scrollTop 会让 start 越过 total，切片为空、padTop 却是几千像素，
+  // 看起来就是「列表一片空白」，必须手动滚一下才恢复。
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = 0;
+    setScrollTop(0);
+  }, [filter, rows.length]);
+
+  const shown = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((r) => `${r.payload} ${r.type || ""} ${r.policy || ""}`.toLowerCase().includes(needle));
+  }, [rows, filter]);
+
+  const total = shown.length;
   const visibleCount = Math.max(1, Math.ceil(viewH / rowH));
-  const start = Math.max(0, Math.floor(scrollTop / rowH) - OVERSCAN);
+  // start 必须夹在「最后还能铺满一屏」的范围内，越界会产生空切片 + 巨量 padding
+  const maxStart = Math.max(0, total - visibleCount - OVERSCAN);
+  const start = Math.min(maxStart, Math.max(0, Math.floor(scrollTop / rowH) - OVERSCAN));
   const end = Math.min(total, start + visibleCount + OVERSCAN * 2);
-  const visibleRows = rows.slice(start, end);
+  const visibleRows = shown.slice(start, end);
   const padTop = start * rowH;
   const padBottom = Math.max(0, (total - end) * rowH);
 
+  const builtinOnly = rows.length > 0 && rows.every((r) => r.isBuiltin);
+
+  function addRule(payload: string) {
+    const tr = payload.trim();
+    if (!tr) return;
+    if (rows.some((r) => r.payload === tr)) {
+      onToast(t("rule.alreadyExists", "这条规则已经存在"));
+      return;
+    }
+    setRows((prev) => [{ payload: tr }, ...prev]);
+    onToast(t("rule.ruleAdded", "已添加：{rule}").replace("{rule}", tr));
+  }
+
+  function detailOf(r: RuleRow): { type: string; value: string; policy: string } {
+    const parsed = splitRuleText(r.payload);
+    if (parsed) return { ...parsed, policy: r.policy || parsed.policy };
+    return { type: (r.type || "Rule").toUpperCase(), value: r.payload, policy: r.policy || "" };
+  }
+
   return (
     <div className="pane rules-page">
-      <div className="block-hd" style={{ marginBottom: 12 }}>
-        <h2>{t("rule.title")}</h2>
-        <span className="pill dim">{rows.length} 条</span>
-        <div className="s-actions" style={{ marginLeft: "auto" }}>
+      <header className="rl-head">
+        <div className="rl-head-l">
+          <h1>{t("rule.title")}</h1>
+          <span className="pill dim">{rows.length}</span>
+          <span className="rl-head-meta">
+            {t("rule.headMeta", "可视化编辑路由规则 · 保存在全局规则增强中")}
+          </span>
+        </div>
+        <div className="rl-head-r">
           <button type="button" className="btn ghost btn-sm" onClick={() => reload().catch(() => {})}>
             <RefreshCw size={13} /> {t("rule.refresh")}
           </button>
@@ -150,103 +239,163 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
             <Save size={13} /> {t("rule.saveApply")}
           </button>
         </div>
-      </div>
+      </header>
 
-      <p className="s-muted" style={{ marginBottom: 12 }}>
-        {t("rule.desc")}
-      </p>
-
-      {rows.length > 0 && rows.every((r) => r.isBuiltin) ? (
-        <p className="s-muted" style={{ marginBottom: 12, color: "var(--amber-500)" }}>
-          {t(
-            "rule.builtinPreview",
-            "当前配置没有规则，下面是内置示例（仅预览，不会生效）。添加自己的规则后才会写入配置。"
-          )}
-        </p>
+      {builtinOnly ? (
+        <div className="rl-callout" role="status">
+          <Info size={14} />
+          <span>
+            {t(
+              "rule.builtinPreview",
+              "当前配置没有规则，下面是内置示例（仅预览，不会生效）。添加自己的规则后才会写入配置。"
+            )}
+          </span>
+        </div>
       ) : null}
 
-      <div className="import-bar" style={{ marginBottom: 12 }}>
-        <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={t("rule.placeholder")} />
-        <button
-          type="button"
-          className="btn primary btn-sm"
-          onClick={() => {
-            const tr = draft.trim();
-            if (!tr) return;
-            setRows((prev) => [{ payload: tr }, ...prev]);
-            setDraft("");
-          }}
-        >
-          <Plus size={13} /> {t("rule.add")}
-        </button>
+      <div className="rl-toolbar">
+        <div className="rl-mode seg" role="tablist" aria-label={t("rule.modeLabel", "规则类型")}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "domain"}
+            className={mode === "domain" ? "active" : ""}
+            onClick={() => setMode("domain")}
+          >
+            {t("rule.modeDomain", "域名 / IP")}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "process"}
+            className={mode === "process" ? "active" : ""}
+            onClick={() => setMode("process")}
+          >
+            {t("rule.modeProcess", "应用进程")}
+          </button>
+        </div>
+
+        {mode === "domain" ? (
+          <>
+            <input
+              className="rl-input"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  addRule(draft);
+                  setDraft("");
+                }
+              }}
+              placeholder={t("rule.placeholder")}
+              aria-label={t("rule.placeholder")}
+            />
+            <button
+              type="button"
+              className="btn primary btn-sm"
+              disabled={!draft.trim()}
+              onClick={() => {
+                addRule(draft);
+                setDraft("");
+              }}
+            >
+              <Plus size={13} /> {t("rule.add")}
+            </button>
+          </>
+        ) : (
+          <>
+            <input
+              className="rl-input"
+              value={procName}
+              onChange={(e) => setProcName(e.target.value)}
+              placeholder={t("rule.processPlaceholder")}
+              aria-label={t("rule.processPlaceholder")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (document.getElementById("rl-proc-add") as HTMLButtonElement)?.click();
+              }}
+            />
+            <select
+              className="s-input rl-proc-policy"
+              value={procPolicy}
+              onChange={(e) => setProcPolicy(e.target.value as "PROXY" | "DIRECT")}
+              aria-label={t("rule.processPolicy", "策略")}
+            >
+              <option value="PROXY">{t("rule.processProxy", "走代理")}</option>
+              <option value="DIRECT">{t("rule.processDirect", "直连")}</option>
+            </select>
+            <button
+              id="rl-proc-add"
+              type="button"
+              className="btn primary btn-sm"
+              disabled={!procName.trim()}
+              onClick={() => {
+                const name = procName.trim();
+                if (!name) return;
+                addRule(`PROCESS-NAME,${name},${procPolicy}`);
+                setProcName("");
+              }}
+            >
+              <Plus size={13} /> {t("rule.addAppRule", "添加应用规则")}
+            </button>
+          </>
+        )}
+
+        <label className="rl-search">
+          <Search size={13} />
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder={t("rule.search", "筛选规则")}
+          />
+        </label>
       </div>
 
-      <div className="import-bar" style={{ marginBottom: 12, background: "var(--hover)", padding: 10, borderRadius: 10 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>{t("rule.processLabel")}</span>
-        <input
-          id="proc-name-input"
-          placeholder={t("rule.processPlaceholder")}
-          style={{ flex: 1 }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (document.getElementById("proc-add-btn") as HTMLButtonElement)?.click();
-          }}
-        />
-        <select id="proc-policy-select" className="s-input" style={{ width: 90 }}>
-          <option value="PROXY">{t("rule.processProxy")}</option>
-          <option value="DIRECT">{t("rule.processDirect")}</option>
-        </select>
-        <button
-          id="proc-add-btn"
-          type="button"
-          className="btn ghost btn-sm"
-          onClick={() => {
-            const nameInput = document.getElementById("proc-name-input") as HTMLInputElement;
-            const policySelect = document.getElementById("proc-policy-select") as HTMLSelectElement;
-            const name = nameInput?.value.trim();
-            if (!name) {
-              onToast(t("rule.processNameRequired"));
-              return;
-            }
-            const rule = `PROCESS-NAME,${name},${policySelect?.value || "PROXY"}`;
-            // 去重判断必须在 setRows 之外完成：
-            // 1) 原来 onToast 埋在 updater 里，React 18/19 的 StrictMode 会对
-            //    updater 调用两次，提示会重复/错乱；updater 本应是纯函数。
-            // 2) 原来没有 return，即使命中重复也会继续往下走，
-            //    先弹「已存在」又被后面的「已添加」覆盖。
-            if (rows.some((r) => r.payload === rule)) {
-              onToast(t("rule.alreadyExists"));
-              return;
-            }
-            setRows((prev) =>
-              prev.some((r) => r.payload === rule) ? prev : [{ payload: rule }, ...prev]
-            );
-            nameInput.value = "";
-            onToast(t("rule.ruleAdded").replace("{rule}", rule));
-          }}
-        >
-          <Plus size={13} /> {t("rule.addAppRule")}
-        </button>
-      </div>
-
-      {!rows.length ? (
-        <div className="empty">{t("rule.empty")}</div>
+      {!shown.length ? (
+        <div className="empty-state rl-empty">
+          <div className="es-icon">
+            <ArrowRight size={19} />
+          </div>
+          <h3>{rows.length ? t("rule.noMatch", "没有匹配的规则") : t("rule.emptyTitle", "还没有规则")}</h3>
+          <p>
+            {rows.length
+              ? t("rule.noMatchDesc", "换个关键词试试，或清空筛选条件。")
+              : t("rule.emptyDesc", "在上方输入框按 TYPE,payload,策略 格式添加，例如 DOMAIN-SUFFIX,google.com,PROXY。")}
+          </p>
+        </div>
       ) : (
+        <div className="rl-list-head" aria-hidden="true">
+          <span className="rl-c-type">{t("rule.colType", "类型")}</span>
+          <span className="rl-c-value">{t("rule.colValue", "匹配内容")}</span>
+          <span className="rl-c-policy">{t("rule.colPolicy", "策略")}</span>
+          <span className="rl-c-act" />
+        </div>
+      )}
+
+      {shown.length ? (
         <div
-          className="pf-list"
+          className="rl-list"
           ref={listRef}
           onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
         >
           {padTop > 0 ? <div style={{ height: padTop, flexShrink: 0 }} aria-hidden /> : null}
           {visibleRows.map((r, k) => {
+            const d = detailOf(r);
+            const tone = policyTone(d.policy);
             return (
-              <div key={`${r.payload}-${start + k}`} className="pf-item">
-                <div className="pf-item-body">
-                  <div className="pf-item-name s-mono">{r.payload}</div>
-                  <div className="pf-item-sub">{r.type || "Rule"}</div>
-                </div>
+              <div key={`${r.payload}-${start + k}`} className="rl-row">
+                <span className="rl-type">{d.type}</span>
+                <span className="rl-value" title={r.payload}>
+                  {d.value}
+                  {r.isBuiltin ? (
+                    <em className="rl-builtin">{t("rule.previewTag", "示例")}</em>
+                  ) : null}
+                </span>
+                <span className={`rl-policy is-${tone}`}>{d.policy || "—"}</span>
                 <button
                   type="button"
-                  className="btn ghost btn-sm"
+                  className="rl-del"
+                  aria-label={t("rule.delete", "删除规则")}
+                  title={t("rule.delete", "删除规则")}
                   // 按 payload 删除，不能按渲染下标 i：
                   // 这里渲染的是虚拟滚动切片（visibleRows），i = start + k 只是
                   // 视口内的相对位置。行集合一变（新增/删除/滚动后重算），
@@ -260,7 +409,7 @@ function RulesPage({ onToast, onBusy }: { onToast: (m: string) => void; onBusy: 
           })}
           {padBottom > 0 ? <div style={{ height: padBottom, flexShrink: 0 }} aria-hidden /> : null}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

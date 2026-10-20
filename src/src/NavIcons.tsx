@@ -6,7 +6,7 @@
 import {
   House,
   Waypoints,
-  Rss,
+  FileStack,
   Globe,
   ListFilter,
   ScrollText,
@@ -24,8 +24,9 @@ export function NavProxiesIcon() {
 }
 
 export function NavProfilesIcon() {
-  // 订阅：RSS 波纹
-  return <Rss aria-hidden="true" />;
+  // 订阅：一叠配置文件（订阅 / 增强 / 节点编辑 / YAML 都属于"配置文件"这一层），
+  // 原来的 RSS 波纹容易被读成"播客订阅"，语义跑偏
+  return <FileStack aria-hidden="true" />;
 }
 
 export function NavConnectionsIcon() {

@@ -29,6 +29,7 @@
     "dist": "npm run build-icons && npm run download-core && tauri build"
   },
   "dependencies": {
+    "@fontsource-variable/noto-sans-sc": "^5.3.1",
     "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/api": "^2.12.4",
     "adm-zip": "^0.6.1",

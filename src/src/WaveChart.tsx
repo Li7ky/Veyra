@@ -69,9 +69,11 @@ function WaveChart({ up, down, empty }: Props) {
           x2={w}
           y1={h * f}
           y2={h * f}
-          stroke="var(--v-line-2)"
-          strokeOpacity="1"
+          stroke="var(--v-line)"
+          strokeOpacity="0.85"
           strokeWidth="1"
+          strokeDasharray="2 6"
+          vectorEffect="non-scaling-stroke"
         />
       ))}
       {/* 0 基线：零流量时这条线就是「数据」，有流量时它给曲线一个落点。
@@ -92,7 +94,7 @@ function WaveChart({ up, down, empty }: Props) {
           <path d={u.area} fill={`url(#${gid}-up)`} />
           <path d={dn.line} fill="none" stroke={`url(#${gid}-dn-line)`} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
           <path d={u.line} fill="none" stroke="var(--v-ok)" strokeOpacity="0.9" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-          <circle cx={dn.tip.x} cy={dn.tip.y} r="4.5" fill="var(--v-accent)" stroke="#fff" strokeWidth="2" />
+          <circle cx={dn.tip.x} cy={dn.tip.y} r="4" fill="var(--v-accent)" stroke="var(--v-surface)" strokeWidth="2" />
         </>
       )}
     </svg>

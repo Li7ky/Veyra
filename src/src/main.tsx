@@ -1,7 +1,11 @@
 import { createRoot } from "react-dom/client";
+// 中英文字体随应用打包（可变字重 100–900），不再依赖系统是否装了 Geist / 苹方：
+// 全站只用这一族，中文与拉丁的字重、字宽、基线和 emoji 回退都统一
+import "@fontsource-variable/noto-sans-sc";
 import App from "./App";
 import "./styles.css";
 import "./ui/v2.css";
+import "./ui/v3.css";
 import { applyTheme, cachedTheme } from "./theme";
 import { installTauriBridge } from "./tauri-bridge";
 

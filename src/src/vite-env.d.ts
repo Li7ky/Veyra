@@ -251,6 +251,9 @@ export interface VeyraAPI {
     controller: string;
     preferredPort?: number;
     coreMemoryMB?: number;
+    /** 系统物理内存总量 / 已用量（字节），每轮 overview 都会带上 */
+    systemTotalMem?: number;
+    systemUsedMem?: number;
   }>;
   ports: () => Promise<{ mixedPort: number; controller: string; preferredPort: number }>;
   selectProxy: (group: string, name: string) => Promise<unknown>;
@@ -439,7 +442,11 @@ export interface VeyraAPI {
     isDev: boolean;
     osRelease?: string;
     osVersion?: string;
+    /** 完整系统名，如「Windows 10 Pro」（主进程按注册表 EditionID 拼出） */
+    osName?: string;
     totalMem?: number;
+    /** 系统已用内存（字节） */
+    usedMem?: number;
     cpu?: string;
   }>;
   /** 更新日志（随包发布的 changelog.json） */

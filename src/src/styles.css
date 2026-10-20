@@ -231,7 +231,7 @@ code, pre { font-family: var(--font-mono); }
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 200;
+  z-index: 90;
 }
 .loading-spinner {
   position: relative;
@@ -1589,7 +1589,9 @@ code, pre { font-family: var(--font-mono); }
 .px-tab small { display: block; font-size: 10px; color: var(--text-400); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .px-tab:hover { border-color: var(--cyan-500); }
 .px-tab.active { border-color: color-mix(in srgb, var(--tint,#2c71e8) 55%, transparent); background: color-mix(in srgb, var(--tint,#2c71e8) 12%, transparent); }
-.px-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 9px; flex-wrap: wrap; }
+.px-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 9px; flex-wrap: nowrap; overflow-x: auto; }
+.px-toolbar::-webkit-scrollbar { height: 3px; }
+.px-toolbar::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
 .px-meta { font-size: 12px; color: var(--text-400); font-family: var(--font-mono); display: flex; align-items: center; gap: 8px; }
 .px-meta .meta-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-500); }
 .px-tools { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
@@ -1798,6 +1800,12 @@ code, pre { font-family: var(--font-mono); }
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  max-width: 45%;
+}
+
+.sub-card-body {
+  min-width: 0;
+  flex: 1;
 }
 
 .sub-card-expire {
@@ -2075,8 +2083,10 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   padding: 10px 22px; border-radius: var(--radius-full);
   background: var(--card-solid); backdrop-filter: var(--blur);
   border: 1px solid var(--card-border); color: var(--text-100);
-  /* z-index 必须高于 .modal-mask(100)，否则弹窗打开时的保存提示会被遮罩挡住 */
-  font-size: 13px; font-weight: 600; box-shadow: 0 12px 40px rgba(0,0,0,0.28); z-index: 999;
+  /* 置于 modal-mask(100) 之上、modal-box(101) 同层，且 pointer-events:none 不阻挡弹窗交互 */
+  font-size: 13px; font-weight: 600; box-shadow: 0 12px 40px rgba(0,0,0,0.28); z-index: 101;
+  pointer-events: none;
+  max-width: 80vw; text-align: center;
 }
 .modal-mask {
   position: fixed; inset: 0; background: rgba(0,0,0,0.45);
@@ -2204,6 +2214,17 @@ textarea.s-input { min-height: 80px; resize: vertical; font-family: var(--font-m
   overflow: hidden;
   transition: box-shadow 0.35s var(--ease), border-color 0.35s var(--ease);
   animation: heroEnter 0.5s var(--ease) both;
+}
+
+/* Hero 窄屏适配：四列改双列，节点名和操作按钮换行显示 */
+@media (max-width: 1180px) {
+  .hero {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 12px 18px;
+    padding: 14px 18px;
+  }
+  .hero > :nth-child(3) { grid-column: 1 / -1; }
+  .hero > :nth-child(4) { grid-column: 1 / -1; justify-self: end; }
 }
 
 @keyframes heroEnter {
@@ -4148,10 +4169,11 @@ label.switch.compact input[type="checkbox"]:checked::after { transform: translat
 .conn-page > .block-hd h2, .rules-page > .block-hd h2 { font-size: 19px; color: var(--text-100); }
 .conn-page > .import-bar, .rules-page > .import-bar { min-height: 44px; margin-bottom: 0 !important; }
 .conn-table-wrap { border: 1px solid var(--card-border); border-radius: var(--radius-lg); background: var(--card); overflow: auto; box-shadow: var(--shadow-sm); }
-.conn-table { width: 100%; min-width: 820px; border-collapse: collapse; max-height: none; }
+.conn-table { width: 100%; min-width: 0; border-collapse: collapse; max-height: none; table-layout: fixed; }
 .conn-table thead { position: sticky; top: 0; z-index: 1; background: color-mix(in srgb, var(--card-solid, var(--card)) 96%, transparent); }
 .conn-table th { padding: 12px 14px; text-align: left; color: var(--text-400); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; border-bottom: 1px solid var(--card-border); white-space: nowrap; }
-.conn-table td { padding: 12px 14px; color: var(--text-200); font-size: 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.conn-table td { padding: 12px 14px; color: var(--text-200); font-size: 12px; border-bottom: 1px solid var(--line); vertical-align: middle; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.conn-table td:first-child { width: 38%; }
 .conn-table tbody tr { transition: background .15s ease; }
 .conn-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .conn-table tbody tr:last-child td { border-bottom: 0; }

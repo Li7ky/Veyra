@@ -188,20 +188,41 @@ fn client(proxy: Option<&str>) -> Result<reqwest::Client, String> {
     b.build().map_err(|e| e.to_string())
 }
 
+/// 更新源仓库：默认用内置常量，可用 `VEYRA_UPDATE_REPO=owner/repo` 覆盖。
+/// 私有仓库或自建镜像调试时不必改代码重打包，设环境变量即可。
+fn update_repo() -> String {
+    std::env::var("VEYRA_UPDATE_REPO")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| APP_UPDATE_REPO.to_string())
+}
+
+/// 私有仓库访问 GitHub API 需要 Token（`GITHUB_TOKEN` / `GH_TOKEN`）；公开仓库留空即可。
+fn github_token() -> Option<String> {
+    ["GITHUB_TOKEN", "GH_TOKEN"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok())
+        .map(|v| v.trim().to_string())
+        .find(|v| !v.is_empty())
+}
+
 async fn fetch_json_with_channels(st: &AppState, url: &str) -> Result<Value, String> {
     let (online, mixed) = {
         let i = st.inner.lock().await;
         (i.online, i.mixed_port)
     };
+    let token = github_token();
     let mut last = String::from("请求失败");
     for proxy in channels(st, online, mixed) {
         let c = client(proxy.as_deref())?;
-        match c
+        let mut req = c
             .get(url)
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await
-        {
+            .header("Accept", "application/vnd.github+json");
+        if let Some(t) = &token {
+            req = req.header("Authorization", format!("Bearer {}", t));
+        }
+        match req.send().await {
             Ok(resp) => {
                 let status = resp.status();
                 if status.is_success() {
@@ -238,22 +259,28 @@ fn pick_setup_asset(assets: &[Value]) -> Option<Value> {
 
 pub async fn check_app_update(st: &AppState) -> Result<Value, String> {
     let current = env!("CARGO_PKG_VERSION").to_string();
-    let url = format!(
-        "https://api.github.com/repos/{}/releases/latest",
-        APP_UPDATE_REPO
-    );
+    let repo = update_repo();
+    let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
     let data = match fetch_json_with_channels(st, &url).await {
         Ok(v) => v,
         Err(e) if e.contains("404") => {
-            let list_url = format!(
-                "https://api.github.com/repos/{}/releases?per_page=10",
-                APP_UPDATE_REPO
-            );
-            let list = fetch_json_with_channels(st, &list_url).await?;
+            let list_url = format!("https://api.github.com/repos/{}/releases?per_page=10", repo);
+            let list = match fetch_json_with_channels(st, &list_url).await {
+                Ok(v) => v,
+                // 仓库不存在 / 未公开时两个接口都是 404：这里给出能读懂的原因，
+                // 而不是把原始状态码直接甩到界面上。
+                Err(e2) if e2.contains("404") => {
+                    return Err(format!(
+                        "仓库 {} 没有可用的发布版本（HTTP 404，可能未发布或未公开）",
+                        repo
+                    ))
+                }
+                Err(e2) => return Err(e2),
+            };
             list.as_array()
                 .and_then(|a| a.iter().find(|r| !r.get("draft").and_then(|d| d.as_bool()).unwrap_or(false)))
                 .cloned()
-                .ok_or_else(|| "GitHub 上还没有可安装的发布版本".to_string())?
+                .ok_or_else(|| format!("仓库 {} 还没有任何发布版本", repo))?
         }
         Err(e) => return Err(e),
     };
@@ -268,16 +295,19 @@ pub async fn check_app_update(st: &AppState) -> Result<Value, String> {
         .cloned()
         .unwrap_or_default();
     let asset = pick_setup_asset(&assets);
-    // 缓存 release 告示，供安装重启后的 updateNotes 兜底
-    if let Some(entry) = parse_release_notes(
+    // 解析 release 告示：既随接口返回（升级前就能看「更新内容」），
+    // 也写进缓存（升级重启后 updateNotes 兜底再弹一次）
+    let notes = parse_release_notes(
         data.get("body").and_then(|v| v.as_str()).unwrap_or(""),
         tag,
-    ) {
-        let _ = util::write_json(&st.paths.update_notes_cache, &entry);
+    );
+    if let Some(entry) = &notes {
+        let _ = util::write_json(&st.paths.update_notes_cache, entry);
     }
     Ok(json!({
         "current": current,
         "latest": latest,
+        "notes": notes,
         "name": data.get("name").and_then(|v| v.as_str()).unwrap_or(tag),
         "htmlUrl": data.get("html_url").and_then(|v| v.as_str()).unwrap_or(""),
         "prerelease": data.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -521,18 +551,27 @@ fn extract_list_items(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// 极简 markdown 清理：链接只留标题、去掉粗体/行内代码标记，
+/// 让「本次更新」里的条目是干净的纯文本，不会被 `**` 或 `[x](url)` 污染。
+fn clean_md(line: &str) -> String {
+    let link = regex::Regex::new(r"\[([^\]]*)\]\(([^)]*)\)").unwrap();
+    let marks = regex::Regex::new(r"\*\*|__|`").unwrap();
+    let s = link.replace_all(line, "$1").to_string();
+    marks.replace_all(&s, "").trim().to_string()
+}
+
 pub fn parse_release_notes(body: &str, tag: &str) -> Option<Value> {
     let text = body.trim();
     if text.is_empty() {
         return None;
     }
-    let title = text
-        .lines()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("")
-        .trim_start_matches('#')
-        .trim()
-        .to_string();
+    let title = clean_md(
+        text.lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim_start_matches('#')
+            .trim(),
+    );
     let date_re = regex::Regex::new(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})").unwrap();
     let date = date_re.captures(text).map(|c| {
         format!(
@@ -547,7 +586,31 @@ pub fn parse_release_notes(body: &str, tag: &str) -> Option<Value> {
         .find(text)
         .map(|m| &text[m.start()..])
         .unwrap_or("");
-    let items = extract_list_items(list_text);
+    // 没有 `- ` 列表时退回按行切：很多 Release 正文就是几行说明，
+    // 只认列表会让「更新内容」弹窗整个空掉。
+    let mut items: Vec<String> = if list_text.is_empty() {
+        Vec::new()
+    } else {
+        extract_list_items(list_text)
+    };
+    if items.is_empty() {
+        items = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| {
+                !l.is_empty()
+                    && !l.starts_with('#')
+                    && !l.starts_with("```")
+                    && !l.starts_with("![")
+                    && !l.starts_with('<')
+            })
+            .take(12)
+            .map(|l| clean_md(l.trim_start_matches(['-', '*', '+']).trim()))
+            .filter(|l| !l.is_empty())
+            .collect();
+    } else {
+        items = items.iter().map(|l| clean_md(l)).filter(|l| !l.is_empty()).collect();
+    }
     if items.is_empty() {
         return None;
     }

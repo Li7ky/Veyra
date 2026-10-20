@@ -264,7 +264,12 @@
     proxyEnvText: function() { return delay(100).then(function(){ return {text: 'http_proxy=http://127.0.0.1:' + state.settings.mixedPort + '\nhttps_proxy=http://127.0.0.1:' + state.settings.mixedPort + '\n'}; }); },
     openExternal: function(url) { console.log('[MOCK] openExternal:', url); return Promise.resolve(); },
     copyText: function(t) { console.log('[MOCK] copyText:', t); return Promise.resolve({}); },
-    appInfo: function() { return delay(50).then(function(){ return {name: 'Veyra-omini', version: '1.1.8', electron: 'Tauri 2', platform: 'win32', arch: 'x64', isDev: true}; }); },
+    appInfo: function() { return delay(50).then(function(){
+      // ?beta=1 预览测试版标识（正式安装包的版本号来自 tauri.conf / package.json）
+      var isBeta = false;
+      try { isBeta = new URLSearchParams(location.search).get('beta') === '1'; } catch (e) { /* 忽略 */ }
+      return {name: 'Veyra-omini', version: isBeta ? '1.1.9-beta.6' : '1.1.8', electron: 'Tauri 2', platform: 'win32', arch: 'x64', isDev: true};
+    }); },
     openPath: function(w) { return delay(100).then(function(){ return {}; }); },
     traffic: function() { return delay(200).then(function(){ return {downloadTotal: 1048576, uploadTotal: 524288, connections: []}; }); },
     onCoreStatus: function(cb) { return function(){}; },
@@ -288,6 +293,33 @@
       state.running = true;
       state.systemProxy = true;
       state.selectedNode = 'HK-Node';
+      // 预览用节点集：覆盖国旗/协议/延迟各档，方便检查代理页卡片密度与对齐
+      state.profiles[0].proxies = [
+        { name: '🇭🇰 香港 01 · IPLC', type: 'Shadowsocks', server: 'hk01.example.com', port: 443 },
+        { name: '🇭🇰 香港 02 · BGP', type: 'Trojan', server: 'hk02.example.com', port: 443 },
+        { name: '🇯🇵 日本 01 · 软银', type: 'Vmess', server: 'jp01.example.com', port: 443 },
+        { name: '🇯🇵 日本 02 · NTT', type: 'Shadowsocks', server: 'jp02.example.com', port: 443 },
+        { name: '🇸🇬 新加坡 01', type: 'Trojan', server: 'sg01.example.com', port: 443 },
+        { name: '🇺🇸 美国 01 · 洛杉矶', type: 'Vless', server: 'us01.example.com', port: 443 },
+        { name: '🇺🇸 美国 02 · 西雅图', type: 'Hysteria2', server: 'us02.example.com', port: 443 },
+        { name: '🇹🇼 台湾 01 · 中华电信', type: 'Trojan', server: 'tw01.example.com', port: 443 },
+        { name: '🇰🇷 韩国 01 · KT', type: 'Shadowsocks', server: 'kr01.example.com', port: 443 },
+        { name: '🇩🇪 德国 01 · 法兰克福', type: 'Vless', server: 'de01.example.com', port: 443 },
+        { name: '🇬🇧 英国 01 · 伦敦', type: 'Trojan', server: 'uk01.example.com', port: 443 },
+        { name: '🇦🇺 澳大利亚 01 · 悉尼', type: 'Vmess', server: 'au01.example.com', port: 443 }
+      ];
+      state.rules = [
+        { type: 'DOMAIN-SUFFIX', payload: 'openai.com', proxy: '🤖 AI 服务' },
+        { type: 'DOMAIN-SUFFIX', payload: 'github.com', proxy: 'PROXY' },
+        { type: 'DOMAIN-KEYWORD', payload: 'google', proxy: 'PROXY' },
+        { type: 'DOMAIN-SUFFIX', payload: 'youtube.com', proxy: '🎬 流媒体' },
+        { type: 'DOMAIN-SUFFIX', payload: 'netflix.com', proxy: '🎬 流媒体' },
+        { type: 'DOMAIN-SUFFIX', payload: 'bilibili.com', proxy: 'DIRECT' },
+        { type: 'DOMAIN-SUFFIX', payload: 'cn', proxy: 'DIRECT' },
+        { type: 'GEOIP', payload: 'CN', proxy: 'DIRECT' },
+        { type: 'IP-CIDR', payload: '192.168.0.0/16', proxy: 'DIRECT' },
+        { type: 'MATCH', payload: '', proxy: 'PROXY' }
+      ];
       state.subscriptions = [
         { url: 'https://sub.example.com/api/v1/client/subscribe?token=abc123', name: '示例机场 · 专业版', updatedAt: Date.now() - 3600e3, userinfo: { upload: 8.2 * 1073741824, download: 42.6 * 1073741824, total: 200 * 1073741824, expire: (Date.now() + 45 * 864e5) / 1000 } },
         { url: 'https://sub2.example.com/clash?token=def456', name: '备用订阅 · 轻量', updatedAt: Date.now() - 2 * 864e5, userinfo: { upload: 1.1 * 1073741824, download: 12.4 * 1073741824, total: 100 * 1073741824, expire: (Date.now() + 12 * 864e5) / 1000 } }

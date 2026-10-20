@@ -437,6 +437,7 @@ pub async fn dispatch(
                 .max()
                 .unwrap_or(0);
             list.truncate(80);
+            let (sys_total_mem, sys_used_mem) = system_mem();
             Ok(json!({
                 "proxies": proxies.unwrap_or(Value::Null),
                 "configs": configs.unwrap_or(Value::Null),
@@ -450,6 +451,8 @@ pub async fn dispatch(
                 "controller": controller,
                 "preferredPort": preferred,
                 "coreMemoryMB": core_memory_mb(st).await,
+                "systemTotalMem": sys_total_mem,
+                "systemUsedMem": sys_used_mem,
                 "peak": peak,
             }))
         }
@@ -1225,17 +1228,92 @@ async fn core_memory_mb(st: &AppState) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// 物理内存 (总量, 已用)，单位字节。
+/// 直接问内核（GlobalMemoryStatusEx），比起一个 PowerShell 进程便宜得多，
+/// 所以可以挂在 1.5s 一次的 overview 里，让侧栏和首页的数字保持实时。
+#[cfg(windows)]
+fn system_mem() -> (u64, u64) {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        dw_length: u32,
+        dw_memory_load: u32,
+        ull_total_phys: u64,
+        ull_avail_phys: u64,
+        ull_total_page_file: u64,
+        ull_avail_page_file: u64,
+        ull_total_virtual: u64,
+        ull_avail_virtual: u64,
+        ull_avail_extended_virtual: u64,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalMemoryStatusEx(lp_buffer: *mut MemoryStatusEx) -> i32;
+    }
+    let mut m = MemoryStatusEx {
+        dw_length: std::mem::size_of::<MemoryStatusEx>() as u32,
+        dw_memory_load: 0,
+        ull_total_phys: 0,
+        ull_avail_phys: 0,
+        ull_total_page_file: 0,
+        ull_avail_page_file: 0,
+        ull_total_virtual: 0,
+        ull_avail_virtual: 0,
+        ull_avail_extended_virtual: 0,
+    };
+    let ok = unsafe { GlobalMemoryStatusEx(&mut m) };
+    if ok == 0 || m.ull_total_phys == 0 {
+        (0, 0)
+    } else {
+        (
+            m.ull_total_phys,
+            m.ull_total_phys.saturating_sub(m.ull_avail_phys),
+        )
+    }
+}
+
+#[cfg(not(windows))]
+fn system_mem() -> (u64, u64) {
+    (0, 0)
+}
+
 fn app_info(st: &AppState) -> Value {
     let os_release = util::run("cmd", &["/c", "ver"]).ok()
         .map(|(o, _)| o.trim().to_string())
         .unwrap_or_default();
-    let total_mem = util::powershell(
-        "(Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize",
+    let (total_mem, used_mem) = system_mem();
+    // 系统版本：EditionID 是注册表里的英文枚举（Professional / Core …），不随系统语言变，
+    // 用它拼「Windows 10 Pro」；Caption 在中文系统是 GBK，跨进程读回来会乱码。
+    let edition = util::powershell(
+        "(Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion').EditionID",
     )
     .ok()
-    .and_then(|s| s.trim().parse::<u64>().ok())
-    .map(|kb| kb * 1024)
-    .unwrap_or(0);
+    .map(|s| s.trim().to_string())
+    .unwrap_or_default();
+    // 版本号取自 ver 输出的 x.y.<build>.<rev>
+    let build = os_release
+        .split('.')
+        .nth(2)
+        .map(|s| s.trim_end_matches(|c: char| !c.is_ascii_digit()).to_string())
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+    let os_base = if build >= 22000 { "Windows 11" } else { "Windows 10" };
+    let edition_short = match edition.as_str() {
+        "Professional" | "ProfessionalN" => "Pro",
+        "ProfessionalEducation" => "Pro Education",
+        "ProfessionalWorkstation" | "ProfessionalWorkstationN" => "Pro for Workstations",
+        "Core" | "CoreN" | "CoreSingleLanguage" | "CoreCountrySpecific" => "Home",
+        "Education" | "EducationN" => "Education",
+        "Enterprise" | "EnterpriseN" => "Enterprise",
+        "EnterpriseS" | "EnterpriseSN" => "Enterprise LTSC",
+        "IoTEnterprise" => "IoT Enterprise",
+        "ServerStandard" => "Server Standard",
+        _ => "",
+    };
+    let os_name = if edition_short.is_empty() {
+        os_base.to_string()
+    } else {
+        format!("{} {}", os_base, edition_short)
+    };
     json!({
         "name": "Veyra-omini",
         "version": app_version(),
@@ -1248,7 +1326,9 @@ fn app_info(st: &AppState) -> Value {
         "userData": st.paths.user_data.to_string_lossy(),
         "osRelease": os_release,
         "osVersion": os_release,
+        "osName": os_name,
         "totalMem": total_mem,
+        "usedMem": used_mem,
         "cpu": std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_default(),
     })
 }

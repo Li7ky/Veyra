@@ -27,6 +27,7 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  ArrowUp,
 } from "lucide-react";
 import { runSelfCheck, type SelfCheckItem, type SelfCheckResult } from "./selfCheck";
 import ConfirmDialog, { type ConfirmRequest } from "./ConfirmDialog";
@@ -159,6 +160,15 @@ const SECTIONS: { id: Sec; label: string; icon: typeof Server }[] = [
   { id: "about", label: "关于", icon: Info },
 ];
 
+type UpdateNotice = {
+  latest: string;
+  current?: string;
+  assetSize?: number;
+  assetUrl?: string;
+  htmlUrl?: string;
+  notes?: { version?: string; date?: string | null; title?: string; items?: string[] } | null;
+};
+
 type Props = {
   running: boolean;
   mixedPort: number;
@@ -169,7 +179,9 @@ type Props = {
   onThemeChange: (mode: ThemeMode) => void;
   onToast: (msg: string) => void;
   /** 设置页手动检查到新版本时，复用全局「发现新版本」弹窗，提醒更明显 */
-  onUpdateFound?: (info: { latest: string; current?: string; assetSize?: number; htmlUrl?: string }) => void;
+  onUpdateFound?: (info: UpdateNotice) => void;
+  /** 启动自动检查 / 演示模式发现的新版本：设置页据此同步显示更新状态 */
+  updateNotice?: UpdateNotice | null;
   onBusy: (v: boolean) => void;
   onPorts: (mixed: number, controller: string) => void;
   onPrefs: (p: {
@@ -256,6 +268,7 @@ function SettingsPanel(props: Props) {
     onThemeChange,
     onToast,
     onUpdateFound,
+    updateNotice,
     onBusy,
     onPorts,
     onPrefs,
@@ -310,13 +323,16 @@ function SettingsPanel(props: Props) {
   const [updateReady, setUpdateReady] = useState(false);
   // 设置页也订阅下载进度：否则这里只有一个不动的「下载中…」，与启动弹窗能力不一致
   useEffect(() => {
-    const off = window.veyra?.onUpdateProgress?.((p) => {
+    const apply = (p: { pct?: number; phase?: string; received?: number; total?: number } | null) => {
       if (!p) return;
       if (typeof p.pct === "number") setUpdatePct(p.pct);
       if (p.phase) setUpdatePhase(p.phase);
       setUpdateBytes({ received: Number(p.received) || 0, total: Number(p.total) || 0 });
-    });
-    return () => off?.();
+    };
+    const off = window.veyra?.onUpdateProgress?.(apply);
+    return () => {
+      off?.();
+    };
   }, []);
   const [appUpdate, setAppUpdate] = useState<{
     hasUpdate: boolean;
@@ -324,7 +340,12 @@ function SettingsPanel(props: Props) {
     htmlUrl?: string;
     assetUrl?: string;
     assetName?: string;
+    assetSize?: number;
+    /** GitHub Release 正文解析出来的更新内容 */
+    notes?: { version?: string; date?: string | null; title?: string; items?: string[] } | null;
   } | null>(null);
+  // 启动自动检查（或演示模式）发现的新版本也并进来展示，和设置页手动检查共用同一块状态卡
+  const updateView = updateNotice ? { ...updateNotice, hasUpdate: true } : appUpdate;
 
   async function reload() {
     if (!window.veyra) return;
@@ -529,6 +550,19 @@ async function scanConflict() {
   const s = settings || DEFAULTS;
 
   return (
+    <>
+    <header className="st-head">
+      <div className="st-head-l">
+        <h1>{t("nav.settings", "设置")}</h1>
+        <span className="st-head-meta">
+          {t("settings.sub", "代理、内核与系统集成的集中配置")}
+        </span>
+      </div>
+      <span className="st-head-port">
+        <span>{t("settings.mixedPort", "代理端口")}</span>
+        <b>127.0.0.1:{mixedPort}</b>
+      </span>
+    </header>
     <div className="s-page s-page-split">
       <aside className="s-rail">
         <nav className="s-nav">
@@ -539,8 +573,8 @@ async function scanConflict() {
           ))}
         </nav>
         <p className="s-tip">
-          <Info size={13} />
-          <span>不清楚的功能请保持默认，不要随意开启，以免影响正常使用</span>
+          <Info size={12} />
+          <span>不清楚的功能请保持默认，避免影响正常使用</span>
         </p>
       </aside>
 
@@ -806,21 +840,20 @@ async function scanConflict() {
                   <option value="0.0.0.0">0.0.0.0</option>
                 </select>
               </label>
-              <label>
-                日志级别
-                <select
-                  className="s-input"
-                  value={s.logLevel || "info"}
-                  onChange={(e) => patchSettings({ logLevel: e.target.value })}
-                >
-                  {["silent", "error", "warning", "info", "debug"].map((l) => (
-                    <option key={l} value={l}>
-                      {l}
-                    </option>
-                  ))}
-                </select>
-              </label>
             </div>
+            <Row label="日志级别" desc="写入内核日志的详细程度">
+              <select
+                className="s-input"
+                value={s.logLevel || "info"}
+                onChange={(e) => patchSettings({ logLevel: e.target.value })}
+              >
+                {["silent", "error", "warning", "info", "debug"].map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </Row>
             <Row label="允许局域网" desc="allow-lan">
               <input type="checkbox" checked={!!s.allowLan} onChange={(e) => patchSettings({ allowLan: e.target.checked })} />
             </Row>
@@ -1118,56 +1151,69 @@ async function scanConflict() {
             <Row label="IPv6">
               <input type="checkbox" checked={!!s.dnsIpv6} onChange={(e) => patchSettings({ dnsIpv6: e.target.checked })} />
             </Row>
-            <label className="s-field-block">
-              Nameserver（逗号分隔）
+            <div className="s-field-block">
+              <div className="s-field-hd">
+                <span className="s-field-k">Nameserver</span>
+                <span className="s-field-hint">逗号分隔</span>
+                <div className="s-actions">
+                  <button
+                    type="button"
+                    className="btn ghost btn-sm"
+                    onClick={async () => {
+                      const first = draftNs.split(/[,;\n]/)[0]?.trim();
+                      const r = await window.veyra?.validateDns?.(first || "");
+                      onToast(r?.ok ? `校验通过：${r.host}` : `校验失败：${r?.error || "?"}`);
+                    }}
+                  >
+                    校验
+                  </button>
+                  <button
+                    type="button"
+                    className="btn primary btn-sm"
+                    onClick={async () => {
+                      const list = draftNs
+                        .split(/[,;\n]/)
+                        .map((x) => x.trim())
+                        .filter(Boolean);
+                      await patchSettings({ dnsNameserver: list, dnsOverride: true });
+                      onToast("DNS 已保存");
+                    }}
+                  >
+                    保存
+                  </button>
+                </div>
+              </div>
               <input className="s-input full" value={draftNs} onChange={(e) => setDraftNs(e.target.value)} />
-            </label>
-            <div className="s-actions">
-              <button
-                type="button"
-                className="btn primary btn-sm"
-                onClick={async () => {
-                  const list = draftNs
-                    .split(/[,;\n]/)
-                    .map((x) => x.trim())
-                    .filter(Boolean);
-                  await patchSettings({ dnsNameserver: list, dnsOverride: true });
-                  onToast("DNS 已保存");
-                }}
-              >
-                保存 Nameserver
-              </button>
-              <button
-                type="button"
-                className="btn ghost btn-sm"
-                onClick={async () => {
-                  const first = draftNs.split(/[,;\n]/)[0]?.trim();
-                  const r = await window.veyra?.validateDns?.(first || "");
-                  onToast(r?.ok ? `校验通过：${r.host}` : `校验失败：${r?.error || "?"}`);
-                }}
-              >
-                校验
-              </button>
             </div>
-            <label className="s-field-block">
-              Hosts（每行 host=ip）
-              <textarea className="s-input full" rows={4} value={draftHosts} onChange={(e) => setDraftHosts(e.target.value)} />
-            </label>
-            <button
-              type="button"
-              className="btn ghost btn-sm"
-              onClick={async () => {
-                const hosts: Record<string, string> = {};
-                for (const line of draftHosts.split("\n")) {
-                  const m = line.trim().match(/^([^=\s]+)\s*=\s*(.+)$/);
-                  if (m) hosts[m[1]] = m[2].trim();
-                }
-                await patchSettings({ dnsHosts: hosts, dnsOverride: true });
-                onToast("Hosts 已保存");
-              }}
-            >
-              保存 Hosts
-            </button>
+            <div className="s-field-block">
+              <div className="s-field-hd">
+                <span className="s-field-k">Hosts</span>
+                <span className="s-field-hint">每行 host=ip</span>
+                <div className="s-actions">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={async () => {
+                      const hosts: Record<string, string> = {};
+                      for (const line of draftHosts.split("\n")) {
+                        const m = line.trim().match(/^([^=\s]+)\s*=\s*(.+)$/);
+                        if (m) hosts[m[1]] = m[2].trim();
+                      }
+                      await patchSettings({ dnsHosts: hosts, dnsOverride: true });
+                      onToast("Hosts 已保存");
+                    }}
+                  >
+                    保存
+                  </button>
+                </div>
+              </div>
+              <textarea
+                className="s-input full"
+                rows={4}
+                value={draftHosts}
+                onChange={(e) => setDraftHosts(e.target.value)}
+              />
+            </div>
           </Card>
         )}
 
@@ -1554,10 +1600,22 @@ async function scanConflict() {
             <div className="set-upd-panel">
               <div className="set-upd-version">
                 <span className="set-upd-k">当前版本</span>
-                <span className="pill upd-pill">v{appInfo?.version || "…"}</span>
-                <span className="pill-beta">测试版 BETA</span>
-                {appUpdate?.hasUpdate ? (
-                  <span className="set-upd-chip">可更新至 v{appUpdate.latest}</span>
+                {/* 与顶栏同一套读法：语义版本在前（v1.1.9）、渠道标签在后（Beta），
+                    完整版本号（含 -beta.6）放在 title 里，需要时悬停可查。 */}
+                <span className="pill upd-pill" title={appInfo?.version || undefined}>
+                  v{(appInfo?.version || "…").replace(/^v/, "").replace(/-beta[.-].*$/i, "")}
+                </span>
+                {/beta/i.test(appInfo?.version || "") ? (
+                  <span
+                    className="brand-beta"
+                    title={`测试版 · v${appInfo?.version}：功能与界面仍在调整，遇到问题请反馈`}
+                    aria-label="测试版"
+                  >
+                    Beta
+                  </span>
+                ) : null}
+                {updateView?.hasUpdate ? (
+                  <span className="set-upd-chip">可更新至 v{updateView.latest}</span>
                 ) : null}
               </div>
 
@@ -1568,18 +1626,29 @@ async function scanConflict() {
                 </div>
               ) : null}
 
-              {appUpdate?.hasUpdate && !downloadingUpdate && !updateReady ? (
-                <div className="set-upd-cta">
-                  <div className="set-upd-cta-text">
-                    <b>发现新版本 v{appUpdate.latest}</b>
-                    <span>
-                      当前 v{appInfo?.version || "…"}，点击立即更新；下载完成后会自动校验并启动安装程序。
-                    </span>
+              {updateView?.hasUpdate && !downloadingUpdate && !updateReady ? (
+                <div className="set-upd-hero">
+                  <span className="set-upd-hero-ico" aria-hidden="true">
+                    <ArrowUp size={16} strokeWidth={2.2} />
+                  </span>
+                  <div className="set-upd-hero-copy">
+                    <div className="set-upd-hero-line">
+                      <b>发现新版本</b>
+                      <span className="set-upd-hero-ver">v{updateView.latest}</span>
+                    </div>
+                    <div className="set-upd-hero-meta">
+                      当前 v{appInfo?.version || "…"}
+                      {updateView.assetSize
+                        ? ` · 安装包 ${(updateView.assetSize / 1048576).toFixed(1)} MB`
+                        : ""}
+                      {updateView.notes?.items?.length ? ` · ${updateView.notes.items.length} 条更新` : ""}
+                    </div>
+                    <div className="set-upd-hero-hint">下载校验后可选覆盖安装；完成后重启会展示本次更新内容</div>
                   </div>
                   <button
                     type="button"
                     className="btn primary"
-                    disabled={!appUpdate.assetUrl}
+                    disabled={!updateView.assetUrl}
                     onClick={async () => {
                       setDownloadingUpdate(true);
                       setUpdatePct(-1);
@@ -1616,6 +1685,9 @@ async function scanConflict() {
                 </div>
               ) : null}
 
+              {/* 更新内容不在这里展开：它属于「更新完成后首次启动」的弹窗，
+                  设置页只保留版本、体积、条数这些一眼能读完的摘要。 */}
+
               {updateReady ? (
                 <div className="set-upd-choice">
                   <div className="set-upd-choice-text">
@@ -1631,6 +1703,7 @@ async function scanConflict() {
                         try {
                           await window.veyra!.installAppUpdate("clean");
                           setUpdateReady(false);
+                          setAppUpdate(null);
                           setUpdateStatus("正在卸载并重新安装，请稍候…");
                         } catch (e) {
                           setUpdateErr(ipcErrorText(e));
@@ -1647,6 +1720,7 @@ async function scanConflict() {
                         try {
                           await window.veyra!.installAppUpdate("overwrite");
                           setUpdateReady(false);
+                          setAppUpdate(null);
                           setUpdateStatus("安装程序已启动，请按提示完成升级");
                         } catch (e) {
                           setUpdateErr(ipcErrorText(e));
@@ -1722,13 +1796,19 @@ async function scanConflict() {
                           latest: info.latest,
                           current: info.current,
                           assetSize: info.assetSize,
+                          assetUrl: info.assetUrl,
                           htmlUrl: info.htmlUrl,
+                          notes: (info as { notes?: { version?: string; date?: string | null; title?: string; items?: string[] } })
+                            .notes,
                         });
                         onToast(`发现新版本 v${info.latest}`);
                       } else {
                         setUpdateStatus("已是最新版本");
                       }
                     } catch (e) {
+                      // 失败时不要留着「正在检查…」：错误原因在下面的红条里，
+                      // 状态行继续显示会让用户以为还在等结果。
+                      setUpdateStatus("");
                       setUpdateErr(ipcErrorText(e));
                     }
                     setCheckingUpdate(false);
@@ -1757,7 +1837,7 @@ async function scanConflict() {
               <div>
                 <span>应用</span>
                 <b>
-                  {appInfo?.name || "Veyra-omini"} {appInfo?.version}
+                  {appInfo?.name || "Veyra-omini"} v{(appInfo?.version || "").replace(/^v/, "")}
                 </b>
               </div>
               <div>
@@ -1809,6 +1889,7 @@ async function scanConflict() {
 
       <ConfirmDialog req={confirmReq} onClose={() => setConfirmReq(null)} />
     </div>
+    </>
   );
 }
 

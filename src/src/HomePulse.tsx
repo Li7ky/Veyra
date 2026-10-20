@@ -12,6 +12,8 @@ type Props = {
   nodeCount: number;
   startedAt: number | null;
   blockedToday?: number;
+  /** bar = 首页顶部常驻状态条；button = 只渲染一颗「体检」按钮（首页页头用） */
+  variant?: "bar" | "button";
 };
 
 type Level = "ok" | "warn" | "bad";
@@ -61,6 +63,24 @@ export function HomePulse(props: Props) {
 
   const state = !props.running ? "off" : props.sysProxy ? "on" : "idle";
   const up = props.startedAt ? Date.now() - props.startedAt : 0;
+
+  // 页头按钮形态：把「体检」作为首页页头的次要操作，不再占用一整条状态栏
+  if (props.variant === "button") {
+    return (
+      <>
+        <button
+          type="button"
+          className="btn ghost btn-sm hs-health"
+          onClick={() => setOpen(true)}
+          title="网络体检"
+        >
+          <Activity size={13} />
+          体检
+        </button>
+        {open ? <DiagnoseSheet onClose={() => setOpen(false)} {...props} /> : null}
+      </>
+    );
+  }
 
   return (
     <>
@@ -173,13 +193,20 @@ function DiagnoseSheet(props: Props & { onClose: () => void }) {
         .map((s) => (s.userinfo?.expire || 0) * 1000)
         .filter((t) => t > 0)
         .sort((a, b) => a - b)[0];
-      const days = soon ? Math.floor((soon - Date.now()) / 86400000) : null;
+      // 用 ceil：还剩 12 小时应显示「1 天后」，已过期则为负数，单独出一句「已过期 N 天」
+      const days = soon ? Math.ceil((soon - Date.now()) / 86400000) : null;
+      const expireText =
+        days === null
+          ? ""
+          : days < 0
+            ? ` · 已过期 ${Math.abs(days)} 天`
+            : ` · ${days} 天后到期`;
       push(
         subs.length === 0
           ? { id: "sub", level: "warn", title: "订阅", detail: "还没有订阅，导入机场链接即可开始" }
           : days !== null && days <= 7
-            ? { id: "sub", level: "warn", title: "订阅", detail: `${subs.length} 个订阅 · ${days} 天后到期` }
-            : { id: "sub", level: "ok", title: "订阅", detail: `${subs.length} 个订阅${days !== null ? ` · ${days} 天后到期` : ""}` }
+            ? { id: "sub", level: "warn", title: "订阅", detail: `${subs.length} 个订阅${expireText}` }
+            : { id: "sub", level: "ok", title: "订阅", detail: `${subs.length} 个订阅${expireText}` }
       );
 
       if (alive) setDone(true);

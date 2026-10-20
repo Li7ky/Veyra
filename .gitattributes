@@ -1,3 +1,7 @@
-# 让 GitHub 语言统计把 CSS 归类为 Other（不计入主语言）
+# GitHub 语言统计：把 CSS/TS 降级，让 Rust 成为主语言显示
 *.css  linguist-language=Other
 *.scss linguist-language=Other
+*.ts   linguist-vendored
+*.tsx  linguist-vendored
+*.mts  linguist-vendored
+*.cts  linguist-vendored

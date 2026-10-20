@@ -47,11 +47,6 @@
 
 本次测试版已在 Windows 10 x64 上完成安装、卸载、应用接口检查，以及附带 mihomo 的本地 HTTP 转发验证。详细结果见 [发布说明](https://github.com/Li7ky/Veyra/releases)。
 
-## 版本策略
-
-每个版本最多 5 个 beta（`beta.1`–`beta.5`）。到 5 之后必须升版本号重新计数，例如 `1.1.10-beta.5` → `1.1.11-beta.1`，不允许无限延长同一条 line。
-
-`npm test` 里的 `src/version-policy.test.ts` 会检查这条规则，改版本号时会被卡住。
 
 ## 开发与构建
 

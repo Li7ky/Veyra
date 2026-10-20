@@ -15,6 +15,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Bell,
   Building2,
   CalendarClock,
   Check,
@@ -742,6 +743,9 @@ export default function App() {
   const [autoUpdate, setAutoUpdate] = useState<AppUpdateNotice | null>(null);
   // 关掉弹窗后仍留在顶栏的「可更新」提示：随时能点回来，不会一关就丢
   const [pendingUpdate, setPendingUpdate] = useState<AppUpdateNotice | null>(null);
+  // 顶栏铃铛点开的升级通知卡（点外部 / Esc 关闭）
+  const [updPop, setUpdPop] = useState(false);
+  const updAnchorRef = useRef<HTMLDivElement | null>(null);
   const [updPct, setUpdPct] = useState(-1);
   const [updBusy, setUpdBusy] = useState(false);
   // 安装包已下载、等待用户选择安装方式（覆盖 / 卸载重装）
@@ -817,6 +821,23 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [autoUpdate, updateNotes, updBusy]);
+  // 顶栏升级通知卡：点外部或按 Esc 收起（触发器自身不触发关闭）
+  useEffect(() => {
+    if (!updPop) return;
+    const onDown = (e: PointerEvent) => {
+      const root = updAnchorRef.current;
+      if (root && !root.contains(e.target as Node)) setUpdPop(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setUpdPop(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [updPop]);
   // 主进程启动 6s 后静默检查更新：有新版本就弹提醒；下载进度实时回填
   useEffect(() => {
     const offAvailable = window.veyra?.onUpdateAvailable?.((info) => {
@@ -2385,22 +2406,71 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                 Beta
               </span>
             ) : null}
-            {/* 发现新版本：顶栏常驻一枚状态胶囊。弹窗关掉后也还在，
-                点一下重新打开更新弹窗——不用回设置页找。 */}
+            {/* 发现新版本：顶栏一枚铃铛（红点常驻），点开是升级通知卡；
+                关掉卡片后红点还在，随时能回来看。 */}
             {pendingUpdate ? (
-              <button
-                type="button"
-                className="upd-badge"
-                onClick={() => setAutoUpdate(pendingUpdate)}
-                title={`${t("update.available", "发现新版本")} v${pendingUpdate.latest}`}
-              >
-                <span className="upd-badge-orb" aria-hidden="true">
-                  <ArrowUp size={11} strokeWidth={2.8} />
-                </span>
-                <span className="upd-badge-ver">v{pendingUpdate.latest}</span>
-                <span className="upd-badge-k">{t("update.pill", "可更新")}</span>
-                <ChevronRight size={11} />
-              </button>
+              <div className="upd-anchor" ref={updAnchorRef}>
+                <button
+                  type="button"
+                  className={`upd-bell${updPop ? " is-open" : ""}`}
+                  onClick={() => setUpdPop((v) => !v)}
+                  aria-haspopup="dialog"
+                  aria-expanded={updPop}
+                  aria-label={`${t("update.available", "发现新版本")} v${pendingUpdate.latest}`}
+                  title={`${t("update.available", "发现新版本")} v${pendingUpdate.latest}`}
+                >
+                  <Bell size={14} strokeWidth={2.2} />
+                  <i className="upd-bell-dot" aria-hidden="true" />
+                </button>
+                {updPop ? (
+                  <div className="upd-pop" role="dialog" aria-label={t("update.available", "发现新版本")}>
+                    <header className="upd-pop-hd">
+                      <span className="upd-pop-ico" aria-hidden="true">
+                        <ArrowUp size={15} strokeWidth={2.6} />
+                      </span>
+                      <div className="upd-pop-title">
+                        <b>
+                          {t("update.available", "发现新版本")} v{pendingUpdate.latest}
+                        </b>
+                        <span>
+                          {t("update.current", "当前")} v{pendingUpdate.current || version}
+                          {pendingUpdate.assetSize ? ` · ${formatBytes(pendingUpdate.assetSize)}` : ""}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="upd-pop-x"
+                        onClick={() => setUpdPop(false)}
+                        aria-label={t("common.close", "关闭")}
+                      >
+                        <X size={13} />
+                      </button>
+                    </header>
+                    {pendingUpdate.notes?.items?.length ? (
+                      <ul className="upd-pop-notes">
+                        {pendingUpdate.notes.items.slice(0, 3).map((it, i) => (
+                          <li key={i}>{it}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <footer className="upd-pop-ft">
+                      <button type="button" className="btn ghost btn-sm" onClick={() => setUpdPop(false)}>
+                        {t("update.later", "稍后")}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn primary btn-sm"
+                        onClick={() => {
+                          setUpdPop(false);
+                          setAutoUpdate(pendingUpdate);
+                        }}
+                      >
+                        {t("update.viewDetail", "查看更新")}
+                      </button>
+                    </footer>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
           </div>
           <div className="header-actions">

@@ -464,214 +464,204 @@ p {
   white-space: nowrap;
 }
 
-/* 顶栏「可更新」状态胶囊：流动主色底 + 周期性扫光 + 呼吸光晕 + 上浮箭头。
-   常驻但不喧宾夺主；只动 background-position / transform / box-shadow，开销很小。 */
-@property --upd-angle {
-  syntax: "<angle>";
-  initial-value: 0deg;
-  inherits: false;
+/* 顶栏升级入口：一枚铃铛 + 红点，点开是一张「升级通知」卡片。
+   比之前的胶囊更像系统级更新提示：触发物低调，信息只在展开时出现。 */
+@keyframes upd-dot-ping {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.85;
+  }
+  80%,
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
 }
 
-.upd-badge {
+@keyframes upd-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.upd-anchor {
   position: relative;
-  isolation: isolate;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 8px 0 4px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
-  background:
-    linear-gradient(
-      110deg,
-      color-mix(in srgb, var(--accent) 20%, transparent) 0%,
-      color-mix(in srgb, var(--accent) 6%, transparent) 46%,
-      color-mix(in srgb, var(--accent) 18%, transparent) 100%
-    );
-  background-size: 220% 100%;
-  color: var(--accent-hi);
-  font-size: 10.5px;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  overflow: hidden;
-  animation:
-    upd-badge-flow 8s ease-in-out infinite,
-    upd-badge-glow 3.6s ease-in-out infinite;
-  transition:
-    transform 160ms var(--ease),
-    border-color 160ms var(--ease);
 }
 
-.upd-badge:hover {
-  border-color: var(--accent);
-  transform: translateY(-1px);
-}
-
-.upd-badge:active {
-  transform: translateY(0.5px);
-}
-
-/* 文字 / 图标压在扫光之上，扫光只从底色上掠过 */
-.upd-badge > * {
+.upd-bell {
   position: relative;
-  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  cursor: pointer;
+  transition:
+    background-color 140ms var(--ease),
+    border-color 140ms var(--ease),
+    color 140ms var(--ease);
 }
 
-/* 边框上绕圈跑的一小段高光：像仪表上的巡检灯 */
-.upd-badge::before {
-  content: "";
+.upd-bell svg {
+  width: 14px;
+  height: 14px;
+}
+
+.upd-bell:hover,
+.upd-bell.is-open {
+  color: var(--accent-hi);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+}
+
+/* 红点 + 一圈扩散：只在「有新版本」时出现 */
+.upd-bell-dot {
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: conic-gradient(
-    from var(--upd-angle),
-    transparent 0deg 248deg,
-    color-mix(in srgb, var(--accent) 88%, #fff) 300deg,
-    transparent 336deg
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: upd-badge-spin 3.8s linear infinite;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #ff3b5c;
+  box-shadow: 0 0 0 2px var(--surface-2);
   pointer-events: none;
 }
 
-/* 扫光：每隔几秒从左侧划过一道高光，像仪表指针扫过 */
-.upd-badge::after {
+.upd-bell-dot::after {
   content: "";
   position: absolute;
-  top: -30%;
-  bottom: -30%;
-  left: 0;
-  width: 46%;
-  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.6), transparent);
-  transform: translateX(-170%) skewX(-16deg);
-  animation: upd-badge-sheen 5.6s ease-in-out infinite;
-  pointer-events: none;
+  inset: -3px;
+  border-radius: 999px;
+  border: 1.5px solid #ff3b5c;
+  animation: upd-dot-ping 2.2s ease-out infinite;
 }
 
-/* 圆形箭头：一点点上浮，读作「有新版本可升」 */
-.upd-badge-orb {
+.upd-pop {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: -8px;
+  z-index: 60;
+  width: 352px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow:
+    0 24px 50px -20px rgba(16, 20, 50, 0.42),
+    0 2px 8px rgba(16, 20, 50, 0.08);
+  overflow: hidden;
+  animation: upd-pop-in 160ms var(--ease);
+}
+
+.upd-pop-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 14px 12px;
+}
+
+.upd-pop-ico {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
   color: #fff;
-  background:
-    radial-gradient(80% 80% at 30% 20%, rgba(255, 255, 255, 0.35), transparent 62%),
-    linear-gradient(155deg, var(--accent), var(--accent-ink));
-  box-shadow: 0 2px 7px -3px color-mix(in srgb, var(--accent-ink) 85%, transparent);
-  animation: upd-badge-bob 3.2s ease-in-out infinite;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #7c3aed));
+  box-shadow: 0 4px 10px -4px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
-/* 品牌区有一条历史规则 .header-brand svg（36px / 青色），会把胶囊里的图标一起放大，
-   这里用同级选择器把它拉回 11px，并分别指定箭头与折叠符号的颜色。 */
-.upd-badge svg {
-  width: 11px;
-  height: 11px;
-  flex: none;
+.upd-pop-ico svg {
+  width: 15px;
+  height: 15px;
 }
 
-.upd-badge-orb svg {
-  color: #fff;
+.upd-pop-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
-.upd-badge-ver {
+.upd-pop-title b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.35;
+}
+
+.upd-pop-title span {
   font-family: var(--font-num);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  font-size: 11px;
+  color: var(--fg-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.upd-badge-k {
-  color: var(--fg-2);
-  font-weight: 500;
-}
-
-.upd-badge > svg {
+.upd-pop-x {
   flex: none;
-  color: var(--accent-hi);
-  opacity: 0.75;
-  transition: transform 160ms var(--ease);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-4);
+  cursor: pointer;
 }
 
-.upd-badge:hover > svg {
-  transform: translateX(2px);
+.upd-pop-x:hover {
+  background: var(--surface-2);
+  color: var(--fg-2);
 }
 
-@keyframes upd-badge-flow {
-  0%,
-  100% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
+.upd-pop-notes {
+  margin: 0;
+  padding: 10px 14px 12px 28px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--fg-2);
 }
 
-@keyframes upd-badge-spin {
-  to {
-    --upd-angle: 360deg;
-  }
+.upd-pop-notes li::marker {
+  color: var(--accent);
 }
 
-@keyframes upd-badge-glow {
-  0%,
-  100% {
-    box-shadow:
-      0 1px 0 rgba(255, 255, 255, 0.1) inset,
-      0 4px 12px -10px color-mix(in srgb, var(--accent-ink) 60%, transparent);
-  }
-  50% {
-    box-shadow:
-      0 1px 0 rgba(255, 255, 255, 0.14) inset,
-      0 6px 18px -8px color-mix(in srgb, var(--accent-ink) 82%, transparent),
-      0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent);
-  }
-}
-
-@keyframes upd-badge-sheen {
-  0%,
-  52% {
-    transform: translateX(-170%) skewX(-16deg);
-  }
-  78%,
-  100% {
-    transform: translateX(330%) skewX(-16deg);
-  }
-}
-
-@keyframes upd-badge-bob {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  40% {
-    transform: translateY(-1.5px);
-  }
-  60% {
-    transform: translateY(-1px);
-  }
+.upd-pop-ft {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .upd-badge,
-  .upd-badge::after,
-  .upd-badge::before,
-  .upd-badge-orb {
+  .upd-bell-dot::after,
+  .upd-pop {
     animation: none;
-  }
-  .upd-badge:hover {
-    transform: none;
   }
 }
 

@@ -9,8 +9,6 @@
 
 当前版本 **1.1.10-beta.1** 为测试版。安装包未做代码签名，不作为稳定版的兼容性承诺。本软件不提供节点或订阅服务。
 
-**[下载 Windows x64 安装包（约 25 MB）](https://github.com/Li7ky/Veyra/releases)** · [发布说明](https://github.com/Li7ky/Veyra/releases)
-
 ## 为什么选择 Veyra-omini
 
 | 优点 | 说明 |

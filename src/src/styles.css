@@ -991,12 +991,16 @@ code, pre { font-family: var(--font-mono); }
   white-space: nowrap;
 }
 .btn:disabled { opacity: 0.50; pointer-events: none; cursor: not-allowed; }
-/* 主按钮禁用时仍是高饱和蓝，看起来像可点；改成中性灰底，语义更明确 */
+/* 主按钮禁用时仍是高饱和蓝，看起来像可点；改成中性描边 + 灰字，语义更明确。
+   之前是 16% 浅灰底配浅灰字（浅灰压浅灰），空输入时「+ 添加」几乎看不见，
+   所以这里去掉底色、改用一档可见的描边来交代「这是个按钮，只是现在不能点」 */
 .btn.primary:disabled,
 .btn-primary:disabled {
   opacity: 1;
-  background: color-mix(in srgb, var(--text-600) 16%, transparent) !important;
+  background: transparent !important;
   color: var(--text-400) !important;
+  border-color: var(--line-2) !important;
+  box-shadow: none !important;
 }
 .btn-danger:disabled, .btn.danger:disabled {
   opacity: 1;

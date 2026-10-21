@@ -3439,10 +3439,20 @@ label.switch input[type="checkbox"]:disabled {
   color: color-mix(in srgb, var(--accent) 52%, var(--fg-3));
 }
 
+/* 「暂无策略组」：原本是一行贴在条首的裸文字，看着像被截断的标题。
+   改成虚线空槽，语义上就是「这里本该有一排组标签，现在还没有」。 */
 .px-bar-empty {
-  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px dashed var(--line-2);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
   font-size: 12px;
-  color: var(--fg-4);
+  color: var(--fg-3);
+  white-space: nowrap;
 }
 
 .px-bar-r {
@@ -3898,7 +3908,9 @@ label.px-autopick.switch input[type="checkbox"]:focus-visible {
 }
 
 .px-empty {
-  min-height: 340px;
+  /* 高度跟着内容走：原来固定 340px 最小高，一句「还没有可用的节点」被撑出一大片空白 */
+  min-height: 0;
+  padding: 38px 32px;
   border-radius: var(--r-lg);
   border: 1px dashed var(--line-2);
   background: color-mix(in srgb, var(--surface) 60%, transparent);
@@ -5162,6 +5174,8 @@ label.px-autopick.switch input[type="checkbox"]:focus-visible {
 
 .rl-toolbar {
   display: flex;
+  /* 允许换行：窄窗口下「添加」按钮和筛选框宁可掉到第二行，也不能被顶出可视区 */
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 7px 8px;
@@ -5176,8 +5190,9 @@ label.px-autopick.switch input[type="checkbox"]:focus-visible {
 }
 
 .rl-input {
-  flex: 1;
-  min-width: 0;
+  /* 基准 160px、最小 120px：之前是 min-width:0，会被下拉框挤成一条 20px 的缝 */
+  flex: 1 1 160px;
+  min-width: 120px;
   height: 30px;
   padding: 0 10px;
   border-radius: var(--r-sm);
@@ -5204,7 +5219,11 @@ label.px-autopick.switch input[type="checkbox"]:focus-visible {
 .rl-proc-policy {
   height: 30px;
   flex: none;
+  /* .s-input 的 width:100% 会把这个下拉撑满整行、把后面的按钮挤出窗口，
+     这里显式收回内容宽度（v3.css 后加载，同权重生效） */
+  width: auto;
   min-width: 84px;
+  max-width: 140px;
 }
 
 .rl-search {
@@ -7872,6 +7891,15 @@ textarea.s-input.full {
   border-radius: 10px !important;
   box-shadow: none !important;
   overflow: hidden !important;
+}
+
+/* 订阅页只有 4 个页签：按内容收窄贴左，别在整条轨道里只在中间放一小撮。
+   设置页 10 个分区继续整行均分（下面的 .s-nav button 规则）。 */
+.pf-tabs {
+  width: fit-content !important;
+  max-width: 100% !important;
+  justify-content: flex-start !important;
+  align-self: flex-start;
 }
 
 .pf-tabs button,

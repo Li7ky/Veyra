@@ -2964,8 +2964,10 @@ label.switch.compact input[type="checkbox"]:checked::after {
   background: var(--v-accent-2);
 }
 
+/* 禁用态的外观由 styles.css 统一给（中性描边 + 灰字），这里不再叠一层透明度：
+   叠上去会把灰字又洗淡一档，空输入时「+ 添加」看起来像一段说明文字 */
 .btn.primary:disabled {
-  opacity: 0.45;
+  opacity: 1;
 }
 
 .px-card {

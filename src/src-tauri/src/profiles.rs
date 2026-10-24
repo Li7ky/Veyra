@@ -6,6 +6,16 @@ use std::path::{Path, PathBuf};
 use crate::state::Paths;
 use crate::util;
 
+/// index.json「读-改-写」互斥：并发导入/开关切换/删除若同时 load→改→save，
+/// 轻则丢更新，重则把索引写坏（写坏后 load_index 返回空 items，绑定关系全丢）。
+/// 所有会写索引的公开入口都必须持锁；函数体内部禁止再调其他持锁入口（会死锁），
+/// 需要组合操作时走 *_unlocked 变体。
+static INDEX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn index_guard() -> std::sync::MutexGuard<'static, ()> {
+    INDEX_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn load_index(paths: &Paths) -> Value {
     let p = paths.profiles_dir.join("index.json");
     let Some(raw) = util::read_text(&p) else {
@@ -81,6 +91,7 @@ pub fn import_local(
     kind: &str,
     url: Option<&str>,
 ) -> Result<Value, String> {
+    let _guard = index_guard();
     fs::create_dir_all(&paths.profiles_dir).map_err(|e| e.to_string())?;
     let uid = uuid::Uuid::new_v4().to_string();
     let safe = util::sanitize_name(name);
@@ -116,6 +127,7 @@ pub fn import_local(
 const ENHANCE_KINDS: [&str; 5] = ["merge", "script", "rules", "proxies", "groups"];
 
 pub fn create_enhance(paths: &Paths, kind: &str, name: &str, global: bool) -> Result<Value, String> {
+    let _guard = index_guard();
     if !ENHANCE_KINDS.contains(&kind) {
         return Err("仅支持 merge / script / rules / proxies / groups".into());
     }
@@ -156,6 +168,7 @@ pub fn create_enhance(paths: &Paths, kind: &str, name: &str, global: bool) -> Re
 }
 
 pub fn set_profile_binds(paths: &Paths, uid: &str, binds: &Value) -> Result<Value, String> {
+    let _guard = index_guard();
     let mut idx = load_index(paths);
     let items = idx
         .get_mut("items")
@@ -183,6 +196,7 @@ pub fn set_profile_binds(paths: &Paths, uid: &str, binds: &Value) -> Result<Valu
 }
 
 pub fn set_enabled(paths: &Paths, uid: &str, enabled: bool) -> Result<Value, String> {
+    let _guard = index_guard();
     let mut idx = load_index(paths);
     let items = idx
         .get_mut("items")
@@ -198,6 +212,7 @@ pub fn set_enabled(paths: &Paths, uid: &str, enabled: bool) -> Result<Value, Str
 }
 
 pub fn set_active(paths: &Paths, uid: &str) -> Result<Value, String> {
+    let _guard = index_guard();
     let mut idx = load_index(paths);
     let items = idx
         .get("items")
@@ -218,6 +233,11 @@ pub fn set_active(paths: &Paths, uid: &str) -> Result<Value, String> {
 }
 
 pub fn delete_profile(paths: &Paths, uid: &str) {
+    let _guard = index_guard();
+    delete_profile_unlocked(paths, uid);
+}
+
+fn delete_profile_unlocked(paths: &Paths, uid: &str) {
     let mut idx = load_index(paths);
     let mut items: Vec<Value> = idx
         .get("items")
@@ -268,6 +288,11 @@ pub fn read_content(paths: &Paths, uid: &str) -> Result<String, String> {
 }
 
 pub fn write_content(paths: &Paths, uid: &str, content: &str) -> Result<(), String> {
+    let _guard = index_guard();
+    write_content_unlocked(paths, uid, content)
+}
+
+fn write_content_unlocked(paths: &Paths, uid: &str, content: &str) -> Result<(), String> {
     let mut idx = load_index(paths);
     let mut file: Option<String> = None;
     if let Some(items) = idx.get_mut("items").and_then(|v| v.as_array_mut()) {
@@ -286,6 +311,7 @@ pub fn write_content(paths: &Paths, uid: &str, content: &str) -> Result<(), Stri
 
 /// 按 URL 原地更新远程订阅，并清理同 URL 的重复项。
 pub fn update_remote_by_url(paths: &Paths, url: &str, content: &str) -> Result<Option<Value>, String> {
+    let _guard = index_guard();
     let idx = load_index(paths);
     let active = idx
         .get("active")
@@ -322,10 +348,10 @@ pub fn update_remote_by_url(paths: &Paths, url: &str, content: &str) -> Result<O
         .and_then(|u| u.as_str())
         .unwrap_or("")
         .to_string();
-    write_content(paths, &keep_uid, content)?;
+    write_content_unlocked(paths, &keep_uid, content)?;
     for dup in dups.iter().skip(1) {
         if let Some(uid) = dup.get("uid").and_then(|u| u.as_str()) {
-            delete_profile(paths, uid);
+            delete_profile_unlocked(paths, uid);
         }
     }
     let out = load_index(paths);
@@ -380,6 +406,7 @@ pub fn rename_by_url(paths: &Paths, url: &str, name: &str, force: bool) -> Optio
     if url.is_empty() || name.is_empty() {
         return None;
     }
+    let _guard = index_guard();
     let mut idx = load_index(paths);
     let safe = util::sanitize_name(name);
     let items = idx.get_mut("items")?.as_array_mut()?;
@@ -402,6 +429,7 @@ pub fn rename_by_url(paths: &Paths, url: &str, name: &str, force: bool) -> Optio
 
 /// 旧扁平 yaml → index（仅当 index 为空）。
 pub fn migrate_legacy_files(paths: &Paths) -> Value {
+    let _guard = index_guard();
     let mut idx = load_index(paths);
     let items_len = idx
         .get("items")

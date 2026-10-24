@@ -162,7 +162,9 @@ pub async fn dispatch(
                 })
             }).unwrap_or(false);
             if need_enhance {
-                let _ = core::run_enhance_and_reload(app, st).await;
+                if let Err(e) = core::run_enhance_and_reload(app, st).await {
+                    crate::core::push_log_line(app, &format!("[veyra] 配置增强失败: {}", e));
+                }
             }
             crate::tray::update_tray(app);
             Ok(next)
@@ -187,7 +189,9 @@ pub async fn dispatch(
             apply_autostart(app, &next);
             core::start_proxy_guard(app, st);
             let _ = crate::register_hotkeys(app).await;
-            let _ = core::run_enhance_and_reload(app, st).await;
+            if let Err(e) = core::run_enhance_and_reload(app, st).await {
+                crate::core::push_log_line(app, &format!("[veyra] 配置增强失败: {}", e));
+            }
             crate::tray::update_tray(app);
             Ok(next)
         }
@@ -289,7 +293,13 @@ pub async fn dispatch(
         }
 
         // ── 应用信息 / 更新日志 ──────────────────────────────
-        "appInfo" => Ok(app_info(st)),
+        "appInfo" => {
+            // 里面要跑 ver / PowerShell 取系统版本，放 blocking 池。
+            let paths = st.paths.clone();
+            tauri::async_runtime::spawn_blocking(move || app_info(&paths))
+                .await
+                .map_err(|e| e.to_string())
+        }
         "changelog" => Ok(changelog()),
         "updateNotes" => {
             let list = changelog();
@@ -857,10 +867,17 @@ pub async fn dispatch(
         // ── 服务 / 备份 / WebDAV / UWP ───────────────────────
         "setProxyMode" => core::apply_proxy_mode(app, st, &str_arg(args, 0), false).await,
         "validateDns" => Ok(backup::validate_dns(&str_arg(args, 0))),
-        "serviceStatus" => Ok(backup::service_status()),
+        "serviceStatus" => {
+            // sc.exe 子进程调用，放 blocking 池。
+            tauri::async_runtime::spawn_blocking(backup::service_status)
+                .await
+                .map_err(|e| e.to_string())
+        }
         "serviceInstall" => service_install(app, st).await,
         "serviceUninstall" => {
-            let r = backup::uninstall_service();
+            let r = tauri::async_runtime::spawn_blocking(backup::uninstall_service)
+                .await
+                .map_err(|e| e.to_string())?;
             if r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
                 let mut i = st.inner.lock().await;
                 if let Some(o) = i.settings.as_object_mut() {
@@ -870,21 +887,39 @@ pub async fn dispatch(
             }
             Ok(r)
         }
-        "enableUwpLoopback" => backup::enable_uwp_loopback(),
-        "backupExport" => Ok(backup::export_backup_zip(&st.paths)?),
+        "enableUwpLoopback" => {
+            // Get-AppxPackage 可能跑数秒，放 blocking 池。
+            tauri::async_runtime::spawn_blocking(backup::enable_uwp_loopback)
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        "backupExport" => {
+            let paths = st.paths.clone();
+            tauri::async_runtime::spawn_blocking(move || backup::export_backup_zip(&paths))
+                .await
+                .map_err(|e| e.to_string())?
+        }
         "backupImport" => {
-            let picked = app
-                .dialog()
-                .file()
-                .add_filter("ZIP", &["zip"])
-                .blocking_pick_file();
+            // 文件对话框会阻塞到用户选择为止，连同 zip 解压一起放 blocking 池。
+            let app2 = app.clone();
+            let picked = tauri::async_runtime::spawn_blocking(move || {
+                app2.dialog()
+                    .file()
+                    .add_filter("ZIP", &["zip"])
+                    .blocking_pick_file()
+            })
+            .await
+            .map_err(|e| e.to_string())?;
             let Some(path) = picked else {
                 return Ok(json!({ "ok": false, "canceled": true }));
             };
             let path = path
                 .into_path()
                 .map_err(|e| format!("路径无效：{}", e))?;
-            let r = backup::import_backup_zip(&path, &st.paths)?;
+            let paths3 = st.paths.clone();
+            let r = tauri::async_runtime::spawn_blocking(move || backup::import_backup_zip(&path, &paths3))
+                .await
+                .map_err(|e| e.to_string())??;
             reload_settings_preserving(st).await;
             let _ = core::run_enhance_and_reload(app, st).await;
             Ok(r)
@@ -1229,18 +1264,23 @@ async fn core_memory_mb(st: &AppState) -> Value {
     let Some(pid) = pid else {
         return Value::Null;
     };
-    let Ok((out, _)) = util::run(
-        "tasklist",
-        &["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"],
-    ) else {
-        return Value::Null;
-    };
-    let re = regex::Regex::new(r#""([\d,]+)\s*K""#).unwrap();
-    re.captures(&out)
-        .and_then(|c| c.get(1))
-        .and_then(|m| m.as_str().replace(',', "").parse::<u64>().ok())
-        .map(|kb| json!((kb / 1024) as u64))
-        .unwrap_or(Value::Null)
+    // tasklist 子进程调用，放 blocking 池（overview 每 1.5s 调一次）。
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok((out, _)) = util::run(
+            "tasklist",
+            &["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"],
+        ) else {
+            return Value::Null;
+        };
+        let re = regex::Regex::new(r#""([\d,]+)\s*K""#).unwrap();
+        re.captures(&out)
+            .and_then(|c| c.get(1))
+            .and_then(|m| m.as_str().replace(',', "").parse::<u64>().ok())
+            .map(|kb| json!((kb / 1024) as u64))
+            .unwrap_or(Value::Null)
+    })
+    .await
+    .unwrap_or(Value::Null)
 }
 
 /// 物理内存 (总量, 已用)，单位字节。
@@ -1291,7 +1331,7 @@ fn system_mem() -> (u64, u64) {
     (0, 0)
 }
 
-fn app_info(st: &AppState) -> Value {
+fn app_info(paths: &Paths) -> Value {
     let os_release = util::run("cmd", &["/c", "ver"]).ok()
         .map(|(o, _)| o.trim().to_string())
         .unwrap_or_default();
@@ -1338,7 +1378,7 @@ fn app_info(st: &AppState) -> Value {
         "platform": if cfg!(windows) { "win32" } else if cfg!(target_os = "macos") { "darwin" } else { "linux" },
         "arch": if std::env::consts::ARCH == "x86_64" { "x64" } else { std::env::consts::ARCH },
         "isDev": cfg!(debug_assertions),
-        "userData": st.paths.user_data.to_string_lossy(),
+        "userData": paths.user_data.to_string_lossy(),
         "osRelease": os_release,
         "osVersion": os_release,
         "osName": os_name,
@@ -1460,7 +1500,7 @@ async fn resolve_external_proxy(app: &AppHandle, st: &AppState) -> Result<Value,
             .map(|s| !s.is_empty())
             .unwrap_or(false);
     if active {
-        sysproxy::stop_pac_server(st);
+        sysproxy::stop_pac_server(st).await;
         let (mixed, bypass) = {
             let i = st.inner.lock().await;
             (
@@ -1476,7 +1516,10 @@ async fn resolve_external_proxy(app: &AppHandle, st: &AppState) -> Result<Value,
         st.inner.lock().await.sys_proxy_on = false;
         let _ = app.emit("system:proxyChanged", json!({ "enabled": false }));
     }
-    let procs = conflict::detect_processes(&st.inner.lock().await.own_core_pids);
+    let own = st.inner.lock().await.own_core_pids.clone();
+    let procs = tauri::async_runtime::spawn_blocking(move || conflict::detect_processes(&own))
+        .await
+        .unwrap_or_default();
     let pids: Vec<u32> = procs
         .iter()
         .flat_map(|p| {
@@ -1510,14 +1553,22 @@ async fn service_install(app: &AppHandle, st: &AppState) -> Result<Value, String
     if running {
         let _ = core::stop(app, st).await;
     }
-    let install = backup::install_service(
-        &st.paths.core_bin(&active),
-        cfg_path.parent().unwrap_or(std::path::Path::new(".")),
-        &cfg_path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default(),
-    );
+    let bin_path = st.paths.core_bin(&active);
+    let work_dir = cfg_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let cfg_name = cfg_path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    // install_service 里要弹 UAC 并等提权脚本跑完，放 blocking 池，
+    // 避免用户不点 UAC 时把 tokio worker 永久挂住。
+    let install = tauri::async_runtime::spawn_blocking(move || {
+        backup::install_service(&bin_path, &work_dir, &cfg_name)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     if let Err(e) = install {
         let mut i = st.inner.lock().await;
         if let Some(o) = i.settings.as_object_mut() {

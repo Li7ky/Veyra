@@ -148,13 +148,17 @@ pub fn update_interval_hours(headers: &Value) -> i64 {
         .unwrap_or(0)
 }
 
+/// 订阅响应体大小上限：防止被劫持的端点用超大响应灌爆内存。
+const MAX_SUB_BYTES: usize = 64 * 1024 * 1024;
+
 fn headers_to_json(headers: &reqwest::header::HeaderMap) -> Value {
     let mut out = Map::new();
     for (k, v) in headers.iter() {
-        out.insert(
-            k.as_str().to_string(),
-            Value::String(v.to_str().unwrap_or("").to_string()),
-        );
+        // 非 ASCII 头值（机场常见的裸 UTF-8 Content-Disposition 文件名）用 to_str 会
+        // 变成空串；改按字节做 UTF-8 宽松解码。同名头保留先到的值。
+        let val = String::from_utf8_lossy(v.as_bytes()).to_string();
+        out.entry(k.as_str().to_string())
+            .or_insert(Value::String(val));
     }
     Value::Object(out)
 }
@@ -176,15 +180,32 @@ async fn fetch_once(
     let client = builder.build().map_err(|e| e.to_string())?;
     let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
     let status = resp.status();
+    if let Some(len) = resp.content_length() {
+        if len as usize > MAX_SUB_BYTES {
+            return Err(format!("订阅体积超过上限（{} MB）", MAX_SUB_BYTES / 1024 / 1024));
+        }
+    }
     let headers = headers_to_json(resp.headers());
-    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    // 分块读取并限制总量：Content-Length 缺失（chunked）时也不能无界读入内存。
+    let mut bytes: Vec<u8> = Vec::new();
+    {
+        use futures_util::StreamExt;
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            if bytes.len() + chunk.len() > MAX_SUB_BYTES {
+                return Err(format!("订阅体积超过上限（{} MB）", MAX_SUB_BYTES / 1024 / 1024));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+    }
     if !status.is_success() {
         return Err(format!("HTTP {}（订阅拉取失败）", status.as_u16()));
     }
     if bytes.is_empty() {
         return Err("订阅内容为空".into());
     }
-    Ok((bytes.to_vec(), headers))
+    Ok((bytes, headers))
 }
 
 /// 下载订阅：默认先走本地混合端口，失败回退直连（与 Electron 版一致）。

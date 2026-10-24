@@ -30,13 +30,35 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "tmp".into());
-    let tmp = path.with_file_name(format!(".{}.tmp-{}", name, std::process::id()));
+    // 临时文件名带自增序号：同一进程内并发写同一目标时不能共用一个 tmp。
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_file_name(format!(".{}.tmp-{}-{}", name, std::process::id(), seq));
     let result = (|| -> Result<(), String> {
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
-        // Windows 下目标被占用时 rename 会失败：先删目标再重试一次。
-        if fs::rename(&tmp, path).is_err() {
-            let _ = fs::remove_file(path);
-            fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+        if let Err(first) = fs::rename(&tmp, path) {
+            // Windows 下目标被占用时 rename 会失败：把旧文件挪到旁路再试；
+            // 二次仍失败则把旧文件放回原位——绝不先删目标，避免文件整个丢失。
+            let backup = path.with_file_name(format!(
+                ".{}.old-{}-{}",
+                name,
+                std::process::id(),
+                seq
+            ));
+            if fs::rename(path, &backup).is_ok() {
+                match fs::rename(&tmp, path) {
+                    Ok(()) => {
+                        let _ = fs::remove_file(&backup);
+                    }
+                    Err(e) => {
+                        let _ = fs::rename(&backup, path);
+                        let _ = fs::remove_file(&tmp);
+                        return Err(e.to_string());
+                    }
+                }
+            } else {
+                let _ = fs::remove_file(&tmp);
+                return Err(first.to_string());
+            }
         }
         Ok(())
     })();
@@ -45,6 +67,9 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), String> {
     }
     result
 }
+
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+use std::sync::atomic::Ordering;
 
 pub fn atomic_write_text(path: &Path, text: &str) -> Result<(), String> {
     atomic_write(path, text.as_bytes())

@@ -268,7 +268,7 @@
       // 预览默认显示当前测试版版本号；?beta=0 可预览正式版标识（正式安装包的版本号来自 tauri.conf / package.json）
       var isBeta = true;
       try { isBeta = new URLSearchParams(location.search).get('beta') !== '0'; } catch (e) { /* 忽略 */ }
-      return {name: 'Veyra-omini', version: isBeta ? '1.1.10-beta.4' : '1.1.10', electron: 'Tauri 2', platform: 'win32', arch: 'x64', isDev: true};
+      return {name: 'Veyra-omini', version: isBeta ? '1.1.10-beta.5' : '1.1.10', electron: 'Tauri 2', platform: 'win32', arch: 'x64', isDev: true};
     }); },
     openPath: function(w) { return delay(100).then(function(){ return {}; }); },
     traffic: function() { return delay(200).then(function(){ return {downloadTotal: 1048576, uploadTotal: 524288, connections: []}; }); },

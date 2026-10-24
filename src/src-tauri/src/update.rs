@@ -453,7 +453,10 @@ pub async fn download_app_update(app: &AppHandle, st: &AppState) -> Result<Value
         st.inner.lock().await.update_pending = Some(dest.clone());
         return Ok(json!({
             "started": false, "downloaded": true, "path": dest.to_string_lossy(),
-            "sha256": sha, "info": info,
+            "sha256": sha,
+            // 上游没给 digest 时只有 ±1KB 长度校验，标记出来供 UI 提示降级。
+            "shaVerified": !expected.is_empty(),
+            "info": info,
         }));
     }
     Err(format!(
@@ -462,13 +465,20 @@ pub async fn download_app_update(app: &AppHandle, st: &AppState) -> Result<Value
     ))
 }
 
-pub fn build_update_script(uninstaller: &str, installer: &str) -> String {
+pub fn build_update_script(uninstaller: &str, installer: &str, main_exe: &str) -> String {
     let q = |p: &str| format!("\"{}\"", p.replace('"', "\"\"").replace('%', "%%"));
     [
         "@echo off".to_string(),
         "ping -n 3 127.0.0.1 >nul".to_string(),
         format!("{} /S", q(uninstaller)),
-        "ping -n 6 127.0.0.1 >nul".to_string(),
+        // NSIS 卸载器会把自身复制到 %TEMP% 后立即返回，真正的删除在后台继续；
+        // 固定 ping 5 秒后直接装安装包，可能与后台删除并发，把新装的文件干掉。
+        // 改为轮询主程序 exe 消失（每秒一次，最多约 60 秒），超时也继续覆盖安装，
+        // 宁可覆盖装也别让应用处于半卸载状态。
+        format!(
+            "for /l %%i in (1,1,60) do (if exist {} ping -n 2 127.0.0.1 >nul)",
+            q(main_exe)
+        ),
         format!("start \"\" {}", q(installer)),
     ]
     .join("\r\n")
@@ -485,6 +495,11 @@ pub async fn install_app_update(app: &AppHandle, st: &AppState, mode: &str) -> R
     if !installer.exists() {
         return Err("安装包不存在或已被清理，请重新下载".into());
     }
+    // 安装前先停内核并清掉自家系统代理：mihomo 没挂 Job Object，父进程退出后会
+    // 变孤儿进程继续锁住 mihomo.exe——NSIS 覆盖/卸载都会撞文件锁，
+    // 注册表也会指向一个没人管的端口。
+    let _ = crate::core::stop(app, st).await;
+    let _ = crate::core::clear_our_system_proxy(app, st).await;
     if mode == "clean" {
         if !st.paths.is_packaged {
             return Err("开发模式无法卸载重装，请直接运行安装包".into());
@@ -506,6 +521,9 @@ pub async fn install_app_update(app: &AppHandle, st: &AppState, mode: &str) -> R
                 })
             })
             .ok_or("找不到卸载程序，请手动卸载后运行安装包")?;
+        let main_exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
         let script = std::env::temp_dir().join(format!("veyra-update-{}.cmd", std::process::id()));
         fs::write(
             &script,
@@ -513,7 +531,8 @@ pub async fn install_app_update(app: &AppHandle, st: &AppState, mode: &str) -> R
                 "{}\r\n",
                 build_update_script(
                     &uninstaller.to_string_lossy(),
-                    &installer.to_string_lossy()
+                    &installer.to_string_lossy(),
+                    &main_exe
                 )
             ),
         )

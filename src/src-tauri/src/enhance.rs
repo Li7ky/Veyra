@@ -183,6 +183,14 @@ pub fn apply_script(config: &Value, script: &str, profile_name: &str) -> Result<
     let rt = rquickjs::Runtime::new().map_err(|e| format!("Script 运行时初始化失败: {}", e))?;
     let ctx = rquickjs::Context::full(&rt)
         .map_err(|e| format!("Script 上下文初始化失败: {}", e))?;
+    // 死循环/内存炸弹防护：QuickJS 没有内建超时，不设中断回调的话
+    // 一个 while(true){} 会让执行线程（可能还持有全局状态锁）永久卡死。
+    rt.set_memory_limit(128 * 1024 * 1024);
+    rt.set_max_stack_size(4 * 1024 * 1024);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    rt.set_interrupt_handler(Some(Box::new(move || {
+        std::time::Instant::now() >= deadline
+    })));
     let input = serde_json::to_string(config).map_err(|e| e.to_string())?;
     ctx.with(|ctx| {
         ctx.globals()

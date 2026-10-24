@@ -946,9 +946,14 @@ export default function App() {
   const [nodeFilter, setNodeFilter] = useState<"all" | "ok" | "timeout" | "untested">("all");
   // 排序 / 过滤共用一个锚定在按钮下方的小菜单
   const [pxMenu, setPxMenu] = useState<{ kind: "sort" | "filter"; x: number; y: number } | null>(null);
-const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list">(
-  (localStorage.getItem("veyra-node-density") as "comfortable" | "compact" | "list") || "comfortable"
-);
+const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list">(() => {
+  // WebView 存储被策略禁用时 localStorage 会直接抛错：初始化器里抛出会炸掉整个 App 首帧。
+  try {
+    return (localStorage.getItem("veyra-node-density") as "comfortable" | "compact" | "list") || "comfortable";
+  } catch {
+    return "comfortable";
+  }
+});
   // 首屏只渲染前 30 个节点，挂载完成后再补全：消除首页→代理切换的卡顿
   const [pxNodeLimit, setPxNodeLimit] = useState(PX_NODE_FIRST);
   const [enhanceLog, setEnhanceLog] = useState<string[]>([]);
@@ -1212,7 +1217,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
   }, []);
 
   const applyStatus = useCallback(
-    (data: { running?: boolean; seq?: number; version?: { version?: string } }) => {
+    (data: { running?: boolean; seq?: number; version?: { version?: string }; startedAt?: number | null }) => {
       if (typeof data.seq === "number") {
         if (data.seq < lastSeqRef.current) return;
         lastSeqRef.current = data.seq;
@@ -1222,8 +1227,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       runningStateRef.current = r;
       setRunning(r);
       if (r && !wasRunning) {
-        // 内核刚启动，记录启动时间
-        setCoreStartTime(Date.now());
+        // 内核刚进入运行态。后端会把真实 startedAt 一起推过来：收养上次遗留的
+        // 内核时避免把运行时长记成从应用启动那一刻起算。
+        const startedAt = typeof data.startedAt === "number" && data.startedAt > 0 ? data.startedAt : 0;
+        setCoreStartTime(startedAt || Date.now());
         // 启动完成：清掉「启动中 (xx%)」这类进度横幅。
         // 错误/冲突横幅不在此列，它们各自有解决事件收尾。
         setBanner((prev) => (/\(\d+%\)/.test(prev) ? "" : prev));
@@ -1269,8 +1276,8 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         setCoreMemMB(null);
         // 与运行分支保持一致：未运行时也持续喂 0，侧栏曲线才会平滑回落到基线而不是断档
         setRateHistory((h) => ({
-          up: [...h.up, 0].slice(-48),
-          down: [...h.down, 0].slice(-48),
+          up: [...h.up, 0].slice(-41),
+          down: [...h.down, 0].slice(-41),
         }));
         if (heavy) {
           setConnections([]);
@@ -1348,10 +1355,11 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
       }
 
       // 流量历史：首页波形图与侧栏迷你曲线都要用，故不受 heavy 限制（heavy 只在首页/代理页为真）。
-      // 每 1.5s 一次 48 元素数组拷贝，开销可忽略；换来侧栏在任何标签页下曲线都连续。
+      // 每 1.5s 一次 41 元素数组拷贝，开销可忽略；换来侧栏在任何标签页下曲线都连续。
+      // 41 个采样点 = 40 个间隔 × 1.5s = 整 60 秒窗口，与横轴 60/45/30/15 刻度对齐。
       setRateHistory((h) => ({
-        up: [...h.up, upRateRef.current].slice(-48),
-        down: [...h.down, downRateRef.current].slice(-48),
+        up: [...h.up, upRateRef.current].slice(-41),
+        down: [...h.down, downRateRef.current].slice(-41),
       }));
 
       if (heavy) {
@@ -1366,8 +1374,12 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
         }
         const px = ov.proxies?.proxies || {};
         const g = Object.values(px).filter((p) => GROUP_TYPES.has(p.type || ""));
-        // 节点/分组数据没变（名称与当前选中节点一致）就跳过，proxies 页不再每 1.5s 全量重渲染
-        const pfp = `${g.length}|${g.map((x) => `${x.name}:${x.now || ""}`).join(",")}`;
+        // 节点/分组数据没变（名称、当前选中、组内节点清单一致）就跳过，proxies 页不再每 1.5s 全量重渲染。
+        // 指纹必须包含组内节点列表：proxy-provider 更新只换 all 不换组名/now，
+        // 漏掉它会让代理页在 provider 更新后一直显示旧节点集合。
+        const pfp = `${g.length}|${g
+          .map((x) => `${x.name}:${x.now || ""}:${(x.all || []).join("|")}`)
+          .join(",")}`;
         if (pfp !== proxiesFpRef.current) {
           proxiesFpRef.current = pfp;
           setProxyMap(px);
@@ -2140,16 +2152,24 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
   async function changeMode(m: string) {
     if (!window.veyra || !running) return;
-    await window.veyra.setMode(m);
-    setMode(m);
-    showToast(`模式：${MODE_LABEL(m)}`);
+    try {
+      await window.veyra.setMode(m);
+      setMode(m);
+      showToast(`模式：${MODE_LABEL(m)}`);
+    } catch (e) {
+      showToast(ipcErrorText(e));
+    }
   }
 
   async function selectNode(name: string) {
     if (!window.veyra || !currentGroup) return;
-    await window.veyra.selectProxy(currentGroup.name || "", name);
-    showToast(`已切换 → ${name}`);
-    refresh();
+    try {
+      await window.veyra.selectProxy(currentGroup.name || "", name);
+      showToast(`已切换 → ${name}`);
+      refresh();
+    } catch (e) {
+      showToast(ipcErrorText(e));
+    }
   }
 
   async function testAll() {
@@ -2158,9 +2178,13 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
   async function reloadProfileLists() {
     if (!window.veyra) return;
-    setProfiles(await window.veyra.listProfiles());
-    setRichProfiles((await window.veyra.listProfilesRich?.()) || []);
-    setSubs(await window.veyra.listSubscriptions());
+    try {
+      setProfiles(await window.veyra.listProfiles());
+      setRichProfiles((await window.veyra.listProfilesRich?.()) || []);
+      setSubs(await window.veyra.listSubscriptions());
+    } catch (e) {
+      showToast(`档案列表刷新失败：${ipcErrorText(e)}`);
+    }
   }
 
   async function updateSubscriptions() {
@@ -3528,6 +3552,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                                               await refresh();
                                               showToast(`已删除「${s.name}」`);
                                             },
+                                            onError: (e) => showToast(`删除失败：${ipcErrorText(e)}`),
                                           })
                                         }
                                       >
@@ -3715,6 +3740,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                                               }
                                               showToast(`已删除 ${p.name}`);
                                             },
+                                            onError: (e) => showToast(`删除失败：${ipcErrorText(e)}`),
                                           })
                                         }
                                       >
@@ -3908,8 +3934,10 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
 
                   {pfSeen.nodes ? (
                     <div className="pf-pane" hidden={pfTab !== "nodes"}>
-                      <ProxiesVisualEditor onToast={showToast} onBusy={setBusy} />
-                      <GroupsVisualEditor onToast={showToast} onBusy={setBusy} />
+                      {/* 保活挂载（首次访问后不卸载），切到本页时传 active 让编辑器重新
+                          拉取 runtime——否则导入新订阅后编辑器里还是旧快照，保存会回写旧数据 */}
+                      <ProxiesVisualEditor onToast={showToast} onBusy={setBusy} active={pfTab === "nodes"} />
+                      <GroupsVisualEditor onToast={showToast} onBusy={setBusy} active={pfTab === "nodes"} />
                     </div>
                   ) : null}
 
@@ -4029,6 +4057,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                               const r = await window.veyra?.clearLogFiles?.();
                               showToast(`已清理文件 ${r?.removed || 0} 个`);
                             },
+                            onError: (e) => showToast(`清理失败：${ipcErrorText(e)}`),
                           })
                         }
                       >
@@ -4632,6 +4661,7 @@ const [nodeDensity, setNodeDensity] = useState<"comfortable" | "compact" | "list
                         await refresh();
                         showToast(`已删除「${name}」`);
                       },
+                      onError: (e) => showToast(`删除失败：${ipcErrorText(e)}`),
                     });
                   }}
                 >

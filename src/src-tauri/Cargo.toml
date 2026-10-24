@@ -1,6 +1,6 @@
 [package]
 name = "veyra-omini"
-version = "1.1.10-beta.4"
+version = "1.1.10-beta.5"
 description = "Veyra-omini"
 edition = "2021"
 rust-version = "1.77"
@@ -16,7 +16,9 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order：Map 保持插入序（对齐 Electron 版按 YAML 书写顺序执行 merge 键的行为，
+# 否则 BTreeMap 字典序会让 rules 整体替换吞掉同文件的 prepend-rules / append-rules）。
+serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml = "0.9"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "io-util", "net", "fs", "process"] }

@@ -1,6 +1,6 @@
 # Veyra-omini
 
-[![Version](https://img.shields.io/badge/version-1.1.10--beta.1-blue)](https://github.com/Li7ky/Veyra/releases)
+[![Version](https://img.shields.io/badge/version-1.1.10--beta.5-blue)](https://github.com/Li7ky/Veyra/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D4)](https://github.com/Li7ky/Veyra/releases)
 [![Core](https://img.shields.io/badge/core-mihomo-0B7A75)](https://github.com/MetaCubeX/mihomo)
 [![Status](https://img.shields.io/badge/status-测试版-orange)](https://github.com/Li7ky/Veyra/releases)

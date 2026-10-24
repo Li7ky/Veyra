@@ -195,8 +195,8 @@ pub fn pac_script(port: u16, bypass: &str) -> String {
             };
             // 10.* 在 PAC 里用 shExpMatch
             pac_rules.push(format!("shExpMatch(host, \"{}\")", pattern));
-        } else if item.parse::<u32>().is_ok() {
-            // 纯 IP 如 10.0.0.5 → 精确匹配
+        } else if item.parse::<std::net::Ipv4Addr>().is_ok() {
+            // 纯 IP 如 10.0.0.5 → 精确匹配（点分十进制 parse::<u32>() 永远失败，不能用）
             pac_rules.push(format!("host === \"{}\"", item));
         } else if item.contains('.') {
             // 域名或子网
@@ -205,6 +205,8 @@ pub fn pac_script(port: u16, bypass: &str) -> String {
             } else {
                 item.to_string()
             };
+            // *.domain 只覆盖子域，裸域本身也要直连
+            pac_rules.push(format!("host === \"{}\"", domain));
             pac_rules.push(format!("shExpMatch(host, \"*.{}\")", domain));
         } else {
             pac_rules.push(format!("shExpMatch(host, \"{}\")", item));
@@ -223,7 +225,7 @@ pub fn pac_script(port: u16, bypass: &str) -> String {
 
 /// 启动 PAC 服务，返回端口。停止旧服务由调用方负责。
 pub async fn start_pac_server(st: &AppState, mixed_port: u16, bypass: &str) -> Result<u16, String> {
-    stop_pac_server(st);
+    stop_pac_server(st).await;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .map_err(|e| e.to_string())?;
@@ -264,15 +266,16 @@ pub async fn start_pac_server(st: &AppState, mixed_port: u16, bypass: &str) -> R
     Ok(port)
 }
 
-pub fn stop_pac_server(st: &AppState) {
+pub async fn stop_pac_server(st: &AppState) {
     if let Ok(mut guard) = st.pac_task.lock() {
         if let Some(handle) = guard.take() {
             handle.abort();
         }
     }
-    if let Ok(mut i) = st.inner.try_lock() {
-        i.pac_port = 0;
-    }
+    // 必须真正等到锁：try_lock 失败就跳过会把旧端口留在 pac_port 里，
+    // 冲突检测会把指向旧端口的外部 PAC 误判成自家代理而漏报。
+    let mut i = st.inner.lock().await;
+    i.pac_port = 0;
 }
 
 pub fn set(mode: &str, mixed_port: u16, bypass: &str, pac_port: u16) -> Result<Value, String> {

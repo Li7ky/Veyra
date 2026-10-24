@@ -932,6 +932,9 @@ async function scanConflict() {
                   window.veyra.startConflictMonitor?.(on).then(() => {
                     setRuntimeMonitorOn(on);
                     onToast(on ? t("conflict.runtimeOn") : t("conflict.runtimeOff"));
+                  }).catch((err) => {
+                    // 失败时勾选状态弹回原样，并给出原因；避免 UI 与后端状态脱节。
+                    onToast(String((err as Error).message || err));
                   });
                 }}
               />

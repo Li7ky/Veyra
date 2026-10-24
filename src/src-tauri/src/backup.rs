@@ -275,8 +275,12 @@ pub fn install_service(bin: &Path, work_dir: &Path, config_file: &str) -> Result
     let bin = bin.to_string_lossy().replace('"', "");
     let wd = work_dir.to_string_lossy().replace('"', "");
     let cfg = config_file.replace('"', "");
-    let bin_path_arg = format!("\\\"{}\\\" -d \\\"{}\\\" -f \\\"{}\\\"", bin, wd, cfg);
-    let wd_sql = wd.replace('\'', "''");
+    // PowerShell 单引号串只有 '' 一个转义，路径先按此清洗。
+    let psq = |s: &str| s.replace('\'', "''");
+    // 注意：不能用 `sc.exe create ... binPath= "..."` 里嵌 \" 的写法——
+    // PowerShell 不认反斜杠转义引号，字符串会在第一个 \" 处提前闭合，
+    // sc.exe 收到的 binPath 是碎片，服务必然创建失败。
+    // 这里改用 New-Service cmdlet：BinaryPathName 走 API 直传，不经原生参数重引。
     let script = format!(
         r#"
 $ErrorActionPreference = 'Stop'
@@ -287,8 +291,8 @@ if ($svc) {{
   Start-Sleep -Seconds 1
 }}
 New-Item -ItemType Directory -Force -Path '{wd}' | Out-Null
-sc.exe create {name} binPath= "{binpath}" start= auto DisplayName= "Veyra Core Service"
-if ($LASTEXITCODE -ne 0) {{ throw "sc.exe create 失败（退出码 $LASTEXITCODE），常见原因：权限不足或路径含特殊字符" }}
+$binpath = '"{bin}" -d "{wd}" -f "{cfg}"'
+New-Service -Name '{name}' -BinaryPathName $binpath -DisplayName 'Veyra Core Service' -StartupType Automatic | Out-Null
 sc.exe description {name} "Veyra mihomo/sing-box elevated service for TUN" | Out-Null
 Start-Service {name} -ErrorAction Stop
 Start-Sleep -Milliseconds 500
@@ -296,8 +300,9 @@ if ((Get-Service -Name '{name}').Status -ne 'Running') {{ throw "服务已创建
 'OK'
 "#,
         name = SERVICE_NAME,
-        wd = wd_sql,
-        binpath = bin_path_arg
+        wd = psq(&wd),
+        bin = psq(&bin),
+        cfg = psq(&cfg)
     );
     util::powershell_elevated(&script).map_err(|e| format!("服务安装失败：{}", e))?;
     Ok(json!({ "ok": true, "name": SERVICE_NAME }))

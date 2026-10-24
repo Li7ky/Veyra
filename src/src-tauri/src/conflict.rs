@@ -75,7 +75,7 @@ pub const KNOWN_PROXY_PORTS: &[(u16, &str, &str)] = &[
     (3128, "Squid/Privoxy", "v2ray"),
     (10086, "NekoRay", "v2ray"),
     (65534, "SS Alt", "ss"),
-    (443, "Trojan (shared with HTTPS)", "trojan"),
+    // 443 已移除：本机跑 IIS/开发服务器的用户会被每 5 秒一轮的监控持续误报高危。
     (9099, "sing-box API", "other"),
     (8118, "Privoxy", "other"),
     (51820, "WireGuard TunSafe", "other"),
@@ -373,14 +373,26 @@ pub struct ScanOptions {
 
 pub async fn full_scan(opts: ScanOptions) -> Value {
     let mut found: Vec<Value> = Vec::new();
-    if let Some(mut hit) = detect_self_conflict(opts.self_pid) {
+    let self_pid = opts.self_pid;
+    if let Some(mut hit) = tauri::async_runtime::spawn_blocking(move || detect_self_conflict(self_pid))
+        .await
+        .unwrap_or(None)
+    {
         hit["severity"] = json!("critical");
         found.push(hit);
     }
+    let own_pids = opts.own_pids.clone();
+    let my_ports = opts.my_ports.clone();
+    let my_custom = opts.my_custom_ports.clone();
     let (ports, procs, custom) = futures_util::future::join3(
-        scan_ports(&opts.my_ports),
-        async { detect_processes(&opts.own_pids) },
-        scan_custom_ports(&opts.my_custom_ports),
+        scan_ports(&my_ports),
+        // tasklist / route print 都是秒级阻塞调用，放 blocking 池，别饿死 tokio worker。
+        async {
+            tauri::async_runtime::spawn_blocking(move || detect_processes(&own_pids))
+                .await
+                .unwrap_or_default()
+        },
+        scan_custom_ports(&my_custom),
     )
     .await;
     found.extend(ports);
@@ -389,7 +401,13 @@ pub async fn full_scan(opts: ScanOptions) -> Value {
     if opts.include_system || opts.include_system_proxy {
         let sys_proxy = detect_system_proxy();
         let dns = if opts.include_system { detect_dns().await } else { None };
-        let route = if opts.include_system { detect_route() } else { None };
+        let route = if opts.include_system {
+            tauri::async_runtime::spawn_blocking(detect_route)
+                .await
+                .unwrap_or(None)
+        } else {
+            None
+        };
         if let Some(v) = sys_proxy {
             found.push(v);
         }

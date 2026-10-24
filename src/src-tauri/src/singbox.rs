@@ -330,16 +330,13 @@ fn convert_proxy(p: &Value, warnings: &mut Vec<String>) -> Option<Value> {
             if let Some(a) = auth {
                 o.insert("auth_str".into(), json!(str_of(Some(a), "")));
             }
-            let mut tls = tls_of(p).unwrap_or_else(|| json!({}));
+            // hysteria 的 TLS 是协议隐式必需，订阅通常不写 tls: true；
+            // 不注入默认值会生成缺 tls 的出站，导致整份 sing-box 配置加载失败。
+            let mut tls = tls_of(p).unwrap_or_else(|| json!({ "enabled": true }));
             if tls.get("server_name").is_none() {
-                if let Some(sni) = p.get("sni") {
-                    tls["server_name"] = json!(str_of(Some(sni), ""));
-                }
+                tls["server_name"] = json!(str_of(pick(p, &["sni"]), &server));
             }
-            if tls.as_object().map(|m| !m.is_empty()).unwrap_or(false) {
-                tls["enabled"] = json!(true);
-                o.insert("tls".into(), tls);
-            }
+            o.insert("tls".into(), tls);
             Some(Value::Object(o))
         }
         "hysteria2" | "hy2" => {
@@ -351,6 +348,14 @@ fn convert_proxy(p: &Value, warnings: &mut Vec<String>) -> Option<Value> {
                     ""
                 )),
             );
+            if let Some(ports) = p.get("ports") {
+                let (pp, ranges) = parse_ports(&str_of(Some(ports), ""));
+                let mut sp: Vec<String> = ranges;
+                sp.extend(pp.iter().map(|p| p.to_string()));
+                if !sp.is_empty() {
+                    o.insert("server_ports".into(), json!(sp));
+                }
+            }
             if let Some(obfs) = p.get("obfs") {
                 let (ot, op) = if obfs.is_object() {
                     (
@@ -395,7 +400,12 @@ fn convert_proxy(p: &Value, warnings: &mut Vec<String>) -> Option<Value> {
                 o.insert("zero_rtt_handshake".into(), json!(true));
             }
             if let Some(hb) = pick(p, &["heartbeat-interval", "heartbeat_interval"]) {
-                o.insert("heartbeat".into(), json!(str_of(Some(hb), "")));
+                // Clash 的 heartbeat-interval 是毫秒数；sing-box 的 heartbeat 是
+                // Go duration 字符串，直接塞 "3000" 会被拒或语义错误。
+                let ms = num_u(Some(hb), 0);
+                if ms > 0 {
+                    o.insert("heartbeat".into(), json!(format!("{}ms", ms)));
+                }
             }
             let mut tls = tls_of(p).unwrap_or_else(|| json!({ "enabled": true }));
             if tls.get("server_name").is_none() {

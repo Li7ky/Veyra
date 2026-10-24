@@ -121,7 +121,9 @@ function TestsPage({ running, onToast }: { running: boolean; onToast: (m: string
   const [items, setItems] = useState<UnlockItem[]>(IDLE);
   const [busyAll, setBusyAll] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  // 单项测试可并发：用集合记录，避免单值 busyId 在 A/B 两项并发时被先完成的
+  // 一方清空，导致仍在飞行中的项提前解锁按钮、可重复点击。
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(IDLE.length);
   const [filter, setFilter] = useState<Filter>("all");
@@ -184,7 +186,7 @@ function TestsPage({ running, onToast }: { running: boolean; onToast: (m: string
       onToast("请先启动内核再测试");
       return;
     }
-    setBusyId(id);
+    setBusyIds((prev) => new Set(prev).add(id));
     try {
       const r = await window.veyra.streamingUnlockOne(id);
       mergeOne({ ...r, id, title: r.title || titleById.get(id) || id } as UnlockItem);
@@ -198,7 +200,11 @@ function TestsPage({ running, onToast }: { running: boolean; onToast: (m: string
         note: errText(e),
       });
     } finally {
-      setBusyId(null);
+      setBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   }
 
@@ -241,7 +247,7 @@ function TestsPage({ running, onToast }: { running: boolean; onToast: (m: string
           break;
         }
         const id = ids[i];
-        setBusyId(id);
+        setBusyIds((prev) => new Set(prev).add(id));
         try {
           const r = await window.veyra.streamingUnlockOne(id);
           if (token !== runTokenRef.current) break;
@@ -263,7 +269,7 @@ function TestsPage({ running, onToast }: { running: boolean; onToast: (m: string
     } finally {
       // 只有当前批次负责收尾；过期批次不得关掉新一轮的进度条/停止标记
       if (token === runTokenRef.current) {
-        setBusyId(null);
+        setBusyIds(new Set());
         setBusyAll(false);
         setStopping(false);
         stopRef.current = false;
@@ -348,8 +354,8 @@ function TestsPage({ running, onToast }: { running: boolean; onToast: (m: string
   /** 卡片可见性：筛选器命中，且正在测试的项永远可见（避免它从视野里消失） */
   const visibleOf = (u: UnlockItem): boolean => {
     if (filter === "all") return true;
-    if (busyId === u.id) return true;
-    return stateOf(u, busyId === u.id) === filter;
+    if (busyIds.has(u.id)) return true;
+    return stateOf(u, busyIds.has(u.id)) === filter;
   };
 
   return (
@@ -390,7 +396,9 @@ function TestsPage({ running, onToast }: { running: boolean; onToast: (m: string
           </div>
           <span>
             已完成 {done}/{total}
-            {busyId ? ` · 正在检测 ${titleById.get(busyId) || busyId}` : ""}
+            {busyIds.size
+              ? ` · 正在检测 ${titleById.get([...busyIds][0]) || [...busyIds][0]}`
+              : ""}
           </span>
         </div>
       ) : null}
@@ -503,7 +511,7 @@ function TestsPage({ running, onToast }: { running: boolean; onToast: (m: string
             </div>
             <div className="tp-grid">
               {list.map((u) => {
-                const isCurrent = busyId === u.id;
+                const isCurrent = busyIds.has(u.id);
                 // 串行队列里，尚未轮到的项显示「排队中」，只有真正在跑的项才显示「测试中」
                 const queued = busyAll && !isCurrent && !u.testedAt;
                 const state: CardState = queued ? "queued" : stateOf(u, isCurrent);
@@ -542,7 +550,7 @@ function TestsPage({ running, onToast }: { running: boolean; onToast: (m: string
                         title={`${t("tests.retest", "单独测试")} ${u.title}`}
                         aria-label={`${t("tests.retest", "单独测试")} ${u.title}`}
                       >
-                        <RefreshCw size={14} className={busyId === u.id ? "spin" : undefined} />
+                        <RefreshCw size={14} className={busyIds.has(u.id) ? "spin" : undefined} />
                       </button>
                     </div>
 

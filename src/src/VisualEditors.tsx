@@ -32,19 +32,25 @@ const EMPTY_PROXY: ProxyDraft = {
 export function ProxiesVisualEditor({
   onToast,
   onBusy,
+  active,
 }: {
   onToast: (m: string) => void;
   onBusy: (v: boolean) => void;
+  /** 父组件保活挂载本编辑器，切到本页时置 true，触发重新拉取 runtime 快照 */
+  active: boolean;
 }) {
   const [rows, setRows] = useState<ProxyDraft[]>([]);
   const [draft, setDraft] = useState<ProxyDraft>({ ...EMPTY_PROXY });
 
   useEffect(() => {
+    if (!active) return;
+    let alive = true;
     (async () => {
       try {
         const text = (await window.veyra?.readRuntime?.()) || "";
         const cfg = (yaml.load(text) as { proxies?: Record<string, unknown>[] }) || {};
         const list = Array.isArray(cfg.proxies) ? cfg.proxies : [];
+        if (!alive) return;
         setRows(
           list.slice(0, 200).map((p) => ({
             name: String(p.name || ""),
@@ -57,10 +63,13 @@ export function ProxiesVisualEditor({
           }))
         );
       } catch {
-        setRows([]);
+        if (alive) setRows([]);
       }
     })();
-  }, []);
+    return () => {
+      alive = false;
+    };
+  }, [active]);
 
   async function save() {
     // 端口校验前置：`Number(r.port) || 443` 会把空值 / "abc" / 0 / 65536 全都
@@ -227,19 +236,25 @@ export function ProxiesVisualEditor({
 export function GroupsVisualEditor({
   onToast,
   onBusy,
+  active,
 }: {
   onToast: (m: string) => void;
   onBusy: (v: boolean) => void;
+  /** 同 Proxies 编辑器：切到本页时重新拉取 runtime 快照 */
+  active: boolean;
 }) {
   const [rows, setRows] = useState<GroupDraft[]>([]);
   const [draft, setDraft] = useState<GroupDraft>({ name: "", type: "select", proxies: "DIRECT" });
 
   useEffect(() => {
+    if (!active) return;
+    let alive = true;
     (async () => {
       try {
         const text = (await window.veyra?.readRuntime?.()) || "";
         const cfg = (yaml.load(text) as { "proxy-groups"?: Record<string, unknown>[] }) || {};
         const list = Array.isArray(cfg["proxy-groups"]) ? cfg["proxy-groups"] : [];
+        if (!alive) return;
         setRows(
           list.slice(0, 80).map((g) => ({
             name: String(g.name || ""),
@@ -248,10 +263,13 @@ export function GroupsVisualEditor({
           }))
         );
       } catch {
-        setRows([]);
+        if (alive) setRows([]);
       }
     })();
-  }, []);
+    return () => {
+      alive = false;
+    };
+  }, [active]);
 
   async function save() {
     onBusy(true);

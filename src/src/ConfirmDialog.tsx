@@ -43,7 +43,9 @@ export type ConfirmRequest = {
   confirmText?: string;
   cancelText?: string;
   danger?: boolean;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
+  /** 异步 onConfirm 失败时的回调；不传则只写 console，避免 unhandled rejection 静默吞错 */
+  onError?: (e: unknown) => void;
 };
 
 /** 统一二次确认弹窗：危险操作先问一句。
@@ -94,7 +96,14 @@ export default function ConfirmDialog({
             className={req.danger ? "btn danger btn-sm" : "btn primary btn-sm"}
             onClick={() => {
               onClose();
-              req.onConfirm();
+              // onConfirm 常是 async IPC 调用：不接住 reject 会变成 unhandled
+              // rejection，弹窗已关、列表没刷新、用户还以为操作成功了。
+              Promise.resolve()
+                .then(req.onConfirm)
+                .catch((e) => {
+                  if (req.onError) req.onError(e);
+                  else console.error("[veyra] confirm action failed:", e);
+                });
             }}
           >
             {req.confirmText || t("common.confirm", "确认")}

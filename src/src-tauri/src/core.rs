@@ -21,7 +21,7 @@ pub fn log_ring() -> &'static std::sync::Mutex<VecDeque<String>> {
     RING.get_or_init(Default::default)
 }
 
-fn push_log_line(app: &AppHandle, line: &str) {
+pub fn push_log_line(app: &AppHandle, line: &str) {
     if let Ok(mut g) = log_ring().lock() {
         g.push_back(line.to_string());
         while g.len() > 500 {
@@ -44,6 +44,7 @@ pub fn emit_status(app: &AppHandle, inner: &mut Inner, version: Option<Value>) {
             "running": inner.online,
             "seq": inner.seq,
             "version": version,
+            "startedAt": inner.started_at,
         }),
     );
 }
@@ -196,11 +197,13 @@ pub async fn run_enhance_and_reload(
 ) -> Result<(String, Vec<String>, Vec<String>), String> {
     st.paths.ensure()?;
     profiles::migrate_legacy_files(&st.paths);
-    let (text, warnings, logs) = {
+    // 锁内只取参数，增强（可能跑用户 JS 脚本）放在锁外执行，
+    // 避免脚本卡死时连带挂死所有依赖全局状态的 IPC。
+    let opts = {
         let inner = st.inner.lock().await;
-        let opts = enhance_opts(&inner);
-        enhance::enhance_and_write(&st.paths, &opts)?
+        enhance_opts(&inner)
     };
+    let (text, warnings, logs) = enhance::enhance_and_write(&st.paths, &opts)?;
     reload_runtime_config(app, st).await;
     Ok((text, warnings, logs))
 }
@@ -485,6 +488,9 @@ pub async fn start(app: &AppHandle, st: &AppState) -> Result<Value, String> {
                 for _ in 0..40 {
                     if let Ok(v) = api(&controller, &secret, "/version", "GET", None).await {
                         let mut i = st.inner.lock().await;
+                        if i.started_at.is_none() {
+                            i.started_at = Some(util::now_ms());
+                        }
                         set_online(app, &mut i, true, Some(v.clone()));
                         return Ok(json!({ "version": v, "viaService": true }));
                     }
@@ -509,6 +515,10 @@ pub async fn start(app: &AppHandle, st: &AppState) -> Result<Value, String> {
     };
     if let Ok(v) = api(&controller, &secret, "/version", "GET", None).await {
         let mut i = st.inner.lock().await;
+        // 收养外部/遗留内核：没有真实启动时间，用当下近似，避免运行时长从 0 开始误导。
+        if i.started_at.is_none() {
+            i.started_at = Some(util::now_ms());
+        }
         set_online(app, &mut i, true, Some(v.clone()));
         push_log_line(
             app,
@@ -560,24 +570,22 @@ pub async fn start(app: &AppHandle, st: &AppState) -> Result<Value, String> {
     let has_profile = profiles::active_uid(&st.paths).is_some();
     if active_core == "singbox" {
         if has_profile {
-            let (text, warnings, logs) = {
+            let opts = {
                 let i = st.inner.lock().await;
-                let opts = enhance_opts(&i);
-                enhance::enhance_and_write(&st.paths, &opts)?
+                enhance_opts(&i)
             };
-            let _ = (text, warnings, logs);
+            let _ = enhance::enhance_and_write(&st.paths, &opts)?;
         } else {
             let i = st.inner.lock().await;
             patch_runtime_ports(&st.paths, &i)?;
         }
         rebuild_singbox_config(app, st).await?;
     } else if has_profile {
-        let (text, warnings, logs) = {
+        let opts = {
             let i = st.inner.lock().await;
-            let opts = enhance_opts(&i);
-            enhance::enhance_and_write(&st.paths, &opts)?
+            enhance_opts(&i)
         };
-        let _ = (text, warnings, logs);
+        let _ = enhance::enhance_and_write(&st.paths, &opts)?;
     } else {
         let i = st.inner.lock().await;
         patch_runtime_ports(&st.paths, &i)?;
@@ -730,7 +738,13 @@ fn watch_exit(app: AppHandle, generation: u64) {
                     tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(Duration::from_secs(3)).await;
                         let st = a.state::<AppState>();
-                        if st.inner.lock().await.core.is_none() {
+                        // 延迟 3s 期间用户可能手动停止了内核（stop 会推进 core_gen）
+                        // 或正在退出——这些情况下不能再把内核拉起来。
+                        let ok_to_restart = {
+                            let i = st.inner.lock().await;
+                            i.core_gen == generation && i.core.is_none() && !i.stopping && !i.quitting
+                        };
+                        if ok_to_restart {
                             // 重启失败（端口被占、二进制缺失、配置报错）时没人会再走
                             // 下面的清理分支——内核已经空了，watch_exit 下一轮就 return。
                             // 所以这里必须自己把系统代理收掉，否则 Windows 一直指向死端口。
@@ -765,6 +779,7 @@ async fn stop_inner(app: &AppHandle, st: &AppState, clear_proxy: bool) -> Result
         let mut i = st.inner.lock().await;
         i.stopping = true;
         i.own_core_pids.clear();
+        i.core_gen += 1; // 让崩溃自动重启的延迟任务失效：用户手动停止就是最终意图
         i.core.take()
     };
     if let Some(mut child) = child {
@@ -785,16 +800,22 @@ async fn stop_inner(app: &AppHandle, st: &AppState, clear_proxy: bool) -> Result
             .await
             .is_ok()
         {
-            if let Some(pid) = find_pid_listening_on(
-                controller
-                    .rsplit(':')
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0),
-            ) {
-                let bin_dir = st.paths.core_bin(&active);
-                let bin_dir = bin_dir.parent().unwrap_or(std::path::Path::new("."));
-                if let Some(exe) = find_process_exe(pid) {
+            let ctrl_port = controller
+                .rsplit(':')
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let bin_dir = st.paths.core_bin(&active);
+            let bin_dir = bin_dir.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+            // netstat / PowerShell 都是秒级阻塞调用，放 blocking 池执行。
+            let pid = tauri::async_runtime::spawn_blocking(move || find_pid_listening_on(ctrl_port))
+                .await
+                .unwrap_or(None);
+            if let Some(pid) = pid {
+                if let Some(exe) = tauri::async_runtime::spawn_blocking(move || find_process_exe(pid))
+                    .await
+                    .unwrap_or(None)
+                {
                     if exe
                         .to_string_lossy()
                         .to_lowercase()
@@ -870,12 +891,16 @@ pub async fn status(app: &AppHandle, st: &AppState) -> Value {
             let mut i = st.inner.lock().await;
             i.api_fail_streak = 0;
             if !i.online {
+                if i.started_at.is_none() {
+                    i.started_at = Some(util::now_ms());
+                }
                 set_online(app, &mut i, true, Some(v.clone()));
             }
             json!({
                 "running": true,
                 "version": v,
                 "pid": i.core.as_ref().map(|c| c.id()),
+                "startedAt": i.started_at,
                 "seq": i.seq,
             })
         }
@@ -889,6 +914,7 @@ pub async fn status(app: &AppHandle, st: &AppState) -> Value {
             json!({
                 "running": i.online,
                 "pid": i.core.as_ref().map(|c| c.id()),
+                "startedAt": i.started_at,
                 "seq": i.seq,
             })
         }
@@ -915,7 +941,12 @@ pub async fn core_info(st: &AppState) -> Value {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-    let file_version = core_version_of(&bin, &active);
+    // core_version_of 会拉起内核二进制取 -v，放 blocking 池执行。
+    let bin2 = bin.clone();
+    let active2 = active.clone();
+    let file_version = tauri::async_runtime::spawn_blocking(move || core_version_of(&bin2, &active2))
+        .await
+        .unwrap_or_default();
     let build_asset = util::read_text(&st.paths.core_build_file(&active))
         .unwrap_or_default()
         .lines()
@@ -968,8 +999,13 @@ fn core_version_of(bin: &std::path::Path, core: &str) -> String {
 }
 
 pub async fn core_list(st: &AppState) -> Value {
-    let mihomo = core_version_of(&st.paths.bin, "mihomo");
-    let singbox = core_version_of(&st.paths.singbox_bin, "singbox");
+    let bin = st.paths.bin.clone();
+    let sb = st.paths.singbox_bin.clone();
+    let (mihomo, singbox) = tauri::async_runtime::spawn_blocking(move || {
+        (core_version_of(&bin, "mihomo"), core_version_of(&sb, "singbox"))
+    })
+    .await
+    .unwrap_or_default();
     let active = st.inner.lock().await.active_core.clone();
     json!({
         "active": active,
@@ -1078,10 +1114,15 @@ pub async fn apply_proxy_mode(
     let pac_port = if m == "pac" {
         sysproxy::start_pac_server(st, mixed, &bypass).await?
     } else {
-        sysproxy::stop_pac_server(st);
+        sysproxy::stop_pac_server(st).await;
         0
     };
-    let r = sysproxy::set(&m, mixed, &bypass, pac_port)?;
+    // reg.exe ×3 + WinINET 刷新是秒级阻塞调用，放 blocking 池执行。
+    let m2 = m.clone();
+    let bypass2 = bypass.clone();
+    let r = tauri::async_runtime::spawn_blocking(move || sysproxy::set(&m2, mixed, &bypass2, pac_port))
+        .await
+        .map_err(|e| e.to_string())??;
     {
         let mut i = st.inner.lock().await;
         i.sys_proxy_on = m != "off";

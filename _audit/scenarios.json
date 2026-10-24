@@ -1,0 +1,448 @@
+{
+  "set-01-自检": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "scrollY",
+        "tag": "MAIN",
+        "cls": "stage",
+        "scrollH": 841,
+        "clientH": 624
+      }
+    ]
+  },
+  "set-02-内核": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": []
+  },
+  "set-03-网络": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "scrollY",
+        "tag": "MAIN",
+        "cls": "stage",
+        "scrollH": 1132,
+        "clientH": 624
+      }
+    ]
+  },
+  "set-04-TUN": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "scrollY",
+        "tag": "MAIN",
+        "cls": "stage",
+        "scrollH": 660,
+        "clientH": 624
+      }
+    ]
+  },
+  "set-05-DNS": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "scrollY",
+        "tag": "MAIN",
+        "cls": "stage",
+        "scrollH": 687,
+        "clientH": 624
+      }
+    ]
+  },
+  "set-06-系统": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "scrollY",
+        "tag": "MAIN",
+        "cls": "stage",
+        "scrollH": 1151,
+        "clientH": 624
+      }
+    ]
+  },
+  "set-07-热键": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": []
+  },
+  "set-08-外观": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": []
+  },
+  "set-09-备份": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": []
+  },
+  "set-10-关于": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": []
+  },
+  "prof-增强": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": []
+  },
+  "prof-节点编辑": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "scrollY",
+        "tag": "MAIN",
+        "cls": "stage",
+        "scrollH": 1048,
+        "clientH": 624
+      }
+    ]
+  },
+  "prof-YAML": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": []
+  },
+  "rules-app-proc": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "clipped",
+        "tag": "MAIN",
+        "cls": "stage",
+        "scrollW": 1332,
+        "clientW": 880,
+        "text": "概览已停止规则 · 0 节点可用体检已停止代理未启动内核未运行，请到「设置 · "
+      },
+      {
+        "kind": "outside",
+        "tag": "SELECT",
+        "cls": "s-input rl-proc-policy",
+        "left": 395,
+        "right": 1225,
+        "top": 124,
+        "text": "走代理直连"
+      },
+      {
+        "kind": "outside",
+        "tag": "BUTTON",
+        "cls": "btn primary btn-sm",
+        "left": 1233,
+        "right": 1346,
+        "top": 127,
+        "text": "添加应用规则"
+      },
+      {
+        "kind": "outside",
+        "tag": "svg",
+        "cls": "[object SVGAnimatedString]",
+        "left": 1244,
+        "right": 1258,
+        "top": 134,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "LABEL",
+        "cls": "rl-search",
+        "left": 1354,
+        "right": 1522,
+        "top": 126,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "svg",
+        "cls": "[object SVGAnimatedString]",
+        "left": 1363,
+        "right": 1376,
+        "top": 135,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "path",
+        "cls": "[object SVGAnimatedString]",
+        "left": 1372,
+        "right": 1375,
+        "top": 144,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "circle",
+        "cls": "[object SVGAnimatedString]",
+        "left": 1365,
+        "right": 1374,
+        "top": 136,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "INPUT",
+        "cls": "",
+        "left": 1382,
+        "right": 1513,
+        "top": 133,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "DIV",
+        "cls": "monaco-aria-container",
+        "left": -12988,
+        "right": -12987,
+        "top": -1,
+        "text": ""
+      }
+    ]
+  },
+  "rules-input-typed": {
+    "ret": "NO_INPUT",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "clipped",
+        "tag": "MAIN",
+        "cls": "stage",
+        "scrollW": 1332,
+        "clientW": 880,
+        "text": "概览已停止规则 · 0 节点可用体检已停止代理未启动内核未运行，请到「设置 · "
+      },
+      {
+        "kind": "outside",
+        "tag": "SELECT",
+        "cls": "s-input rl-proc-policy",
+        "left": 395,
+        "right": 1225,
+        "top": 124,
+        "text": "走代理直连"
+      },
+      {
+        "kind": "outside",
+        "tag": "BUTTON",
+        "cls": "btn primary btn-sm",
+        "left": 1233,
+        "right": 1346,
+        "top": 127,
+        "text": "添加应用规则"
+      },
+      {
+        "kind": "outside",
+        "tag": "svg",
+        "cls": "[object SVGAnimatedString]",
+        "left": 1244,
+        "right": 1258,
+        "top": 134,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "LABEL",
+        "cls": "rl-search",
+        "left": 1354,
+        "right": 1522,
+        "top": 126,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "svg",
+        "cls": "[object SVGAnimatedString]",
+        "left": 1363,
+        "right": 1376,
+        "top": 135,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "path",
+        "cls": "[object SVGAnimatedString]",
+        "left": 1372,
+        "right": 1375,
+        "top": 144,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "circle",
+        "cls": "[object SVGAnimatedString]",
+        "left": 1365,
+        "right": 1374,
+        "top": 136,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "INPUT",
+        "cls": "",
+        "left": 1382,
+        "right": 1513,
+        "top": 133,
+        "text": ""
+      },
+      {
+        "kind": "outside",
+        "tag": "DIV",
+        "cls": "monaco-aria-container",
+        "left": -12988,
+        "right": -12987,
+        "top": -1,
+        "text": ""
+      }
+    ]
+  },
+  "tests-filter-ok": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "outside",
+        "tag": "DIV",
+        "cls": "monaco-aria-container",
+        "left": -12988,
+        "right": -12987,
+        "top": -1,
+        "text": ""
+      }
+    ]
+  },
+  "conn-empty": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "outside",
+        "tag": "DIV",
+        "cls": "monaco-aria-container",
+        "left": -12988,
+        "right": -12987,
+        "top": -1,
+        "text": ""
+      }
+    ]
+  },
+  "home-rail-collapsed": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "outside",
+        "tag": "DIV",
+        "cls": "monaco-aria-container",
+        "left": -12988,
+        "right": -12987,
+        "top": -1,
+        "text": ""
+      }
+    ]
+  },
+  "home-rail-restored": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "outside",
+        "tag": "DIV",
+        "cls": "monaco-aria-container",
+        "left": -12988,
+        "right": -12987,
+        "top": -1,
+        "text": ""
+      }
+    ]
+  },
+  "home-health-open": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "outside",
+        "tag": "DIV",
+        "cls": "monaco-aria-container",
+        "left": -12988,
+        "right": -12987,
+        "top": -1,
+        "text": ""
+      }
+    ]
+  },
+  "home-health-closed": {
+    "ret": "esc",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "outside",
+        "tag": "DIV",
+        "cls": "monaco-aria-container",
+        "left": -12988,
+        "right": -12987,
+        "top": -1,
+        "text": ""
+      }
+    ]
+  },
+  "proxies-density-compact": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "outside",
+        "tag": "DIV",
+        "cls": "monaco-aria-container",
+        "left": -12988,
+        "right": -12987,
+        "top": -1,
+        "text": ""
+      }
+    ]
+  },
+  "proxies-density-list": {
+    "ret": "ok",
+    "docW": 1080,
+    "docH": 680,
+    "problems": [
+      {
+        "kind": "outside",
+        "tag": "DIV",
+        "cls": "monaco-aria-container",
+        "left": -12988,
+        "right": -12987,
+        "top": -1,
+        "text": ""
+      }
+    ]
+  }
+}

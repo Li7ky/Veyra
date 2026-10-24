@@ -1,0 +1,186 @@
+{
+  "light": {
+    "__booted": true,
+    "home": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "首页"
+    },
+    "proxies": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "代理"
+    },
+    "profiles": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "订阅"
+    },
+    "connections": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "连接"
+    },
+    "rules": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "规则"
+    },
+    "logs": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "日志"
+    },
+    "tests": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "测试"
+    },
+    "settings": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "设置"
+    }
+  },
+  "dark": {
+    "__booted": true,
+    "home": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "首页"
+    },
+    "proxies": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "代理"
+    },
+    "profiles": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "订阅"
+    },
+    "connections": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "连接"
+    },
+    "rules": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "规则"
+    },
+    "logs": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "日志"
+    },
+    "tests": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "测试"
+    },
+    "settings": {
+      "vw": 1280,
+      "vh": 860,
+      "docScrollW": 1280,
+      "docScrollH": 860,
+      "overflowX": [],
+      "overflowXCount": 0,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "设置"
+    }
+  },
+  "consoleLog": [],
+  "errors": []
+}

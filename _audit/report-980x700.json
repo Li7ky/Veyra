@@ -1,0 +1,783 @@
+{
+  "light": {
+    "__booted": true,
+    "home": {
+      "vw": 980,
+      "vh": 700,
+      "docScrollW": 980,
+      "docScrollH": 700,
+      "overflowX": [
+        {
+          "tag": "DIV",
+          "cls": "app   ",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "DIV",
+          "cls": "container",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "HEADER",
+          "cls": "header",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8"
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-actions",
+          "left": 649,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-icons",
+          "left": 929,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 968,
+          "right": 998,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-minus",
+          "left": 973,
+          "right": 993,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 1000,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-x",
+          "left": 1005,
+          "right": 1025,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "grid-12 rail-compact",
+          "left": 0,
+          "right": 1040,
+          "text": "首页代理订阅连接规则日志测试设置已停止代理关闭连接0内存—内核Mihomo概览已"
+        }
+      ],
+      "overflowXCount": 47,
+      "clipped": [
+        {
+          "cls": "mono",
+          "scrollW": 91,
+          "clientW": 59,
+          "text": "127.0.0.1:19097"
+        }
+      ],
+      "clippedCount": 1,
+      "navActive": "首页"
+    },
+    "proxies": {
+      "vw": 980,
+      "vh": 700,
+      "docScrollW": 980,
+      "docScrollH": 700,
+      "overflowX": [
+        {
+          "tag": "DIV",
+          "cls": "app   ",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "DIV",
+          "cls": "container",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "HEADER",
+          "cls": "header",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8"
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-actions",
+          "left": 649,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-icons",
+          "left": 929,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 968,
+          "right": 998,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-minus",
+          "left": 973,
+          "right": 993,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 1000,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-x",
+          "left": 1005,
+          "right": 1025,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "grid-12 no-rail",
+          "left": 0,
+          "right": 1040,
+          "text": "首页代理订阅连接规则日志测试设置已停止代理关闭连接0内存—内核Mihomo概览已"
+        }
+      ],
+      "overflowXCount": 23,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "代理"
+    },
+    "profiles": {
+      "vw": 980,
+      "vh": 700,
+      "docScrollW": 980,
+      "docScrollH": 700,
+      "overflowX": [
+        {
+          "tag": "DIV",
+          "cls": "app   ",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "DIV",
+          "cls": "container",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "HEADER",
+          "cls": "header",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8"
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-actions",
+          "left": 649,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-icons",
+          "left": 929,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 968,
+          "right": 998,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-minus",
+          "left": 973,
+          "right": 993,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 1000,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-x",
+          "left": 1005,
+          "right": 1025,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "grid-12 no-rail",
+          "left": 0,
+          "right": 1040,
+          "text": "首页代理订阅连接规则日志测试设置已停止代理关闭连接0内存—内核Mihomo概览已"
+        }
+      ],
+      "overflowXCount": 31,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "订阅"
+    },
+    "connections": {
+      "vw": 980,
+      "vh": 700,
+      "docScrollW": 980,
+      "docScrollH": 700,
+      "overflowX": [
+        {
+          "tag": "DIV",
+          "cls": "app   ",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "DIV",
+          "cls": "container",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "HEADER",
+          "cls": "header",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8"
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-actions",
+          "left": 649,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-icons",
+          "left": 929,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 968,
+          "right": 998,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-minus",
+          "left": 973,
+          "right": 993,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 1000,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-x",
+          "left": 1005,
+          "right": 1025,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "grid-12 no-rail",
+          "left": 0,
+          "right": 1040,
+          "text": "首页代理订阅连接规则日志测试设置已停止代理关闭连接0内存—内核Mihomo概览已"
+        }
+      ],
+      "overflowXCount": 23,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "连接"
+    },
+    "rules": {
+      "vw": 980,
+      "vh": 700,
+      "docScrollW": 980,
+      "docScrollH": 700,
+      "overflowX": [
+        {
+          "tag": "DIV",
+          "cls": "app   ",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "DIV",
+          "cls": "container",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "HEADER",
+          "cls": "header",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8"
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-actions",
+          "left": 649,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-icons",
+          "left": 929,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 968,
+          "right": 998,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-minus",
+          "left": 973,
+          "right": 993,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 1000,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-x",
+          "left": 1005,
+          "right": 1025,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "grid-12 no-rail",
+          "left": 0,
+          "right": 1040,
+          "text": "首页代理订阅连接规则日志测试设置已停止代理关闭连接0内存—内核Mihomo概览已"
+        }
+      ],
+      "overflowXCount": 29,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "规则"
+    },
+    "logs": {
+      "vw": 980,
+      "vh": 700,
+      "docScrollW": 980,
+      "docScrollH": 700,
+      "overflowX": [
+        {
+          "tag": "DIV",
+          "cls": "app   ",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "DIV",
+          "cls": "container",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "HEADER",
+          "cls": "header",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8"
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-actions",
+          "left": 649,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-icons",
+          "left": 929,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 968,
+          "right": 998,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-minus",
+          "left": 973,
+          "right": 993,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 1000,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-x",
+          "left": 1005,
+          "right": 1025,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "grid-12 no-rail",
+          "left": 0,
+          "right": 1040,
+          "text": "首页代理订阅连接规则日志测试设置已停止代理关闭连接0内存—内核Mihomo概览已"
+        }
+      ],
+      "overflowXCount": 19,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "日志"
+    },
+    "tests": {
+      "vw": 980,
+      "vh": 700,
+      "docScrollW": 980,
+      "docScrollH": 700,
+      "overflowX": [
+        {
+          "tag": "DIV",
+          "cls": "app   ",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "DIV",
+          "cls": "container",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "HEADER",
+          "cls": "header",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8"
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-actions",
+          "left": 649,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-icons",
+          "left": 929,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 968,
+          "right": 998,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-minus",
+          "left": 973,
+          "right": 993,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 1000,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-x",
+          "left": 1005,
+          "right": 1025,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "grid-12 no-rail",
+          "left": 0,
+          "right": 1040,
+          "text": "首页代理订阅连接规则日志测试设置已停止代理关闭连接0内存—内核Mihomo概览已"
+        }
+      ],
+      "overflowXCount": 93,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "测试"
+    },
+    "settings": {
+      "vw": 980,
+      "vh": 700,
+      "docScrollW": 980,
+      "docScrollH": 700,
+      "overflowX": [
+        {
+          "tag": "DIV",
+          "cls": "app   ",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "DIV",
+          "cls": "container",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8首页代理订阅连接规则日志测试设置已停止代理关闭"
+        },
+        {
+          "tag": "HEADER",
+          "cls": "header",
+          "left": 0,
+          "right": 1040,
+          "text": "Veyra-ominiv1.1.8"
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-actions",
+          "left": 649,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "header-icons",
+          "left": 929,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 968,
+          "right": 998,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-minus",
+          "left": 973,
+          "right": 993,
+          "text": ""
+        },
+        {
+          "tag": "BUTTON",
+          "cls": "icon-btn",
+          "left": 1000,
+          "right": 1030,
+          "text": ""
+        },
+        {
+          "tag": "svg",
+          "cls": "lucide lucide-x",
+          "left": 1005,
+          "right": 1025,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "path",
+          "cls": "",
+          "left": 1010,
+          "right": 1020,
+          "text": ""
+        },
+        {
+          "tag": "DIV",
+          "cls": "grid-12 no-rail",
+          "left": 0,
+          "right": 1040,
+          "text": "首页代理订阅连接规则日志测试设置已停止代理关闭连接0内存—内核Mihomo概览已"
+        }
+      ],
+      "overflowXCount": 26,
+      "clipped": [],
+      "clippedCount": 0,
+      "navActive": "设置"
+    }
+  },
+  "dark": {},
+  "consoleLog": [],
+  "errors": []
+}
